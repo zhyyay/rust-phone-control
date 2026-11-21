@@ -43,7 +43,7 @@ pub struct BleHidService {
 }
 
 impl BleHidService {
-    /// Creates the HID and Battery GATT services and starts advertising.
+    /// Creates the HID GATT service and starts advertising.
     pub async fn start() -> Result<Self> {
         let (hid_provider, hid_service) = create_primary_service(0x1812)
             .await
@@ -189,7 +189,7 @@ impl BleHidService {
         }
 
         tracing::info!(
-            "Windows HID-over-GATT services are advertising (Report Host, single active controller)"
+            "Windows HID-over-GATT advertising request submitted (Report Host, single active controller)"
         );
         Ok(Self {
             providers,
