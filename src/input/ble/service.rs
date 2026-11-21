@@ -74,7 +74,7 @@ impl BleHidService {
         .await
         .context("creating HID Control Point characteristic")?;
         control_point.WriteRequested(
-            TypedEventHandler::<GattLocalCharacteristic, GattWriteRequestedEventArgs>::new(
+            &TypedEventHandler::<GattLocalCharacteristic, GattWriteRequestedEventArgs>::new(
                 |_sender, args| {
                     if let Some(args) = args.cloned() {
                         let deferral = args.GetDeferral()?;
@@ -110,7 +110,7 @@ impl BleHidService {
         .await
         .context("creating HID Protocol Mode characteristic")?;
         protocol_mode.WriteRequested(
-            TypedEventHandler::<GattLocalCharacteristic, GattWriteRequestedEventArgs>::new(
+            &TypedEventHandler::<GattLocalCharacteristic, GattWriteRequestedEventArgs>::new(
                 |_sender, args| {
                     if let Some(args) = args.cloned() {
                         let deferral = args.GetDeferral()?;
@@ -251,7 +251,7 @@ async fn create_input_report_characteristic(
     .await?;
 
     characteristic.ReadRequested(
-        TypedEventHandler::<GattLocalCharacteristic, GattReadRequestedEventArgs>::new(
+        &TypedEventHandler::<GattLocalCharacteristic, GattReadRequestedEventArgs>::new(
             move |_sender, args| {
                 if let Some(args) = args.cloned() {
                     let deferral = args.GetDeferral()?;
