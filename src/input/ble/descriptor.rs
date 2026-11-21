@@ -17,7 +17,7 @@ pub const HID_REPORT: u16 = 0x2A4D;
 pub const HID_REPORT_REFERENCE: u16 = 0x2908;
 /// Report Reference value for an Input Report (report type 0x01).
 pub const REPORT_TYPE_INPUT: u8 = 0x01;
-/// Protocol Mode characteristic (0x2A4E).
+/// Protocol Mode characteristic (0x2A4E); reserved for future Boot Protocol support.
 pub const HID_PROTOCOL_MODE: u16 = 0x2A4E;
 
 /// Report ID 1: three-button relative mouse with X/Y movement and vertical wheel.
@@ -44,6 +44,6 @@ pub const HID_INFORMATION_VALUE: [u8; 4] = [0x11, 0x01, 0x00, 0x02];
 pub const CONTROL_POINT_SUSPEND: u8 = 0x00;
 pub const CONTROL_POINT_EXIT_SUSPEND: u8 = 0x01;
 
-/// HID Protocol Mode values.
+/// HID Protocol Mode values; not currently published by the Report Host implementation.
 pub const PROTOCOL_MODE_BOOT: u8 = 0x00;
 pub const PROTOCOL_MODE_REPORT: u8 = 0x01;
