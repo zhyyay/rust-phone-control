@@ -70,9 +70,14 @@ impl std::ops::BitOr for KeyModifiers {
 /// Events emitted by the desktop UI and translated by a platform backend.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InputEvent {
-    PointerMove { dx: i16, dy: i16 },
+    PointerMove {
+        dx: i16,
+        dy: i16,
+    },
     PointerButtons(MouseButtons),
-    Scroll { vertical: i16 },
+    Scroll {
+        vertical: i16,
+    },
     KeyModifiers(KeyModifiers),
     /// USB HID keyboard usage ID, not a Unicode character.
     KeyUsage(u8),

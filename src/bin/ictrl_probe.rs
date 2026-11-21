@@ -16,8 +16,6 @@ async fn main() -> Result<()> {
         probe.schema.to_string().len()
     );
     println!("\n/skill: received {} bytes", probe.skill.len());
-    println!(
-        "\niCTRL discovery successful. No pairing or control request was sent."
-    );
+    println!("\niCTRL discovery successful. No pairing or control request was sent.");
     Ok(())
 }

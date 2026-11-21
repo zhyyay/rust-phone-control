@@ -1,4 +1,4 @@
-use super::descriptor::{HID_REPORT_MAP, HID_INFORMATION_VALUE};
+use super::descriptor::{HID_INFORMATION_VALUE, HID_REPORT_MAP};
 use crate::input::event::{KeyModifiers, MouseButtons};
 
 /// Four-byte mouse report payload; the Report Reference descriptor carries report ID 1.

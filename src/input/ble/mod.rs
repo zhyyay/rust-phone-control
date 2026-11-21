@@ -7,14 +7,14 @@ pub mod capability;
 pub mod descriptor;
 pub mod reports;
 #[cfg(windows)]
-pub mod windows;
-#[cfg(windows)]
 pub mod service;
+#[cfg(windows)]
+pub mod windows;
 
 pub use capability::{BleCapability, BleCapabilityStatus};
 pub use descriptor::{
-    HID_CONTROL_POINT, HID_INFORMATION, HID_INFORMATION_VALUE, HID_PROTOCOL_MODE,
-    HID_REPORT, HID_REPORT_MAP, HID_REPORT_MAP_CHARACTERISTIC, HID_REPORT_REFERENCE, HID_SERVICE,
+    HID_CONTROL_POINT, HID_INFORMATION, HID_INFORMATION_VALUE, HID_PROTOCOL_MODE, HID_REPORT,
+    HID_REPORT_MAP, HID_REPORT_MAP_CHARACTERISTIC, HID_REPORT_REFERENCE, HID_SERVICE,
     REPORT_TYPE_INPUT,
 };
 pub use reports::{KeyboardReport, MouseReport};

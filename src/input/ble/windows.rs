@@ -25,7 +25,8 @@ pub async fn probe_hid_peripheral() -> Result<BleCapability> {
         return Ok(BleCapability {
             adapter_name,
             status: BleCapabilityStatus::Unsupported {
-                reason: "The default Bluetooth adapter does not report Bluetooth LE support.".into(),
+                reason: "The default Bluetooth adapter does not report Bluetooth LE support."
+                    .into(),
             },
         });
     }
@@ -34,7 +35,8 @@ pub async fn probe_hid_peripheral() -> Result<BleCapability> {
         return Ok(BleCapability {
             adapter_name,
             status: BleCapabilityStatus::Unsupported {
-                reason: "The adapter supports BLE Central but not BLE Peripheral/GATT Server mode.".into(),
+                reason: "The adapter supports BLE Central but not BLE Peripheral/GATT Server mode."
+                    .into(),
             },
         });
     }

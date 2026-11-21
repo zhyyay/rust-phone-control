@@ -8,13 +8,19 @@ async fn main() -> anyhow::Result<()> {
     println!("Adapter: {:?}", capability.adapter_name);
     println!("Status: {:?}", capability.status);
 
-    if !matches!(capability.status, rust_phone_control::input::ble::BleCapabilityStatus::Supported) {
+    if !matches!(
+        capability.status,
+        rust_phone_control::input::ble::BleCapabilityStatus::Supported
+    ) {
         anyhow::bail!("The adapter is not ready to host a BLE HID peripheral.");
     }
 
     println!("Creating HID GATT service and starting BLE advertising...");
     let service = BleHidService::start().await?;
-    println!("HID GATT service is active. Advertising status: {}", service.advertising_status()?);
+    println!(
+        "HID GATT service is active. Advertising status: {}",
+        service.advertising_status()?
+    );
     println!("Keep this window open while pairing your iPhone. Press Ctrl+C to stop.");
 
     tokio::select! {

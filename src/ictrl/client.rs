@@ -35,7 +35,10 @@ impl IctrlClient {
             .user_agent(concat!("rust-phone-control/", env!("CARGO_PKG_VERSION")))
             .build()
             .context("build HTTP client")?;
-        Ok(Self { http, base_url: url })
+        Ok(Self {
+            http,
+            base_url: url,
+        })
     }
 
     async fn get_json(&self, endpoint: &str) -> Result<Value> {
