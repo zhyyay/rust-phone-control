@@ -22,7 +22,7 @@ gpui-kit = "0.10.0"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "signal"] }
 toml = "0.8"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
@@ -35,4 +35,4 @@ lto = "thin"
 codegen-units = 1
 
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.62.2", features = ["Devices_Bluetooth", "Devices_Bluetooth_GenericAttributeProfile", "Storage_Streams"] }
+windows = { version = "0.62.2", features = ["Foundation", "Devices_Bluetooth", "Devices_Bluetooth_GenericAttributeProfile", "Storage_Streams"] }
