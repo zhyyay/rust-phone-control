@@ -1,7 +1,7 @@
 //! Windows Bluetooth adapter capability probing via WinRT.
 
 use anyhow::{Context, Result};
-use windows::Devices::Bluetooth::BluetoothAdapter;
+use windows_062::Devices::Bluetooth::BluetoothAdapter;
 
 /// Describes the default Windows Bluetooth adapter capabilities needed by a GATT server.
 #[derive(Debug, Clone, PartialEq, Eq)]
