@@ -13,23 +13,57 @@ use super::config;
 const MAX_HEADER_BYTES: usize = 16 * 1024;
 
 pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
-    stream.set_read_timeout(Some(Duration::from_secs(2)))?;
-    stream.set_write_timeout(Some(Duration::from_secs(2)))?;
+    stream.set_read_timeout(Some(Duration::from_secs(5)))?;
+    stream.set_write_timeout(Some(Duration::from_secs(5)))?;
 
     let mut request = Vec::with_capacity(2048);
     let mut chunk = [0u8; 2048];
+
+    tracing::info!("AirPlay RTSP handler started; waiting for request headers");
+
     loop {
-        let count = stream.read(&mut chunk)?;
+        let count = match stream.read(&mut chunk) {
+            Ok(count) => count,
+            Err(error) => {
+                tracing::error!(
+                    error_kind = ?error.kind(),
+                    error = %error,
+                    received_bytes = request.len(),
+                    "AirPlay RTSP request read failed"
+                );
+                return Err(error);
+            }
+        };
+
         if count == 0 {
+            tracing::warn!(
+                received_bytes = request.len(),
+                "AirPlay client closed connection before completing request headers"
+            );
             return Ok(());
         }
+
         request.extend_from_slice(&chunk[..count]);
+        tracing::debug!(
+            chunk_bytes = count,
+            total_bytes = request.len(),
+            "AirPlay RTSP request data received"
+        );
+
         if request.windows(4).any(|window| window == b"\r\n\r\n") {
             break;
         }
+
         if request.len() > MAX_HEADER_BYTES {
-            write_http_error(&mut stream, 431, "Request Header Fields Too Large")?;
-            return Ok(());
+            tracing::warn!(
+                received_bytes = request.len(),
+                "AirPlay RTSP request headers exceeded size limit"
+            );
+            return write_response(
+                &mut stream,
+                "HTTP/1.1 431 Request Header Fields Too Large\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                431,
+            );
         }
     }
 
@@ -46,12 +80,21 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
         .map(|(_, value)| value.trim())
         .unwrap_or("0");
 
+    tracing::info!(
+        method,
+        path,
+        protocol,
+        cseq,
+        request_bytes = request.len(),
+        "AirPlay RTSP request parsed"
+    );
+
     match (method, path, protocol) {
         ("OPTIONS", _, "RTSP/1.0") => {
             let response = format!(
                 "RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\nServer: RustPhoneControl/0.1\r\nPublic: OPTIONS\r\nContent-Length: 0\r\n\r\n"
             );
-            stream.write_all(response.as_bytes())
+            write_response(&mut stream, &response, 200)
         }
         ("GET", "/server-info", "HTTP/1.1") | ("GET", "/server-info", "RTSP/1.0") => {
             let body = server_info_plist();
@@ -60,14 +103,54 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
                 body.len(),
                 body
             );
-            stream.write_all(response.as_bytes())
+            write_response(&mut stream, &response, 200)
         }
         _ => {
-            tracing::debug!(method, path, protocol, "AirPlay control method is not implemented");
+            tracing::warn!(
+                method,
+                path,
+                protocol,
+                "AirPlay control method is not implemented; returning 501"
+            );
             let response = format!(
                 "{protocol} 501 Not Implemented\r\nCSeq: {cseq}\r\nServer: RustPhoneControl/0.1\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
             );
-            stream.write_all(response.as_bytes())
+            write_response(&mut stream, &response, 501)
+        }
+    }
+}
+
+fn write_response(
+    stream: &mut TcpStream,
+    response: &str,
+    status: u16,
+) -> std::io::Result<()> {
+    match stream.write_all(response.as_bytes()) {
+        Ok(()) => {
+            tracing::info!(
+                status,
+                response_bytes = response.len(),
+                "AirPlay RTSP response sent"
+            );
+            if let Err(error) = stream.flush() {
+                tracing::error!(
+                    error_kind = ?error.kind(),
+                    error = %error,
+                    "AirPlay RTSP response flush failed"
+                );
+                return Err(error);
+            }
+            Ok(())
+        }
+        Err(error) => {
+            tracing::error!(
+                status,
+                error_kind = ?error.kind(),
+                error = %error,
+                response_bytes = response.len(),
+                "AirPlay RTSP response write failed"
+            );
+            Err(error)
         }
     }
 }
@@ -79,13 +162,6 @@ fn server_info_plist() -> String {
         config::MODEL,
         config::SOURCE_VERSION
     )
-}
-
-fn write_http_error(stream: &mut TcpStream, status: u16, reason: &str) -> std::io::Result<()> {
-    let response = format!(
-        "HTTP/1.1 {status} {reason}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-    );
-    stream.write_all(response.as_bytes())
 }
 
 #[cfg(test)]
