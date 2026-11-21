@@ -68,8 +68,8 @@ impl KeyboardReport {
 pub const fn clamp_i16_to_i8(value: i16) -> i8 {
     if value > i8::MAX as i16 {
         i8::MAX
-    } else if value < i8::MIN as i16 {
-        i8::MIN
+    } else if value < -127 {
+        -127
     } else {
         value as i8
     }
@@ -113,7 +113,7 @@ mod tests {
 
     #[test]
     fn signed_motion_clamping_matches_report_range() {
-        assert_eq!(clamp_i16_to_i8(-500), -128);
+        assert_eq!(clamp_i16_to_i8(-500), -127);
         assert_eq!(clamp_i16_to_i8(500), 127);
         assert_eq!(clamp_i16_to_i8(12), 12);
     }
