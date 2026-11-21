@@ -12,12 +12,12 @@ The Windows BLE implementation publishes:
 - HID Service with a composite relative mouse + keyboard Report Map.
 - Separate mouse and keyboard Input Report characteristics with Report Reference descriptors.
 - HID Control Point suspend/resume handling.
-- Battery Service and Device Information Service (PnP ID).
+- Battery Service (placeholder battery level).
+- Device Information Service is not published by the app because Windows reserves UUID 0x180A for the system.
 - Encrypted GATT access for HID, Battery, and Device Information characteristics.
 
 This is a **Report Host** implementation. It intentionally does not publish Protocol Mode or Boot
-Protocol characteristics. The PnP ID currently uses the USB-IF reserved test VID and must be
-replaced with a legitimately assigned VID/PID before product distribution.
+Protocol characteristics. Windows reserves Device Information Service (0x180A), so this application does not attempt to publish a PnP ID characteristic.
 
 **Not yet validated:** successful Windows advertising on the target adapter, iPhone discovery,
 bonding/pairing, AssistiveTouch pointer behavior, and end-to-end mouse/keyboard input. Windows
