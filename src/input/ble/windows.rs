@@ -5,8 +5,8 @@
 //! standard HID-over-GATT service provider.
 
 use anyhow::{Context, Result};
-use windows::Devices::Bluetooth::BluetoothError;
-use windows::Devices::Bluetooth::GenericAttributeProfile::{
+use windows_062::Devices::Bluetooth::BluetoothError;
+use windows_062::Devices::Bluetooth::GenericAttributeProfile::{
     GattServiceProvider, GattServiceUuids,
 };
 
