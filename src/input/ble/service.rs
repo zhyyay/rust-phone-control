@@ -13,8 +13,8 @@ use windows_062::{
     Devices::Bluetooth::{
         BluetoothError,
         GenericAttributeProfile::{
-            GattCharacteristic, GattCharacteristicProperties, GattCommunicationStatus,
-            GattDescriptor, GattLocalCharacteristic, GattLocalCharacteristicParameters,
+            GattCharacteristicProperties, GattCommunicationStatus, GattLocalCharacteristic,
+            GattLocalCharacteristicParameters,
             GattLocalDescriptorParameters, GattLocalService, GattProtectionLevel,
             GattReadRequestedEventArgs, GattServiceProvider,
             GattServiceProviderAdvertisingParameters, GattWriteOption, GattWriteRequestedEventArgs,
@@ -103,6 +103,13 @@ impl BleHidService {
                 tokio::spawn(async move {
                     let result = async {
                         let request = args.GetRequestAsync()?.await?;
+                        if request.Offset()? != 0 {
+                            if request.Option()? == GattWriteOption::WriteWithResponse {
+                                request.RespondWithProtocolError(0x07)?;
+                            }
+                            return Ok::<(), windows_062::core::Error>(());
+                        }
+
                         let reader = DataReader::FromBuffer(&request.Value()?)?;
                         if reader.UnconsumedBufferLength()? != 1 {
                             if request.Option()? == GattWriteOption::WriteWithResponse {
