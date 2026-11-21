@@ -27,6 +27,8 @@ The platform-independent input layer lives in `src/input`.
 - `ble/capability.rs`: explicit capability states so an unavailable adapter is not confused with
   a failed capability probe.
 
+The Windows BLE adapter probe is available with `cargo run --bin ble-probe`. It checks the default adapter and whether Windows reports Peripheral-role support, then attempts to create (but does not advertise) the HID GATT service. This is a capability diagnostic only; it does not yet publish the HID characteristics or pair a phone.
+
 The next implementation step is the Windows WinRT GATT server. It must publish the HID service,
 HID Information, Report Map, Control Point, Protocol Mode, and separate Report characteristics
 with Report Reference descriptors. The Windows adapter must be checked for BLE Peripheral/GATT
@@ -58,7 +60,7 @@ Implemented:
 - HID-over-GATT Report Map and mouse/keyboard report encoders with unit tests.
 
 Not implemented:
-- Windows BLE adapter capability probe and WinRT GATT service publisher.
+- Full Windows WinRT HID GATT service publisher, characteristic/report handlers, advertising, and iPhone pairing.
 - iPhone pairing, reconnect, suspend/resume, and real device input validation.
 - AirPlay receiver, H.264 decoding/rendering, and live screenshot capture.
 - OCR, screen-coordinate mapping, and automation task runner.
