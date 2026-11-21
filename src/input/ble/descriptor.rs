@@ -7,8 +7,8 @@
 pub const HID_SERVICE: u16 = 0x1812;
 /// HID Information characteristic (0x2A4A).
 pub const HID_INFORMATION: u16 = 0x2A4A;
-/// Report Map characteristic (0x2A4B).
-pub const HID_REPORT_MAP: u16 = 0x2A4B;
+/// Report Map characteristic UUID (0x2A4B).
+pub const HID_REPORT_MAP_CHARACTERISTIC: u16 = 0x2A4B;
 /// Control Point characteristic (0x2A4C).
 pub const HID_CONTROL_POINT: u16 = 0x2A4C;
 /// Report characteristic (0x2A4D).
