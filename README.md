@@ -25,12 +25,11 @@ connection, mouse movement, left click, vertical scrolling, and keyboard text in
 now exposes these controls through a dedicated background BLE worker. Reconnection lifecycle,
 connection-state presentation, absolute touchscreen injection, and multi-device control remain future work.
 
-AirPlay receiver, live video renderer, screenshot pipeline, OCR automation, reconnect management,
-and multi-device sessions are not implemented yet.
+An optional AirPlay receiver launcher is now exposed in the desktop UI. It starts/stops a separate\nAirBridge executable; the video currently appears in the receiver's own window, not embedded in GPUI.\nThe GPUI frame bridge, screenshot pipeline, OCR automation, reconnect management, and multi-device\nsessions are not implemented yet.
 
 ## Planned architecture
 
-- **Video:** AirPlay receiver on the same Wi-Fi network; decode and render H.264.
+- **Video:** AirPlay receiver on the same Wi-Fi network. The current integration launches AirBridge as a separate process; decoded frames are not yet embedded in this app.
 - **Input:** Windows BLE GATT HID peripheral, using iPhone AssistiveTouch for mouse/keyboard.
 - **Automation:** Rust screenshot, coordinate mapping, OCR, and task execution APIs.
 - **Optional backend:** iCTRL client remains separate and can be used when its official pairing and
@@ -39,6 +38,29 @@ and multi-device sessions are not implemented yet.
 BLE HID input and AirPlay video are independent connections. A successful screen mirror does not
 mean mouse control is connected, and relative HID mouse movement is not equivalent to precise
 absolute touchscreen injection.
+
+## AirPlay screen mirroring (Windows)
+
+The desktop UI can launch an external AirPlay receiver. Download the **portable** AirBridge release
+from https://github.com/30jannik06/AirBridge/releases and extract it. The receiver is not bundled
+with this repository.
+
+For development in PowerShell, set the executable path before starting the app:
+
+```powershell
+$env:AIRBRIDGE_EXE = "D:\\tools\\AirBridge\\airbridge.exe"
+cargo run --bin phone-desktop
+```
+
+Or place `airbridge.exe` beside the built `phone-desktop.exe`. Click **Start mirror**, then on
+the iPhone open Control Center → Screen Mirroring and select **AirBridge**. Both devices must be on
+the same Wi-Fi network. If Windows Firewall prompts, allow it only on a trusted Private network.
+
+AirBridge listens on the local network and its default configuration does not require a PIN, so use
+it only on a trusted network. It is GPL-3.0-only and is launched as a separate process; this project
+does not link or redistribute its executable. Review its license before bundling or redistributing it.
+The current integration opens a separate AirBridge video window; embedding frames into GPUI and
+feeding them to the Rust screenshot/OCR pipeline is the next integration task.
 
 ## Build
 
