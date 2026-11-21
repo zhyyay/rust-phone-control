@@ -6,18 +6,19 @@
 
 use anyhow::{Context, Result, anyhow, bail};
 use std::sync::{
-    Arc, Mutex,
     atomic::{AtomicBool, Ordering},
+    Arc, Mutex,
 };
 use windows_062::{
     Devices::Bluetooth::{
         BluetoothError,
         GenericAttributeProfile::{
             GattCharacteristic, GattCharacteristicProperties, GattCommunicationStatus,
-            GattDescriptor,
-            GattLocalCharacteristic, GattLocalCharacteristicParameters, GattLocalDescriptorParameters,
-            GattLocalService, GattProtectionLevel, GattReadRequestedEventArgs, GattServiceProvider,
-            GattServiceProviderAdvertisingParameters, GattWriteOption, GattWriteRequestedEventArgs,
+            GattDescriptor, GattLocalCharacteristic, GattLocalCharacteristicParameters,
+            GattLocalDescriptorParameters, GattLocalService, GattProtectionLevel,
+            GattReadRequestedEventArgs, GattServiceProvider,
+            GattServiceProviderAdvertisingParameters, GattWriteOption,
+            GattWriteRequestedEventArgs,
         },
     },
     Foundation::TypedEventHandler,
@@ -26,8 +27,8 @@ use windows_062::{
 };
 
 use super::descriptor::{
-    HID_CONTROL_POINT, HID_INFORMATION, HID_INFORMATION_VALUE, HID_REPORT,
-    HID_REPORT_MAP, HID_REPORT_MAP_CHARACTERISTIC, HID_REPORT_REFERENCE,
+    HID_CONTROL_POINT, HID_INFORMATION, HID_INFORMATION_VALUE, HID_REPORT, HID_REPORT_MAP,
+    HID_REPORT_MAP_CHARACTERISTIC, HID_REPORT_REFERENCE,
 };
 use super::reports::{KeyboardReport, MouseReport};
 
@@ -114,8 +115,12 @@ impl BleHidService {
                         match reader.ReadByte()? {
                             0x00 => {
                                 suspended.store(true, Ordering::Release);
-                                *mouse_state.lock().unwrap_or_else(|p| p.into_inner()) = vec![0; 4];
-                                *keyboard_state.lock().unwrap_or_else(|p| p.into_inner()) = vec![0; 8];
+                                *mouse_state
+                                    .lock()
+                                    .unwrap_or_else(|p| p.into_inner()) = vec![0; 4];
+                                *keyboard_state
+                                    .lock()
+                                    .unwrap_or_else(|p| p.into_inner()) = vec![0; 8];
                             }
                             0x01 => suspended.store(false, Ordering::Release),
                             _ => {
@@ -144,12 +149,18 @@ impl BleHidService {
             Ok(())
         }))?;
 
-        let mouse_report = create_input_report_characteristic(&hid_service, Arc::clone(&mouse_state))
+        let mouse_report = create_input_report_characteristic(
+            &hid_service,
+            Arc::clone(&mouse_state),
+        )
             .await
             .context("creating mouse input Report characteristic")?;
         add_report_reference(&mouse_report, 1).await?;
 
-        let keyboard_report = create_input_report_characteristic(&hid_service, Arc::clone(&keyboard_state))
+        let keyboard_report = create_input_report_characteristic(
+            &hid_service,
+            Arc::clone(&keyboard_state),
+        )
             .await
             .context("creating keyboard input Report characteristic")?;
         add_report_reference(&keyboard_report, 2).await?;
@@ -213,7 +224,10 @@ impl BleHidService {
             return Ok(());
         }
         let report_bytes = report.as_bytes();
-        *self.mouse_state.lock().unwrap_or_else(|p| p.into_inner()) = report_bytes.to_vec();
+        *self
+            .mouse_state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner()) = report_bytes.to_vec();
         let buffer = buffer_from_bytes(&report_bytes)?;
         let status = self
             .mouse_report
@@ -232,7 +246,10 @@ impl BleHidService {
             return Ok(());
         }
         let report_bytes = report.as_bytes();
-        *self.keyboard_state.lock().unwrap_or_else(|p| p.into_inner()) = report_bytes.to_vec();
+        *self
+            .keyboard_state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner()) = report_bytes.to_vec();
         let buffer = buffer_from_bytes(&report_bytes)?;
         let status = self
             .keyboard_report
@@ -356,7 +373,10 @@ async fn create_input_report_characteristic(
             tokio::spawn(async move {
                 let result = async {
                     let request = args.GetRequestAsync()?.await?;
-                    let report = current_report.lock().unwrap_or_else(|p| p.into_inner()).clone();
+                    let report = current_report
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .clone();
                     let writer = DataWriter::new()?;
                     writer.WriteBytes(&report)?;
                     request.RespondWithValue(&writer.DetachBuffer()?)?;
