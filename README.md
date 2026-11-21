@@ -25,7 +25,10 @@ connection, mouse movement, left click, vertical scrolling, and keyboard text in
 now exposes these controls through a dedicated background BLE worker. Reconnection lifecycle,
 connection-state presentation, absolute touchscreen injection, and multi-device control remain future work.
 
-An optional AirPlay receiver launcher is now exposed in the desktop UI. It starts/stops a separate\nAirBridge executable; the video currently appears in the receiver's own window, not embedded in GPUI.\nThe GPUI frame bridge, screenshot pipeline, OCR automation, reconnect management, and multi-device\nsessions are not implemented yet.
+An optional AirPlay receiver launcher is now exposed in the desktop UI. It starts/stops a separate
+AirBridge executable; the video currently appears in the receiver's own window, not embedded in GPUI.
+The GPUI frame bridge, screenshot pipeline, OCR automation, reconnect management, and multi-device
+sessions are not implemented yet.
 
 ## Planned architecture
 
@@ -48,7 +51,7 @@ with this repository.
 For development in PowerShell, set the executable path before starting the app:
 
 ```powershell
-$env:AIRBRIDGE_EXE = "D:\\tools\\AirBridge\\airbridge.exe"
+$env:AIRBRIDGE_EXE = "D:\tools\AirBridge\airbridge.exe"
 cargo run --bin phone-desktop
 ```
 
