@@ -185,9 +185,12 @@ impl BleHidService {
             let advertising = GattServiceProviderAdvertisingParameters::new()?;
             advertising.SetIsDiscoverable(true)?;
             advertising.SetIsConnectable(true)?;
-            provider
-                .StartAdvertisingWithParameters(&advertising)
-                .context("starting Windows BLE GATT advertising")?;
+            if let Err(error) = provider.StartAdvertisingWithParameters(&advertising) {
+                for started_provider in &providers {
+                    let _ = started_provider.StopAdvertising();
+                }
+                return Err(error).context("starting Windows BLE GATT advertising");
+            }
         }
 
         tracing::info!(
@@ -235,8 +238,16 @@ impl BleHidService {
 
     /// Stops advertising all published GATT services.
     pub fn stop(&self) -> Result<()> {
+        let mut first_error = None;
         for provider in &self.providers {
-            provider.StopAdvertising()?;
+            if let Err(error) = provider.StopAdvertising() {
+                if first_error.is_none() {
+                    first_error = Some(error);
+                }
+            }
+        }
+        if let Some(error) = first_error {
+            return Err(error).context("stopping one or more Windows BLE GATT services");
         }
         Ok(())
     }
