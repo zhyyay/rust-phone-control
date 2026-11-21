@@ -19,11 +19,11 @@ use crate::platform::windows::bluetooth::default_adapter_info;
 /// not mean that the service is advertised, discoverable, paired, or validated by iOS.
 pub async fn probe_hid_peripheral() -> Result<BleCapability> {
     let adapter = default_adapter_info().await?;
-    let adapter_name = Some(adapter.device_id.clone());
+    let adapter_id = Some(adapter.device_id.clone());
 
     if !adapter.low_energy_supported {
         return Ok(BleCapability {
-            adapter_name,
+            adapter_id,
             status: BleCapabilityStatus::Unsupported {
                 reason: "The default Bluetooth adapter does not report Bluetooth LE support."
                     .into(),
@@ -33,7 +33,7 @@ pub async fn probe_hid_peripheral() -> Result<BleCapability> {
 
     if !adapter.peripheral_role_supported {
         return Ok(BleCapability {
-            adapter_name,
+            adapter_id,
             status: BleCapabilityStatus::Unsupported {
                 reason: "The adapter supports BLE Central but not BLE Peripheral/GATT Server mode."
                     .into(),
@@ -49,7 +49,7 @@ pub async fn probe_hid_peripheral() -> Result<BleCapability> {
 
     if error != BluetoothError::Success {
         return Ok(BleCapability {
-            adapter_name,
+            adapter_id,
             status: BleCapabilityStatus::ProbeFailed {
                 reason: format!("Windows rejected HID GATT service creation: {error:?}"),
             },
@@ -57,7 +57,7 @@ pub async fn probe_hid_peripheral() -> Result<BleCapability> {
     }
 
     Ok(BleCapability {
-        adapter_name,
+        adapter_id,
         status: BleCapabilityStatus::Supported,
     })
 }
