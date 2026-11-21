@@ -14,14 +14,14 @@ pub enum BleCapabilityStatus {
 /// Hardware capability information shown by the UI before attempting to pair.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BleCapability {
-    pub adapter_name: Option<String>,
+    pub adapter_id: Option<String>,
     pub status: BleCapabilityStatus,
 }
 
 impl Default for BleCapability {
     fn default() -> Self {
         Self {
-            adapter_name: None,
+            adapter_id: None,
             status: BleCapabilityStatus::NotChecked,
         }
     }
