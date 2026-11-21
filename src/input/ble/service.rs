@@ -1,7 +1,7 @@
 //! Windows HID-over-GATT peripheral services.
 //!
 //! This implementation targets a Report Host (the iPhone AssistiveTouch path). It exposes
-//! HID Report characteristics and Battery Service. Windows reserves Device Information Service
+//! HID Report characteristics. Windows reserves Device Information Service
 //! (0x180A), so this app must not attempt to publish it. It deliberately does not publish Protocol
 //! Mode because Boot Protocol characteristics are not implemented.
 
@@ -17,6 +17,7 @@ use windows_062::{
             GattCharacteristicProperties, GattCommunicationStatus, GattLocalCharacteristic,
             GattLocalCharacteristicParameters, GattLocalDescriptorParameters, GattLocalService,
             GattProtectionLevel, GattReadRequestedEventArgs, GattServiceProvider,
+            GattServiceProviderAdvertisementStatusChangedEventArgs,
             GattServiceProviderAdvertisingParameters, GattWriteOption, GattWriteRequestedEventArgs,
         },
     },
@@ -30,7 +31,6 @@ use super::descriptor::{
     HID_REPORT_MAP_CHARACTERISTIC, HID_REPORT_REFERENCE,
 };
 use super::reports::{KeyboardReport, MouseReport};
-
 
 /// A running, single-active-phone HID peripheral.
 pub struct BleHidService {
@@ -79,6 +79,7 @@ impl BleHidService {
         .await
         .context("creating HID Control Point characteristic")?;
 
+        let callback_runtime = tokio::runtime::Handle::current();
         let control_point_suspended = Arc::clone(&suspended);
         let control_point_mouse_state = Arc::clone(&mouse_state);
         let control_point_keyboard_state = Arc::clone(&keyboard_state);
@@ -91,7 +92,8 @@ impl BleHidService {
                 let suspended = Arc::clone(&control_point_suspended);
                 let mouse_state = Arc::clone(&control_point_mouse_state);
                 let keyboard_state = Arc::clone(&control_point_keyboard_state);
-                tokio::spawn(async move {
+                let runtime = callback_runtime.clone();
+                runtime.spawn(async move {
                     let result = async {
                         let request = args.GetRequestAsync()?.await?;
                         if request.Offset()? != 0 {
@@ -162,6 +164,19 @@ impl BleHidService {
         // Service can be restored after single-provider advertising is verified.
         let providers = vec![hid_provider];
         for provider in &providers {
+            provider.AdvertisementStatusChanged(TypedEventHandler::<
+                GattServiceProvider,
+                GattServiceProviderAdvertisementStatusChangedEventArgs,
+            >::new(move |_sender, args| {
+                if let Some(args) = args.cloned() {
+                    tracing::info!(
+                        status = ?args.Status(),
+                        error = ?args.Error(),
+                        "Windows BLE GATT advertising status changed"
+                    );
+                }
+                Ok(())
+            }))?;
             let advertising = GattServiceProviderAdvertisingParameters::new()?;
             advertising.SetIsDiscoverable(true)?;
             advertising.SetIsConnectable(true)?;
@@ -346,6 +361,7 @@ async fn create_input_report_characteristic(
     )
     .await?;
 
+    let callback_runtime = tokio::runtime::Handle::current();
     characteristic.ReadRequested(&TypedEventHandler::<
         GattLocalCharacteristic,
         GattReadRequestedEventArgs,
@@ -353,7 +369,8 @@ async fn create_input_report_characteristic(
         if let Some(args) = args.cloned() {
             let deferral = args.GetDeferral()?;
             let current_report = Arc::clone(&current_report);
-            tokio::spawn(async move {
+            let runtime = callback_runtime.clone();
+            runtime.spawn(async move {
                 let result = async {
                     let request = args.GetRequestAsync()?.await?;
                     let report = current_report
