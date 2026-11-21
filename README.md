@@ -9,7 +9,7 @@ The repository currently contains the GPUI Kit desktop shell, read-only iCTRL di
 and the first platform-independent HID-over-GATT protocol core. The HID core defines a composite
 relative mouse + keyboard Report Map and tested report encoders.
 
-**The Windows BLE GATT server, AirPlay receiver, live video renderer, screenshot pipeline, and OCR
+**The complete Windows BLE HID GATT server and advertising, AirPlay receiver, live video renderer, screenshot pipeline, and OCR
 automation are not implemented yet.** The protocol core does not claim that a PC can already pair
 with or control an iPhone. BLE control depends on the local adapter supporting the peripheral role
 and on successful iOS AssistiveTouch pairing.
