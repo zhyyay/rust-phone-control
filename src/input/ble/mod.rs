@@ -6,6 +6,8 @@
 pub mod capability;
 pub mod descriptor;
 pub mod reports;
+#[cfg(windows)]
+pub mod windows;
 
 pub use capability::{BleCapability, BleCapabilityStatus};
 pub use descriptor::{
