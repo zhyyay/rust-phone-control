@@ -17,5 +17,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Format
         run: cargo fmt --all -- --check
+      - name: Test
+        run: cargo test --all-targets
       - name: Check
         run: cargo check --all-targets
