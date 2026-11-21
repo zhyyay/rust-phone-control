@@ -7,6 +7,8 @@ pub mod capability;
 #[cfg(windows)]
 pub mod controller;
 pub mod descriptor;
+#[cfg(windows)]
+pub mod desktop;
 pub mod reports;
 #[cfg(windows)]
 pub mod service;
