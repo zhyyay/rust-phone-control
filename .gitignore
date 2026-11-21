@@ -1,0 +1,7 @@
+/target/
+/logs/
+/data/
+/config/settings.toml
+*.log
+.DS_Store
+Thumbs.db
