@@ -8,5 +8,8 @@ pub mod descriptor;
 pub mod reports;
 
 pub use capability::{BleCapability, BleCapabilityStatus};
-pub use descriptor::{HID_INFORMATION, HID_REPORT_MAP, HID_SERVICE};
+pub use descriptor::{
+    HID_CONTROL_POINT, HID_INFORMATION, HID_INFORMATION_VALUE, HID_PROTOCOL_MODE,
+    HID_REPORT, HID_REPORT_MAP, HID_REPORT_MAP_CHARACTERISTIC, HID_SERVICE,
+};
 pub use reports::{KeyboardReport, MouseReport};
