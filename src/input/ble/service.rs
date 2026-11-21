@@ -17,13 +17,12 @@ use windows_062::{
             GattDescriptor, GattLocalCharacteristic, GattLocalCharacteristicParameters,
             GattLocalDescriptorParameters, GattLocalService, GattProtectionLevel,
             GattReadRequestedEventArgs, GattServiceProvider,
-            GattServiceProviderAdvertisingParameters, GattWriteOption,
-            GattWriteRequestedEventArgs,
+            GattServiceProviderAdvertisingParameters, GattWriteOption, GattWriteRequestedEventArgs,
         },
     },
     Foundation::TypedEventHandler,
-    core::GUID,
     Storage::Streams::{DataReader, DataWriter},
+    core::GUID,
 };
 
 use super::descriptor::{
@@ -115,12 +114,9 @@ impl BleHidService {
                         match reader.ReadByte()? {
                             0x00 => {
                                 suspended.store(true, Ordering::Release);
-                                *mouse_state
-                                    .lock()
-                                    .unwrap_or_else(|p| p.into_inner()) = vec![0; 4];
-                                *keyboard_state
-                                    .lock()
-                                    .unwrap_or_else(|p| p.into_inner()) = vec![0; 8];
+                                *mouse_state.lock().unwrap_or_else(|p| p.into_inner()) = vec![0; 4];
+                                *keyboard_state.lock().unwrap_or_else(|p| p.into_inner()) =
+                                    vec![0; 8];
                             }
                             0x01 => suspended.store(false, Ordering::Release),
                             _ => {
@@ -149,27 +145,22 @@ impl BleHidService {
             Ok(())
         }))?;
 
-        let mouse_report = create_input_report_characteristic(
-            &hid_service,
-            Arc::clone(&mouse_state),
-        )
-            .await
-            .context("creating mouse input Report characteristic")?;
+        let mouse_report =
+            create_input_report_characteristic(&hid_service, Arc::clone(&mouse_state))
+                .await
+                .context("creating mouse input Report characteristic")?;
         add_report_reference(&mouse_report, 1).await?;
 
-        let keyboard_report = create_input_report_characteristic(
-            &hid_service,
-            Arc::clone(&keyboard_state),
-        )
-            .await
-            .context("creating keyboard input Report characteristic")?;
+        let keyboard_report =
+            create_input_report_characteristic(&hid_service, Arc::clone(&keyboard_state))
+                .await
+                .context("creating keyboard input Report characteristic")?;
         add_report_reference(&keyboard_report, 2).await?;
 
         // HOGP Report Hosts require both Battery Service and Device Information Service.
-        let (battery_provider, battery_service) =
-            create_primary_service(BATTERY_SERVICE_UUID)
-                .await
-                .context("creating Battery Service provider")?;
+        let (battery_provider, battery_service) = create_primary_service(BATTERY_SERVICE_UUID)
+            .await
+            .context("creating Battery Service provider")?;
         create_static_characteristic(
             &battery_service,
             BATTERY_LEVEL_UUID,
@@ -288,7 +279,9 @@ impl BleHidService {
     }
 }
 
-async fn create_primary_service(short_uuid: u16) -> Result<(GattServiceProvider, GattLocalService)> {
+async fn create_primary_service(
+    short_uuid: u16,
+) -> Result<(GattServiceProvider, GattLocalService)> {
     let uuid = bluetooth_uuid(short_uuid);
     let create_result = GattServiceProvider::CreateAsync(uuid)?
         .await
