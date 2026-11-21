@@ -57,8 +57,12 @@ async fn main() -> anyhow::Result<()> {
             Ok::<String, std::io::Error>(line)
         } => {
             let _line = line?;
-            println!("Testing relative mouse movement...");
-            controller.move_mouse(24, 0).await?;
+            println!("Testing obvious diagonal mouse movement (127, 127)...");
+            controller.move_mouse(127, 127).await?;
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            println!("Testing reverse mouse movement (-127, -127)...");
+            controller.move_mouse(-127, -127).await?;
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
             println!("Testing left mouse click...");
             controller.click(MouseButtons::LEFT).await?;
             println!("Testing vertical scroll...");
