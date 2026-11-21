@@ -37,7 +37,7 @@ impl BleInputController {
 
     /// Clicks one mouse button and then sends a release report.
     pub async fn click(&self, button: MouseButtons) -> Result<()> {
-        if button.bits() == 0 || button.bits() & !0b111 != 0 {
+        if button.bits().count_ones() != 1 {
             bail!("click requires a supported mouse button");
         }
         self.service.send_mouse_report(MouseReport::new(button, 0, 0, 0)).await?;
@@ -116,7 +116,7 @@ fn ascii_key(character: char) -> Option<(u8, bool)> {
         ')' => (0x27, true), '-' => (0x2d, false), '_' => (0x2d, true),
         '=' => (0x2e, false), '+' => (0x2e, true), '[' => (0x2f, false),
         '{' => (0x2f, true), ']' => (0x30, false), '}' => (0x30, true),
-        '\\\\' => (0x31, false), '|' => (0x31, true), ';' => (0x33, false),
+        '\\' => (0x31, false), '|' => (0x31, true), ';' => (0x33, false),
         ':' => (0x33, true), '\'' => (0x34, false), '"' => (0x34, true),
         '`' => (0x35, false), '~' => (0x35, true), ',' => (0x36, false),
         '<' => (0x36, true), '.' => (0x37, false), '>' => (0x37, true),
