@@ -6,7 +6,6 @@
 use std::{
     sync::{OnceLock, mpsc::{self, Sender}},
     thread,
-    time::Duration,
 };
 
 use anyhow::{Context, Result};
