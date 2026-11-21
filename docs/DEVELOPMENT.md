@@ -4,44 +4,69 @@
 
 - Rust stable; Rust 1.92 or newer is recommended by the current GPUI Kit dependency graph.
 - Windows: MSVC toolchain and Visual Studio C++ Build Tools.
-- iPhone with the iCTRL UITest runner installed and running.
-- iPhone and Windows PC on the same trusted Wi-Fi network.
+- For wireless input: a Bluetooth LE adapter that supports the Peripheral role / GATT server.
+- For wireless video: Windows PC and iPhone on the same trusted Wi-Fi network.
 
-## iCTRL setup
-
-1. Start the iCTRL UITest runner on the iPhone.
-2. Approve enabling Remote Access from the iCTRL notification.
-3. Confirm Windows and iPhone are on the same LAN.
-4. From PowerShell, run:
-
-```powershell
-curl.exe http://PHONE-IP:8200/schema
-```
-
-The runner defaults to port 8200. Remote Access is off by default. Do not expose this service to the public internet.
-
-## Build
+## Build and test
 
 ```powershell
 cargo fmt --all -- --check
+cargo test --all-targets
 cargo check --all-targets
-cargo run
+cargo run --bin phone-desktop
 ```
 
-Read-only iCTRL discovery:
+## BLE HID foundation
+
+The platform-independent input layer lives in `src/input`.
+
+- `event.rs`: normalized pointer, button, scroll, and keyboard events.
+- `ble/descriptor.rs`: HID service/characteristic identifiers and a composite mouse + keyboard
+  Report Map (mouse report ID 1, keyboard report ID 2).
+- `ble/reports.rs`: fixed-layout report encoders, signed movement clamping, and release reports.
+- `ble/capability.rs`: explicit capability states so an unavailable adapter is not confused with
+  a failed capability probe.
+
+The next implementation step is the Windows WinRT GATT server. It must publish the HID service,
+HID Information, Report Map, Control Point, Protocol Mode, and separate Report characteristics
+with Report Reference descriptors. The Windows adapter must be checked for BLE Peripheral/GATT
+server support before advertising; Central-only adapters cannot host this service.
+
+After the Windows service is implemented, pair from iPhone:
+`Settings → Accessibility → Touch → AssistiveTouch → Devices → Bluetooth Devices`.
+The exact labels may vary by iOS language/version. This is AssistiveTouch pointer control, not
+native touchscreen injection. Relative mouse motion needs calibration; absolute-coordinate
+automation is not promised by this backend.
+
+## iCTRL discovery
+
+The optional read-only discovery client probes `/status`, `/schema`, and `/skill`:
 
 ```powershell
 cargo run --bin ictrl-probe -- http://PHONE-IP:8200
 ```
 
-## Phase 1 boundary
+The runner defaults to port 8200. Remote Access is off by default. Do not expose this service to
+the public internet. Pairing and authenticated RPC must follow the official encrypted protocol;
+do not invent a handshake or send plaintext control requests.
 
-This commit provides the GPUI Kit desktop shell and read-only iCTRL discovery (`/status`, `/schema`, `/skill`). It deliberately does not invent a pairing handshake or send plaintext JSON-RPC commands. Authenticated control must use the exact encrypted envelope and pairing flow implemented by the official iCTRL reference client. The paired client, screenshot RPC, touch actions and stream decoder will be added after protocol conformance tests.
+## Implementation boundaries
+
+Implemented:
+- GPUI Kit desktop shell, logging, and read-only iCTRL discovery.
+- Platform-independent mouse/keyboard event types.
+- HID-over-GATT Report Map and mouse/keyboard report encoders with unit tests.
+
+Not implemented:
+- Windows BLE adapter capability probe and WinRT GATT service publisher.
+- iPhone pairing, reconnect, suspend/resume, and real device input validation.
+- AirPlay receiver, H.264 decoding/rendering, and live screenshot capture.
+- OCR, screen-coordinate mapping, and automation task runner.
 
 ## Planned phases
 
-- Phase 1: workspace foundation, desktop shell, config, logging, read-only device discovery.
-- Phase 1b: official iCTRL pairing and encrypted RPC client, screenshot and touch commands.
-- Phase 2: H.264 stream pipeline; Windows hardware decoder first, CPU fallback.
-- Phase 3: GPUI live screen, pointer mapping, keyboard input.
-- Phase 4: OCR and automation task runner.
+1. **Phase 1-A:** Windows BLE capability probe, GATT HID service, iPhone AssistiveTouch pairing,
+   and end-to-end mouse/keyboard validation.
+2. **Phase 1-B:** AirPlay receiver process, H.264 frame transport, Windows decode, and GPUI display.
+3. **Phase 1-C:** Unified device/session UI, reconnect handling, and emergency release of all keys.
+4. **Phase 2:** Screenshot API, coordinate transforms, OCR, and Rust automation executor.
