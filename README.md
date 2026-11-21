@@ -1,28 +1,38 @@
 # Rust Phone Control
 
-A Windows-first Rust desktop application for controlling an iPhone over Wi-Fi through the iCTRL automation runner, with GPUI Kit as the desktop UI framework.
+A Windows-first Rust desktop application for wireless iPhone screen viewing, Bluetooth input,
+and Rust-based screen automation.
 
-## Status
+## Current status
 
-Phase 1 foundation is being built. The initial milestone covers project structure, iCTRL discovery/schema inspection, a safe client boundary, configuration, logging, and a GPUI Kit shell. Encrypted pairing and RPC must follow the exact protocol exposed by the installed iCTRL runner/client; no plaintext control requests are sent.
+The repository currently contains the GPUI Kit desktop shell, read-only iCTRL discovery, logging,
+and the first platform-independent HID-over-GATT protocol core. The HID core defines a composite
+relative mouse + keyboard Report Map and tested report encoders.
 
-## Planned stack
+**The Windows BLE GATT server, AirPlay receiver, live video renderer, screenshot pipeline, and OCR
+automation are not implemented yet.** The protocol core does not claim that a PC can already pair
+with or control an iPhone. BLE control depends on the local adapter supporting the peripheral role
+and on successful iOS AssistiveTouch pairing.
 
-- Rust stable (MSVC on Windows)
-- GPUI Kit 0.10
-- Tokio + Reqwest
-- iCTRL JSON-RPC API (port 8200 by default)
-- H.264 stream decoding: hardware-first with software fallback (Phase 2)
+## Planned architecture
 
-## Safety
+- **Video:** AirPlay receiver on the same Wi-Fi network; decode and render H.264.
+- **Input:** Windows BLE GATT HID peripheral, using iPhone AssistiveTouch for mouse/keyboard.
+- **Automation:** Rust screenshot, coordinate mapping, OCR, and task execution APIs.
+- **Optional backend:** iCTRL client remains separate and can be used when its official pairing and
+  encrypted RPC protocol are available.
 
-Only connect to iPhones you own or are authorized to administer. Keep iCTRL remote access disabled except while actively using the tool, and protect paired client credentials.
+BLE HID input and AirPlay video are independent connections. A successful screen mirror does not
+mean mouse control is connected, and relative HID mouse movement is not equivalent to precise
+absolute touchscreen injection.
 
 ## Build
 
 ```powershell
-cargo check --workspace
-cargo run -p phone-desktop
+cargo fmt --all -- --check
+cargo test --all-targets
+cargo check --all-targets
+cargo run --bin phone-desktop
 ```
 
-See `docs/DEVELOPMENT.md` for setup and current implementation boundaries.
+See `docs/DEVELOPMENT.md` for setup, hardware checks, and implementation boundaries.
