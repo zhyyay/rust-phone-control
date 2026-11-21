@@ -24,9 +24,9 @@ impl Render for PhoneControlApp {
                     .items_center()
                     .justify_between()
                     .child(Label::new("Rust Phone Control"))
-                    .child(Label::new("Phase 1 · Foundation")),
+                    .child(Label::new("Phase 1 · BLE HID")),
             )
-            .child(Label::new("iPhone wireless automation workbench"))
+            .child(Label::new("iPhone wireless input control"))
             .child(
                 div()
                     .flex()
@@ -36,38 +36,137 @@ impl Render for PhoneControlApp {
                     .rounded_lg()
                     .border_1()
                     .border_color(cx.theme().border)
-                    .child(Label::new("Device connection"))
+                    .child(Label::new("1. Bluetooth connection"))
                     .child(Label::new(
-                        "Configure your iPhone LAN address and start iCTRL Runner.",
+                        "Start BLE advertising, then on iPhone open Settings → Accessibility → Touch → AssistiveTouch → Devices → Bluetooth Devices and connect to danna.",
                     ))
                     .child(Label::new(
-                        "Default iCTRL port: 8200 · Remote Access must be enabled on the phone.",
-                    )),
+                        "The app starts the HID service on this PC. Keep this app open while controlling the phone.",
+                    ))
+                    .child(
+                        div()
+                            .flex()
+                            .gap_2()
+                            .child(
+                                Button::new("ble-start")
+                                    .primary()
+                                    .label("Start / Connect")
+                                    .on_click(|_, _, _| start_ble()),
+                            )
+                            .child(
+                                Button::new("ble-stop")
+                                    .label("Disconnect / Stop")
+                                    .on_click(|_, _, _| stop_ble()),
+                            ),
+                    ),
             )
             .child(
                 div()
                     .flex()
+                    .flex_col()
                     .gap_2()
+                    .p_4()
+                    .rounded_lg()
+                    .border_1()
+                    .border_color(cx.theme().border)
+                    .child(Label::new("2. Mouse"))
+                    .child(Label::new(
+                        "Use the direction buttons for small relative movements. These are pointer movements, not absolute touchscreen taps.",
+                    ))
                     .child(
-                        Button::new("docs")
-                            .primary()
-                            .label("Connection instructions")
-                            .on_click(|_, _, _| {
-                                println!("See docs/DEVELOPMENT.md for iCTRL setup.");
-                            }),
+                        div()
+                            .flex()
+                            .gap_2()
+                            .child(move_button("mouse-up", "↑", 0, -35))
                     )
                     .child(
-                        Button::new("probe")
-                            .label("Probe from terminal")
-                            .on_click(|_, _, _| {
-                                println!(
-                                    "Run: cargo run --bin ictrl-probe -- http://PHONE-IP:8200"
-                                );
-                            }),
+                        div()
+                            .flex()
+                            .gap_2()
+                            .child(move_button("mouse-left", "←", -35, 0))
+                            .child(move_button("mouse-down", "↓", 0, 35))
+                            .child(move_button("mouse-right", "→", 35, 0))
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .gap_2()
+                            .child(
+                                Button::new("mouse-click")
+                                    .primary()
+                                    .label("Left click")
+                                    .on_click(|_, _, _| queue_ble(crate::input::ble::desktop::left_click())),
+                            )
+                            .child(
+                                Button::new("mouse-scroll-up")
+                                    .label("Scroll up")
+                                    .on_click(|_, _, _| queue_ble(crate::input::ble::desktop::scroll(-3))),
+                            )
+                            .child(
+                                Button::new("mouse-scroll-down")
+                                    .label("Scroll down")
+                                    .on_click(|_, _, _| queue_ble(crate::input::ble::desktop::scroll(3))),
+                            ),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .p_4()
+                    .rounded_lg()
+                    .border_1()
+                    .border_color(cx.theme().border)
+                    .child(Label::new("3. Keyboard"))
+                    .child(Label::new(
+                        "Send a short ASCII test string to the focused text field on iPhone.",
+                    ))
+                    .child(
+                        Button::new("keyboard-test")
+                            .primary()
+                            .label("Type BLE OK")
+                            .on_click(|_, _, _| queue_ble(crate::input::ble::desktop::type_sample())),
                     ),
             )
             .child(Label::new(
-                "Security: no plaintext control commands are sent. Pairing and encrypted RPC must follow the official iCTRL protocol.",
+                "Tip: start advertising first, connect the iPhone in AssistiveTouch, then use the controls above. Check logs/app.log for command errors.",
             ))
     }
 }
+
+fn move_button(id: &'static str, label: &'static str, dx: i32, dy: i32) -> impl IntoElement {
+    Button::new(id)
+        .label(label)
+        .on_click(move |_, _, _| queue_ble(crate::input::ble::desktop::move_mouse(dx, dy)))
+}
+
+#[cfg(windows)]
+fn start_ble() {
+    queue_ble(crate::input::ble::desktop::start());
+}
+
+#[cfg(not(windows))]
+fn start_ble() {
+    tracing::warn!("BLE HID desktop controls are only available on Windows");
+}
+
+#[cfg(windows)]
+fn stop_ble() {
+    queue_ble(crate::input::ble::desktop::stop());
+}
+
+#[cfg(not(windows))]
+fn stop_ble() {
+    tracing::warn!("BLE HID desktop controls are only available on Windows");
+}
+
+#[cfg(windows)]
+fn queue_ble(result: anyhow::Result<()>) {
+    if let Err(error) = result {
+        tracing::error!(error = %format!("{error:#}"), "Could not queue BLE desktop command");
+    }
+}
+
+#[cfg(not(windows))]
+fn queue_ble(_: ()) {}
