@@ -59,12 +59,14 @@ async fn main() -> anyhow::Result<()> {
             println!("Stopping BLE HID advertising...");
             service.stop()?;
         }
-        line = tokio::task::spawn_blocking(|| {
+        line = async {
+            use tokio::io::AsyncBufReadExt;
+            let mut input = tokio::io::BufReader::new(tokio::io::stdin());
             let mut line = String::new();
-            std::io::stdin().read_line(&mut line)?;
+            input.read_line(&mut line).await?;
             Ok::<String, std::io::Error>(line)
-        }) => {
-            let _line = line??;
+        } => {
+            let _line = line?;
             println!("Sending mouse movement test (24, 0)...");
             service.send_mouse_report(MouseReport::new(MouseButtons::NONE, 24, 0, 0)).await?;
             service.send_mouse_report(MouseReport::release()).await?;
