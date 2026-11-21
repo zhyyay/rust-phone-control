@@ -31,6 +31,13 @@ impl BleInputController {
                 .await?;
             remaining_x -= step_x as i32;
             remaining_y -= step_y as i32;
+
+            // Keep consecutive relative reports distinct on slower BLE hosts. Without a
+            // short pacing interval, back-to-back notifications can be coalesced or dropped
+            // by some host stacks even though the GATT notification call itself succeeds.
+            if remaining_x != 0 || remaining_y != 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
         }
         Ok(())
     }
