@@ -1,0 +1,31 @@
+[package]
+name = "rust-phone-control"
+version = "0.1.0"
+edition = "2024"
+default-run = "phone-desktop"
+
+[[bin]]
+name = "phone-desktop"
+path = "src/main.rs"
+
+[[bin]]
+name = "ictrl-probe"
+path = "src/bin/ictrl_probe.rs"
+
+[dependencies]
+anyhow = "1"
+gpui-kit = "0.10.0"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
+toml = "0.8"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[profile.dev]
+debug = 1
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
