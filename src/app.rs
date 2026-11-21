@@ -50,12 +50,12 @@ impl Render for PhoneControlApp {
                             .child(
                                 Button::new("ble-start")
                                     .primary()
-                                    .label("Start / Connect")
+                                    .label("Start BLE")
                                     .on_click(|_, _, _| start_ble()),
                             )
                             .child(
                                 Button::new("ble-stop")
-                                    .label("Disconnect / Stop")
+                                    .label("Stop BLE")
                                     .on_click(|_, _, _| stop_ble()),
                             ),
                     ),
