@@ -31,9 +31,6 @@ use super::descriptor::{
 };
 use super::reports::{KeyboardReport, MouseReport};
 
-const BATTERY_SERVICE_UUID: u16 = 0x180F;
-const BATTERY_LEVEL_UUID: u16 = 0x2A19;
-const BATTERY_LEVEL_PERCENT: u8 = 100;
 
 /// A running, single-active-phone HID peripheral.
 pub struct BleHidService {
@@ -158,22 +155,12 @@ impl BleHidService {
                 .context("creating keyboard input Report characteristic")?;
         add_report_reference(&keyboard_report, 2).await?;
 
-        // HOGP Report Hosts require both Battery Service and Device Information Service.
-        let (battery_provider, battery_service) = create_primary_service(BATTERY_SERVICE_UUID)
-            .await
-            .context("creating Battery Service provider")?;
-        create_static_characteristic(
-            &battery_service,
-            BATTERY_LEVEL_UUID,
-            &[BATTERY_LEVEL_PERCENT],
-            GattCharacteristicProperties::Read,
-        )
-        .await
-        .context("creating Battery Level characteristic")?;
-
         // Windows reserves Device Information Service (0x180A) for the system.
         // Applications receive BluetoothError::DisabledByPolicy when trying to publish it.
-        let providers = vec![hid_provider, battery_provider];
+        // Publish HID alone during the first radio test: a second GATT provider advertising
+        // simultaneously may cause Windows to abort advertising on some adapters. Battery
+        // Service can be restored after single-provider advertising is verified.
+        let providers = vec![hid_provider];
         for provider in &providers {
             let advertising = GattServiceProviderAdvertisingParameters::new()?;
             advertising.SetIsDiscoverable(true)?;
