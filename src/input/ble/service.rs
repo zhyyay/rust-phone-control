@@ -6,8 +6,8 @@
 
 use anyhow::{Context, Result, anyhow, bail};
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
     Arc, Mutex,
+    atomic::{AtomicBool, Ordering},
 };
 use windows_062::{
     Devices::Bluetooth::{
@@ -215,10 +215,7 @@ impl BleHidService {
             return Ok(());
         }
         let report_bytes = report.as_bytes();
-        *self
-            .mouse_state
-            .lock()
-            .unwrap_or_else(|p| p.into_inner()) = report_bytes.to_vec();
+        *self.mouse_state.lock().unwrap_or_else(|p| p.into_inner()) = report_bytes.to_vec();
         let buffer = buffer_from_bytes(&report_bytes)?;
         let status = self
             .mouse_report
