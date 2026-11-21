@@ -5,8 +5,9 @@
 //! standard HID-over-GATT service provider.
 
 use anyhow::{Context, Result};
+use windows::Devices::Bluetooth::BluetoothError;
 use windows::Devices::Bluetooth::GenericAttributeProfile::{
-    BluetoothError, GattServiceProvider, GattServiceUuids,
+    GattServiceProvider, GattServiceUuids,
 };
 
 use crate::input::ble::{BleCapability, BleCapabilityStatus};
