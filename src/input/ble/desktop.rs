@@ -10,7 +10,7 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use crate::input::{KeyModifiers, MouseButtons};
+use crate::input::MouseButtons;
 use super::BleInputController;
 
 #[derive(Debug)]
@@ -141,6 +141,3 @@ pub fn type_sample() -> Result<()> {
     send(Command::TypeText("BLE OK".to_string()))
 }
 
-// Keep the modifier type referenced here as part of the desktop input API contract.
-#[allow(dead_code)]
-const NO_MODIFIERS: KeyModifiers = KeyModifiers::NONE;
