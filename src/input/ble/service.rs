@@ -1,8 +1,9 @@
 //! Windows HID-over-GATT peripheral services.
 //!
 //! This implementation targets a Report Host (the iPhone AssistiveTouch path). It exposes
-//! HID Report characteristics, Battery Service, and Device Information Service. It deliberately
-//! does not publish Protocol Mode because Boot Protocol characteristics are not implemented.
+//! HID Report characteristics and Battery Service. Windows reserves Device Information Service
+//! (0x180A), so this app must not attempt to publish it. It deliberately does not publish Protocol
+//! Mode because Boot Protocol characteristics are not implemented.
 
 use anyhow::{Context, Result, anyhow, bail};
 use std::sync::{
@@ -32,13 +33,7 @@ use super::reports::{KeyboardReport, MouseReport};
 
 const BATTERY_SERVICE_UUID: u16 = 0x180F;
 const BATTERY_LEVEL_UUID: u16 = 0x2A19;
-const DEVICE_INFORMATION_SERVICE_UUID: u16 = 0x180A;
-const PNP_ID_UUID: u16 = 0x2A50;
 const BATTERY_LEVEL_PERCENT: u8 = 100;
-
-// USB-IF's reserved test VID, product 1, version 1.0.0. Replace with an assigned VID/PID
-// before distributing this application as a product.
-const TEST_PNP_ID: [u8; 7] = [0x01, 0xFF, 0xFF, 0x01, 0x00, 0x00, 0x01];
 
 /// A running, single-active-phone HID peripheral.
 pub struct BleHidService {
@@ -51,7 +46,7 @@ pub struct BleHidService {
 }
 
 impl BleHidService {
-    /// Creates the HID, Battery, and Device Information GATT services and starts advertising.
+    /// Creates the HID and Battery GATT services and starts advertising.
     pub async fn start() -> Result<Self> {
         let (hid_provider, hid_service) = create_primary_service(0x1812)
             .await
@@ -176,20 +171,9 @@ impl BleHidService {
         .await
         .context("creating Battery Level characteristic")?;
 
-        let (device_info_provider, device_info_service) =
-            create_primary_service(DEVICE_INFORMATION_SERVICE_UUID)
-                .await
-                .context("creating Device Information Service provider")?;
-        create_static_characteristic(
-            &device_info_service,
-            PNP_ID_UUID,
-            &TEST_PNP_ID,
-            GattCharacteristicProperties::Read,
-        )
-        .await
-        .context("creating PnP ID characteristic")?;
-
-        let providers = vec![hid_provider, battery_provider, device_info_provider];
+        // Windows reserves Device Information Service (0x180A) for the system.
+        // Applications receive BluetoothError::DisabledByPolicy when trying to publish it.
+        let providers = vec![hid_provider, battery_provider];
         for provider in &providers {
             let advertising = GattServiceProviderAdvertisingParameters::new()?;
             advertising.SetIsDiscoverable(true)?;
