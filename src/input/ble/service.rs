@@ -164,7 +164,7 @@ impl BleHidService {
         // Service can be restored after single-provider advertising is verified.
         let providers = vec![hid_provider];
         for provider in &providers {
-            provider.AdvertisementStatusChanged(TypedEventHandler::<
+            provider.AdvertisementStatusChanged(&TypedEventHandler::<
                 GattServiceProvider,
                 GattServiceProviderAdvertisementStatusChangedEventArgs,
             >::new(move |_sender, args| {
