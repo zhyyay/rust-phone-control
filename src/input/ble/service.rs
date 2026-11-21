@@ -1,7 +1,7 @@
 //! Windows HID-over-GATT peripheral service.
- //!
- //! The service publishes the standard HID service and keeps the WinRT provider alive.
- //! Input reports are sent through GATT notifications after a client subscribes.
+//!
+//! Publishes the standard HID service. Mouse and keyboard input reports are dynamic
+//! notify characteristics; callers send reports after an iPhone subscribes.
 
 use anyhow::{anyhow, bail, Context, Result};
 use windows::{
@@ -11,14 +11,15 @@ use windows::{
             GattCharacteristic, GattCharacteristicProperties, GattDescriptor, GattLocalCharacteristic,
             GattLocalCharacteristicParameters, GattLocalDescriptorParameters, GattProtectionLevel,
             GattServiceProvider, GattServiceProviderAdvertisingParameters, GattServiceUuids,
+            GattWriteOption,
         },
     },
-    Storage::Streams::DataWriter,
+    Storage::Streams::{DataReader, DataWriter},
 };
 
 use super::descriptor::{
     HID_CONTROL_POINT, HID_INFORMATION, HID_INFORMATION_VALUE, HID_PROTOCOL_MODE,
-    HID_REPORT_MAP, HID_REPORT_MAP_CHARACTERISTIC, HID_REPORT_REFERENCE, HID_SERVICE,
+    HID_REPORT_MAP, HID_REPORT_MAP_CHARACTERISTIC, HID_REPORT_REFERENCE,
 };
 use super::reports::{KeyboardReport, MouseReport};
 
@@ -45,7 +46,6 @@ impl BleHidService {
         let provider = create_result.ServiceProvider()?;
         let service = provider.Service()?;
 
-        // Immutable characteristics are backed by OS-managed static values.
         create_static_characteristic(
             &service,
             HID_INFORMATION,
@@ -67,13 +67,10 @@ impl BleHidService {
         let control_point = create_characteristic(
             &service,
             HID_CONTROL_POINT,
-            &[0],
-            GattCharacteristicProperties::WriteWithoutResponse,
+            GattCharacteristicProperties::Write | GattCharacteristicProperties::WriteWithoutResponse,
         )
         .await
         .context("creating HID Control Point characteristic")?;
-        // Accept Suspend / Exit Suspend writes. The application currently keeps the
-        // reports quiescent while suspended; report transmission remains caller-driven.
         control_point.WriteRequested(windows::core::TypedEventHandler::new(
             |_sender, args| {
                 if let Some(args) = args {
@@ -81,7 +78,9 @@ impl BleHidService {
                     tokio::spawn(async move {
                         let result = async {
                             let request = args.GetRequestAsync()?.await?;
-                            request.Respond()?;
+                            if request.Option()? == GattWriteOption::WriteWithResponse {
+                                request.Respond()?;
+                            }
                             Ok::<(), windows::core::Error>(())
                         }
                         .await;
@@ -100,7 +99,6 @@ impl BleHidService {
         let protocol_mode = create_characteristic(
             &service,
             HID_PROTOCOL_MODE,
-            &[1],
             GattCharacteristicProperties::Read
                 | GattCharacteristicProperties::Write
                 | GattCharacteristicProperties::WriteWithoutResponse,
@@ -114,12 +112,12 @@ impl BleHidService {
                     tokio::spawn(async move {
                         let result = async {
                             let request = args.GetRequestAsync()?.await?;
-                            // This implementation intentionally supports Report Protocol
-                            // only. Reject Boot Protocol requests with an ATT error.
-                            let writer = windows::Storage::Streams::DataReader::FromBuffer(&request.Value()?)?;
-                            let requested_mode = writer.ReadByte()?;
+                            let reader = DataReader::FromBuffer(&request.Value()?)?;
+                            let requested_mode = reader.ReadByte()?;
                             if requested_mode == 1 {
-                                request.Respond()?;
+                                if request.Option()? == GattWriteOption::WriteWithResponse {
+                                    request.Respond()?;
+                                }
                             } else {
                                 request.RespondWithProtocolError(0x03)?;
                             }
@@ -138,24 +136,14 @@ impl BleHidService {
             },
         ))?;
 
-        let mouse_report = create_characteristic(
-            &service,
-            super::descriptor::HID_REPORT,
-            &[0; 4],
-            GattCharacteristicProperties::Read | GattCharacteristicProperties::Notify,
-        )
-        .await
-        .context("creating mouse input Report characteristic")?;
+        let mouse_report = create_input_report_characteristic(&service, 4)
+            .await
+            .context("creating mouse input Report characteristic")?;
         add_report_reference(&mouse_report, 1).await?;
 
-        let keyboard_report = create_characteristic(
-            &service,
-            super::descriptor::HID_REPORT,
-            &[0; 8],
-            GattCharacteristicProperties::Read | GattCharacteristicProperties::Notify,
-        )
-        .await
-        .context("creating keyboard input Report characteristic")?;
+        let keyboard_report = create_input_report_characteristic(&service, 8)
+            .await
+            .context("creating keyboard input Report characteristic")?;
         add_report_reference(&keyboard_report, 2).await?;
 
         let advertising = GattServiceProviderAdvertisingParameters::new()?;
@@ -211,19 +199,9 @@ async fn create_static_characteristic(
     value: &[u8],
     properties: GattCharacteristicProperties,
 ) -> Result<GattLocalCharacteristic> {
-    create_characteristic(service, short_uuid, value, properties).await
-}
-
-async fn create_characteristic(
-    service: &windows::Devices::Bluetooth::GenericAttributeProfile::GattLocalService,
-    short_uuid: u16,
-    value: &[u8],
-    properties: GattCharacteristicProperties,
-) -> Result<GattLocalCharacteristic> {
     let parameters = GattLocalCharacteristicParameters::new()?;
     parameters.SetCharacteristicProperties(properties)?;
     parameters.SetReadProtectionLevel(GattProtectionLevel::Plain)?;
-    parameters.SetWriteProtectionLevel(GattProtectionLevel::Plain)?;
     let buffer = buffer_from_bytes(value)?;
     parameters.SetStaticValue(&buffer)?;
 
@@ -231,11 +209,67 @@ async fn create_characteristic(
     let result = service.CreateCharacteristicAsync(uuid, &parameters)?.await?;
     let error = result.Error()?;
     if error != BluetoothError::Success {
-        return Err(anyhow!(
-            "creating characteristic 0x{short_uuid:04X} failed: {error:?}"
-        ));
+        return Err(anyhow!("creating characteristic 0x{short_uuid:04X} failed: {error:?}"));
     }
     Ok(result.Characteristic()?)
+}
+
+async fn create_characteristic(
+    service: &windows::Devices::Bluetooth::GenericAttributeProfile::GattLocalService,
+    short_uuid: u16,
+    properties: GattCharacteristicProperties,
+) -> Result<GattLocalCharacteristic> {
+    let parameters = GattLocalCharacteristicParameters::new()?;
+    parameters.SetCharacteristicProperties(properties)?;
+    parameters.SetReadProtectionLevel(GattProtectionLevel::Plain)?;
+    parameters.SetWriteProtectionLevel(GattProtectionLevel::Plain)?;
+
+    let uuid = GattCharacteristic::ConvertShortIdToUuid(short_uuid)?;
+    let result = service.CreateCharacteristicAsync(uuid, &parameters)?.await?;
+    let error = result.Error()?;
+    if error != BluetoothError::Success {
+        return Err(anyhow!("creating characteristic 0x{short_uuid:04X} failed: {error:?}"));
+    }
+    Ok(result.Characteristic()?)
+}
+
+async fn create_input_report_characteristic(
+    service: &windows::Devices::Bluetooth::GenericAttributeProfile::GattLocalService,
+    report_len: usize,
+) -> Result<GattLocalCharacteristic> {
+    let characteristic = create_characteristic(
+        service,
+        super::descriptor::HID_REPORT,
+        GattCharacteristicProperties::Read | GattCharacteristicProperties::Notify,
+    )
+    .await?;
+
+    characteristic.ReadRequested(windows::core::TypedEventHandler::new(
+        move |_sender, args| {
+            if let Some(args) = args {
+                let deferral = args.GetDeferral()?;
+                tokio::spawn(async move {
+                    let result = async {
+                        let request = args.GetRequestAsync()?.await?;
+                        let writer = DataWriter::new()?;
+                        writer.WriteBytes(&vec![0; report_len])?;
+                        request.RespondWithValue(&writer.DetachBuffer()?)?;
+                        Ok::<(), windows::core::Error>(())
+                    }
+                    .await;
+                    if let Err(error) = result {
+                        tracing::warn!("HID input report read failed: {error}");
+                    }
+                    if let Err(error) = deferral.Complete() {
+                        tracing::warn!("HID input report deferral completion failed: {error}");
+                    }
+                });
+            }
+            Ok(())
+        },
+    ))?;
+
+    Ok(characteristic)
 }
 
 async fn add_report_reference(characteristic: &GattLocalCharacteristic, report_id: u8) -> Result<()> {
