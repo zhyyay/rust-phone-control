@@ -95,17 +95,17 @@ impl Render for PhoneControlApp {
                                 Button::new("mouse-click")
                                     .primary()
                                     .label("Left click")
-                                    .on_click(|_, _, _| queue_ble(left_click_ble())),
+                                    .on_click(|_, _, _| left_click_ble()),
                             )
                             .child(
                                 Button::new("mouse-scroll-up")
                                     .label("Scroll up")
-                                    .on_click(|_, _, _| queue_ble(scroll_ble(-3))),
+                                    .on_click(|_, _, _| scroll_ble(-3)),
                             )
                             .child(
                                 Button::new("mouse-scroll-down")
                                     .label("Scroll down")
-                                    .on_click(|_, _, _| queue_ble(scroll_ble(3))),
+                                    .on_click(|_, _, _| scroll_ble(3)),
                             ),
                     ),
             )
@@ -126,7 +126,7 @@ impl Render for PhoneControlApp {
                         Button::new("keyboard-test")
                             .primary()
                             .label("Type BLE OK")
-                            .on_click(|_, _, _| queue_ble(type_sample_ble())),
+                            .on_click(|_, _, _| type_sample_ble()),
                     ),
             )
             .child(Label::new(
