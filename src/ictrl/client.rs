@@ -6,7 +6,10 @@ use std::time::Duration;
 /// Read-only discovery client for public iCTRL endpoints.
 /// Authenticated RPC requires X25519 pairing and sealed HMAC-SHA256 requests.
 #[derive(Clone)]
-pub struct IctrlClient { http: Client, base_url: Url }
+pub struct IctrlClient {
+    http: Client,
+    base_url: Url,
+}
 
 #[derive(Debug, Clone)]
 pub struct IctrlProbe {
@@ -36,19 +39,37 @@ impl IctrlClient {
     }
 
     async fn get_json(&self, endpoint: &str) -> Result<Value> {
-        self.http.get(self.base_url.join(endpoint)?)
-            .send().await.with_context(|| format!("request iCTRL {endpoint}"))?
-            .error_for_status().with_context(|| format!("iCTRL {endpoint} returned an error"))?
-            .json::<Value>().await.with_context(|| format!("decode iCTRL {endpoint} JSON"))
+        self.http
+            .get(self.base_url.join(endpoint)?)
+            .send()
+            .await
+            .with_context(|| format!("request iCTRL {endpoint}"))?
+            .error_for_status()
+            .with_context(|| format!("iCTRL {endpoint} returned an error"))?
+            .json::<Value>()
+            .await
+            .with_context(|| format!("decode iCTRL {endpoint} JSON"))
     }
 
     pub async fn probe(&self) -> Result<IctrlProbe> {
         let status = self.get_json("status").await?;
         let schema = self.get_json("schema").await?;
-        let skill = self.http.get(self.base_url.join("skill")?)
-            .send().await.context("request iCTRL skill")?
-            .error_for_status().context("iCTRL skill endpoint returned an error")?
-            .text().await.context("read iCTRL skill text")?;
-        Ok(IctrlProbe { base_url: self.base_url.to_string(), status, schema, skill })
+        let skill = self
+            .http
+            .get(self.base_url.join("skill")?)
+            .send()
+            .await
+            .context("request iCTRL skill")?
+            .error_for_status()
+            .context("iCTRL skill endpoint returned an error")?
+            .text()
+            .await
+            .context("read iCTRL skill text")?;
+        Ok(IctrlProbe {
+            base_url: self.base_url.to_string(),
+            status,
+            schema,
+            skill,
+        })
     }
 }
