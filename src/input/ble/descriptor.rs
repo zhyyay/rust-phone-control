@@ -13,6 +13,10 @@ pub const HID_REPORT_MAP_CHARACTERISTIC: u16 = 0x2A4B;
 pub const HID_CONTROL_POINT: u16 = 0x2A4C;
 /// Report characteristic (0x2A4D).
 pub const HID_REPORT: u16 = 0x2A4D;
+/// Report Reference descriptor (0x2908), required on each Report characteristic.
+pub const HID_REPORT_REFERENCE: u16 = 0x2908;
+/// Report Reference value for an Input Report (report type 0x01).
+pub const REPORT_TYPE_INPUT: u8 = 0x01;
 /// Protocol Mode characteristic (0x2A4E).
 pub const HID_PROTOCOL_MODE: u16 = 0x2A4E;
 
