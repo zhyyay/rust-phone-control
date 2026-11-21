@@ -152,6 +152,37 @@ impl BleHidService {
             ),
         )?;
 
+        // Protocol Mode is readable and this implementation only supports Report Mode.
+        protocol_mode.ReadRequested(
+            &TypedEventHandler::<GattLocalCharacteristic, GattReadRequestedEventArgs>::new(
+                |_sender, args| {
+                    if let Some(args) = args.cloned() {
+                        let deferral = args.GetDeferral()?;
+                        tokio::spawn(async move {
+                            let result = async {
+                                let request = args.GetRequestAsync()?.await?;
+                                let writer = DataWriter::new()?;
+                                writer.WriteByte(1)?;
+                                request.RespondWithValue(&writer.DetachBuffer()?)?;
+                                Ok::<(), windows_062::core::Error>(())
+                            }
+                            .await;
+
+                            if let Err(error) = result {
+                                tracing::warn!("HID Protocol Mode read failed: {error}");
+                            }
+                            if let Err(error) = deferral.Complete() {
+                                tracing::warn!(
+                                    "HID Protocol Mode read deferral completion failed: {error}"
+                                );
+                            }
+                        });
+                    }
+                    Ok(())
+                },
+            ),
+        )?;
+
         let mouse_report = create_input_report_characteristic(&service, 4)
             .await
             .context("creating mouse input Report characteristic")?;
