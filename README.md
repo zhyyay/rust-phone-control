@@ -5,14 +5,27 @@ and Rust-based screen automation.
 
 ## Current status
 
-The repository currently contains the GPUI Kit desktop shell, read-only iCTRL discovery, logging,
-and the first platform-independent HID-over-GATT protocol core. The HID core defines a composite
-relative mouse + keyboard Report Map and tested report encoders.
+The repository contains the GPUI Kit desktop shell, read-only iCTRL discovery, logging, normalized
+input types, HID report encoders, and an initial Windows WinRT BLE GATT peripheral implementation.
 
-**The complete Windows BLE HID GATT server and advertising, AirPlay receiver, live video renderer, screenshot pipeline, and OCR
-automation are not implemented yet.** The protocol core does not claim that a PC can already pair
-with or control an iPhone. BLE control depends on the local adapter supporting the peripheral role
-and on successful iOS AssistiveTouch pairing.
+The Windows BLE implementation publishes:
+- HID Service with a composite relative mouse + keyboard Report Map.
+- Separate mouse and keyboard Input Report characteristics with Report Reference descriptors.
+- HID Control Point suspend/resume handling.
+- Battery Service and Device Information Service (PnP ID).
+- Encrypted GATT access for HID, Battery, and Device Information characteristics.
+
+This is a **Report Host** implementation. It intentionally does not publish Protocol Mode or Boot
+Protocol characteristics. The PnP ID currently uses the USB-IF reserved test VID and must be
+replaced with a legitimately assigned VID/PID before product distribution.
+
+**Not yet validated:** successful Windows advertising on the target adapter, iPhone discovery,
+bonding/pairing, AssistiveTouch pointer behavior, and end-to-end mouse/keyboard input. Windows
+Peripheral-role support and successful GATT service creation are capability checks, not proof that
+iOS will pair with this implementation.
+
+AirPlay receiver, live video renderer, screenshot pipeline, OCR automation, reconnect management,
+and multi-device sessions are not implemented yet.
 
 ## Planned architecture
 
@@ -33,6 +46,12 @@ cargo fmt --all -- --check
 cargo test --all-targets
 cargo check --all-targets
 cargo run --bin phone-desktop
+```
+
+To run the BLE peripheral diagnostic on Windows:
+
+```powershell
+cargo run --bin ble-probe
 ```
 
 See `docs/DEVELOPMENT.md` for setup, hardware checks, and implementation boundaries.
