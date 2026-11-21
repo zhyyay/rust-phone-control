@@ -71,9 +71,10 @@ impl BleHidService {
         )
         .await
         .context("creating HID Control Point characteristic")?;
-        control_point.WriteRequested(windows::core::TypedEventHandler::new(
+        control_point.WriteRequested(windows::Foundation::TypedEventHandler::new(
             |_sender, args| {
-                if let Some(args) = args {
+                if let Some(args) = args.as_ref() {
+                    let args = args.clone();
                     let deferral = args.GetDeferral()?;
                     tokio::spawn(async move {
                         let result = async {
@@ -246,7 +247,8 @@ async fn create_input_report_characteristic(
 
     characteristic.ReadRequested(windows::core::TypedEventHandler::new(
         move |_sender, args| {
-            if let Some(args) = args {
+            if let Some(args) = args.as_ref() {
+                let args = args.clone();
                 let deferral = args.GetDeferral()?;
                 tokio::spawn(async move {
                     let result = async {
