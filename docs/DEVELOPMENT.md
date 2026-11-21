@@ -16,29 +16,48 @@ cargo check --all-targets
 cargo run --bin phone-desktop
 ```
 
-## BLE HID foundation
+## Windows BLE HID implementation
 
-The platform-independent input layer lives in `src/input`.
+The Windows BLE implementation is in `src/input/ble/service.rs`.
 
-- `event.rs`: normalized pointer, button, scroll, and keyboard events.
-- `ble/descriptor.rs`: HID service/characteristic identifiers and a composite mouse + keyboard
-  Report Map (mouse report ID 1, keyboard report ID 2).
-- `ble/reports.rs`: fixed-layout report encoders, signed movement clamping, and release reports.
-- `ble/capability.rs`: explicit capability states so an unavailable adapter is not confused with
-  a failed capability probe.
+Published services and characteristics:
+- HID Service (0x1812): HID Information, Report Map, HID Control Point, mouse Input Report
+  (report ID 1), and keyboard Input Report (report ID 2).
+- Battery Service (0x180F): readable Battery Level (100% placeholder).
+- Device Information Service (0x180A): readable PnP ID.
+- Report Reference descriptors identify each input report and its report ID.
+- HID, Battery, and Device Information characteristic reads/writes require an encrypted link.
 
-The Windows BLE adapter probe is available with `cargo run --bin ble-probe`. It checks the default adapter and whether Windows reports Peripheral-role support, then attempts to create (but does not advertise) the HID GATT service. This is a capability diagnostic only; it does not yet publish the HID characteristics or pair a phone.
+This implementation targets a **Report Host**. Protocol Mode and Boot Protocol characteristics
+are intentionally not published because Boot Keyboard / Boot Mouse characteristics are not
+implemented. The Report Host profile permits Protocol Mode to be absent. HID Control Point
+Suspend and Exit Suspend commands suppress notifications while suspended and clear the last
+reported input state.
 
-The next implementation step is the Windows WinRT GATT server. It must publish the HID service,
-HID Information, Report Map, Control Point, Protocol Mode, and separate Report characteristics
-with Report Reference descriptors. The Windows adapter must be checked for BLE Peripheral/GATT
-server support before advertising; Central-only adapters cannot host this service.
+The PnP ID currently uses the USB-IF reserved test VID (0xFFFF), product ID 1, version 1.0.0.
+It is for development/testing only and must be replaced with a legitimately assigned VID/PID
+before distributing the application.
 
-After the Windows service is implemented, pair from iPhone:
+Run the Windows BLE diagnostic:
+
+```powershell
+cargo run --bin ble-probe
+```
+
+The probe checks the default adapter's BLE Peripheral-role capability and whether Windows can
+create a HID GATT service provider. The executable then attempts to publish HID, Battery, and
+Device Information services and start advertising. A successful provider creation or advertising
+status is not proof of successful iPhone discovery, bonding, or HID operation.
+
+After advertising starts, try pairing from iPhone:
 `Settings → Accessibility → Touch → AssistiveTouch → Devices → Bluetooth Devices`.
 The exact labels may vary by iOS language/version. This is AssistiveTouch pointer control, not
 native touchscreen injection. Relative mouse motion needs calibration; absolute-coordinate
 automation is not promised by this backend.
+
+**Not yet validated:** target-adapter advertising, iPhone discovery and bonding, AssistiveTouch
+compatibility, notification subscription, and end-to-end input delivery. These require testing on
+the actual Windows laptop and iPhone.
 
 ## iCTRL discovery
 
@@ -56,19 +75,22 @@ do not invent a handshake or send plaintext control requests.
 
 Implemented:
 - GPUI Kit desktop shell, logging, and read-only iCTRL discovery.
-- Platform-independent mouse/keyboard event types.
-- HID-over-GATT Report Map and mouse/keyboard report encoders with unit tests.
+- Platform-independent mouse/keyboard input event types and report encoders.
+- Initial Windows WinRT BLE HID Report Host GATT services and advertising implementation.
+- HID suspend/resume handling and current input-report readback.
 
-Not implemented:
-- Full Windows WinRT HID GATT service publisher, characteristic/report handlers, advertising, and iPhone pairing.
-- iPhone pairing, reconnect, suspend/resume, and real device input validation.
+Not implemented or not yet validated:
+- Boot Protocol support.
+- Persistent pairing/bond management and reconnect lifecycle.
+- Verified iPhone pairing and real device input delivery.
 - AirPlay receiver, H.264 decoding/rendering, and live screenshot capture.
 - OCR, screen-coordinate mapping, and automation task runner.
+- Multi-device concurrent control; the first version is single-active-device.
 
 ## Planned phases
 
-1. **Phase 1-A:** Windows BLE capability probe, GATT HID service, iPhone AssistiveTouch pairing,
-   and end-to-end mouse/keyboard validation.
+1. **Phase 1-A:** validate Windows BLE advertising, iPhone AssistiveTouch pairing, and end-to-end
+   mouse/keyboard input.
 2. **Phase 1-B:** AirPlay receiver process, H.264 frame transport, Windows decode, and GPUI display.
 3. **Phase 1-C:** Unified device/session UI, reconnect handling, and emergency release of all keys.
 4. **Phase 2:** Screenshot API, coordinate transforms, OCR, and Rust automation executor.
