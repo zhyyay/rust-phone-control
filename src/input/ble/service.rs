@@ -23,7 +23,7 @@ use windows_062::{
     },
     Foundation::TypedEventHandler,
     Storage::Streams::{DataReader, DataWriter},
-    core::GUID,
+    core::{GUID, IInspectable},
 };
 
 use super::descriptor::{
@@ -156,6 +156,41 @@ impl BleHidService {
                 .await
                 .context("creating keyboard input Report characteristic")?;
         add_report_reference(&keyboard_report, 2).await?;
+
+        // A BLE link can be connected without the HID host subscribing to input reports.
+        // Track CCCD subscriptions separately so the probe can distinguish the two states.
+        mouse_report.SubscribedClientsChanged(&TypedEventHandler::<
+            GattLocalCharacteristic,
+            IInspectable,
+        >::new(|sender, _args| {
+            match sender.SubscribedClients() {
+                Ok(clients) => tracing::info!(
+                    count = clients.Size().unwrap_or(0),
+                    "iPhone mouse HID report subscription count changed"
+                ),
+                Err(error) => tracing::warn!(
+                    "Could not read mouse HID subscribed clients: {error}"
+                ),
+            }
+            Ok(())
+        }))?;
+        keyboard_report.SubscribedClientsChanged(&TypedEventHandler::<
+            GattLocalCharacteristic,
+            IInspectable,
+        >::new(|sender, _args| {
+            match sender.SubscribedClients() {
+                Ok(clients) => tracing::info!(
+                    count = clients.Size().unwrap_or(0),
+                    "iPhone keyboard HID report subscription count changed"
+                ),
+                Err(error) => tracing::warn!(
+                    "Could not read keyboard HID subscribed clients: {error}"
+                ),
+            }
+            Ok(())
+        }))?;
+
+        tracing::info!("HID mouse and keyboard report subscription diagnostics are enabled");
 
         // Windows reserves Device Information Service (0x180A) for the system.
         // Applications receive BluetoothError::DisabledByPolicy when trying to publish it.
