@@ -1,76 +1,64 @@
-//! Optional external AirPlay receiver process integration.
+//! Built-in AirPlay control-plane prototype.
 //!
-//! The receiver is kept as a separate executable to avoid linking GPL-3.0 code into this app.
-#[cfg(windows)]
-use std::{
-    path::PathBuf,
-    process::{Child, Command},
-    sync::{Mutex, OnceLock},
-};
+//! Modules are intentionally separated by responsibility. The current code
+//! provides mDNS publication, a TCP listener, OPTIONS, and /server-info only.
+//! It does not yet implement AirPlay pairing, FairPlay, encrypted media, or
+//! video decoding, and advertises zero feature bits rather than claiming those
+//! unsupported capabilities.
+
+mod config;
+mod discovery;
+mod rtsp;
+mod server;
 
 #[cfg(windows)]
-static RECEIVER: OnceLock<Mutex<Option<Child>>> = OnceLock::new();
+use std::sync::{Mutex, OnceLock};
 
 #[cfg(windows)]
-fn receiver_slot() -> &'static Mutex<Option<Child>> {
+struct ReceiverRuntime {
+    // Drop the TCP listener before withdrawing its discovery record.
+    server: server::ControlServer,
+    advertisement: discovery::Advertisement,
+}
+
+#[cfg(windows)]
+static RECEIVER: OnceLock<Mutex<Option<ReceiverRuntime>>> = OnceLock::new();
+
+#[cfg(windows)]
+fn receiver_slot() -> &'static Mutex<Option<ReceiverRuntime>> {
     RECEIVER.get_or_init(|| Mutex::new(None))
 }
 
 #[cfg(windows)]
-fn receiver_path() -> anyhow::Result<PathBuf> {
-    if let Some(path) = std::env::var_os("AIRBRIDGE_EXE") {
-        let path = PathBuf::from(path);
-        anyhow::ensure!(path.is_file(), "AIRBRIDGE_EXE does not point to a file: {}", path.display());
-        return Ok(path);
-    }
-
-    let executable = std::env::current_exe()?;
-    let sibling = executable
-        .parent()
-        .unwrap_or_else(|| std::path::Path::new("."))
-        .join("airbridge.exe");
-    anyhow::ensure!(
-        sibling.is_file(),
-        "AirBridge was not found. Set AIRBRIDGE_EXE to the full path of airbridge.exe, or place airbridge.exe beside phone-desktop.exe."
-    );
-    Ok(sibling)
-}
-
-#[cfg(windows)]
 pub fn start() -> anyhow::Result<()> {
-    let mut receiver = receiver_slot()
+    let mut runtime = receiver_slot()
         .lock()
-        .map_err(|_| anyhow::anyhow!("AirPlay receiver process lock is poisoned"))?;
+        .map_err(|_| anyhow::anyhow!("AirPlay runtime lock is poisoned"))?;
 
-    if let Some(child) = receiver.as_mut() {
-        if child.try_wait()?.is_none() {
-            tracing::info!("AirPlay receiver is already running");
-            return Ok(());
-        }
-        *receiver = None;
+    if runtime.is_some() {
+        tracing::info!("Built-in AirPlay control endpoint is already running");
+        return Ok(());
     }
 
-    let path = receiver_path()?;
-    let child = Command::new(&path)
-        .spawn()
-        .map_err(|error| anyhow::anyhow!("failed to launch {}: {error}", path.display()))?;
-    tracing::info!(path = %path.display(), pid = child.id(), "AirPlay receiver started");
-    *receiver = Some(child);
+    let server = server::ControlServer::start()?;
+    let advertisement = discovery::Advertisement::start()?;
+    *runtime = Some(ReceiverRuntime {
+        server,
+        advertisement,
+    });
+    tracing::info!(
+        "Built-in AirPlay discovery/control endpoint started; secure mirroring is not implemented yet"
+    );
     Ok(())
 }
 
 #[cfg(windows)]
 pub fn stop() -> anyhow::Result<()> {
-    let mut receiver = receiver_slot()
+    let mut runtime = receiver_slot()
         .lock()
-        .map_err(|_| anyhow::anyhow!("AirPlay receiver process lock is poisoned"))?;
-
-    if let Some(mut child) = receiver.take() {
-        if child.try_wait()?.is_none() {
-            child.kill()?;
-            child.wait()?;
-            tracing::info!("AirPlay receiver stopped");
-        }
+        .map_err(|_| anyhow::anyhow!("AirPlay runtime lock is poisoned"))?;
+    if runtime.take().is_some() {
+        tracing::info!("Built-in AirPlay control endpoint stopped");
     }
     Ok(())
 }
