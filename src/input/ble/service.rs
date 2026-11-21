@@ -13,7 +13,8 @@ use windows_062::{
     Devices::Bluetooth::{
         BluetoothError,
         GenericAttributeProfile::{
-            GattCharacteristic, GattCharacteristicProperties, GattDescriptor,
+            GattCharacteristic, GattCharacteristicProperties, GattCommunicationStatus,
+            GattDescriptor,
             GattLocalCharacteristic, GattLocalCharacteristicParameters, GattLocalDescriptorParameters,
             GattLocalService, GattProtectionLevel, GattReadRequestedEventArgs, GattServiceProvider,
             GattServiceProviderAdvertisingParameters, GattWriteOption, GattWriteRequestedEventArgs,
@@ -214,10 +215,14 @@ impl BleHidService {
         let report_bytes = report.as_bytes();
         *self.mouse_state.lock().unwrap_or_else(|p| p.into_inner()) = report_bytes.to_vec();
         let buffer = buffer_from_bytes(&report_bytes)?;
-        self.mouse_report
+        let status = self
+            .mouse_report
             .NotifyValueAsync(&buffer)?
             .await
             .context("sending mouse HID notification")?;
+        if status != GattCommunicationStatus::Success {
+            bail!("mouse HID notification was not accepted: {status:?}");
+        }
         Ok(())
     }
 
@@ -229,10 +234,14 @@ impl BleHidService {
         let report_bytes = report.as_bytes();
         *self.keyboard_state.lock().unwrap_or_else(|p| p.into_inner()) = report_bytes.to_vec();
         let buffer = buffer_from_bytes(&report_bytes)?;
-        self.keyboard_report
+        let status = self
+            .keyboard_report
             .NotifyValueAsync(&buffer)?
             .await
             .context("sending keyboard HID notification")?;
+        if status != GattCommunicationStatus::Success {
+            bail!("keyboard HID notification was not accepted: {status:?}");
+        }
         Ok(())
     }
 
