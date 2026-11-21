@@ -19,5 +19,9 @@ fn main() -> Result<()> {
         })
         .expect("failed to open Rust Phone Control window");
     });
+    #[cfg(windows)]
+    if let Err(error) = airplay::stop() {
+        tracing::warn!(error = %format!("{error:#}"), "Could not stop AirPlay receiver during shutdown");
+    }
     Ok(())
 }
