@@ -1,7 +1,14 @@
 #[cfg(windows)]
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    use rust_phone_control::input::ble::{service::BleHidService, windows::probe_hid_peripheral};
+    use rust_phone_control::input::{
+        ble::{
+            reports::{KeyboardReport, MouseReport},
+            service::BleHidService,
+            windows::probe_hid_peripheral,
+        },
+        event::{KeyModifiers, MouseButtons},
+    };
 
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::INFO)
@@ -40,14 +47,41 @@ async fn main() -> anyhow::Result<()> {
     } else {
         println!("Windows BLE GATT advertising is started.");
     }
-    println!("Keep this window open while pairing your iPhone. Press Ctrl+C to stop.");
+    println!("Keep this window open while your iPhone is connected.");
+    println!("Watch for mouse and keyboard report subscription count logs.");
+    println!("When BOTH counts show 1, open an editable text field on iPhone, focus it,");
+    println!("then press Enter here to send a small mouse move and the letter 'a'.");
+    println!("Do not press Enter until both report subscriptions are logged.");
+    println!("Press Ctrl+C to stop without sending a test.");
 
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
             println!("Stopping BLE HID advertising...");
             service.stop()?;
         }
-        _ = std::future::pending::<()>() => {}
+        line = tokio::task::spawn_blocking(|| {
+            let mut line = String::new();
+            std::io::stdin().read_line(&mut line)?;
+            Ok::<String, std::io::Error>(line)
+        }) => {
+            let _line = line??;
+            println!("Sending mouse movement test (24, 0)...");
+            service.send_mouse_report(MouseReport::new(MouseButtons::NONE, 24, 0, 0)).await?;
+            service.send_mouse_report(MouseReport::release()).await?;
+            println!("Mouse report notifications submitted.");
+
+            println!("Sending keyboard test: lowercase 'a'...");
+            service.send_keyboard_report(KeyboardReport::new(
+                KeyModifiers::NONE,
+                [0x04, 0, 0, 0, 0, 0],
+            )).await?;
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            service.send_keyboard_report(KeyboardReport::release()).await?;
+            println!("Keyboard report notifications submitted.");
+            println!("Test complete. Press Ctrl+C to stop.");
+            tokio::signal::ctrl_c().await?;
+            service.stop()?;
+        }
     }
     Ok(())
 }
