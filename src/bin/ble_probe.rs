@@ -21,12 +21,24 @@ async fn main() -> anyhow::Result<()> {
 
     println!("Creating HID GATT service and starting BLE advertising...");
     let service = BleHidService::start().await?;
-    let advertising_status = service.advertising_status()?;
+    // Windows may report a transient Aborted status immediately after StartAdvertising,
+    // then transition to Started asynchronously. Wait briefly for the settled state.
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+    let advertising_status = loop {
+        let status = service.advertising_status()?;
+        if status.contains("(2)") || tokio::time::Instant::now() >= deadline {
+            break status;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    };
+
     println!("HID GATT advertising status: {advertising_status}");
-    if advertising_status.contains("(3)") {
+    if !advertising_status.contains("(2)") {
         eprintln!(
-            "WARNING: Windows aborted GATT advertising. Check the status-change event log above for the BluetoothError."
+            "WARNING: Windows did not report Started within 2 seconds. Check the status-change event log above."
         );
+    } else {
+        println!("Windows BLE GATT advertising is started.");
     }
     println!("Keep this window open while pairing your iPhone. Press Ctrl+C to stop.");
 
