@@ -5,7 +5,7 @@ async fn main() -> anyhow::Result<()> {
 
     println!("Checking Windows BLE HID peripheral capability...");
     let capability = probe_hid_peripheral().await?;
-    println!("Adapter: {:?}", capability.adapter_name);
+    println!("Adapter: {:?}", capability.adapter_id);
     println!("Status: {:?}", capability.status);
 
     if !matches!(
