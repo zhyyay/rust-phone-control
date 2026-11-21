@@ -1,3 +1,5 @@
+#[cfg(windows)]
+mod airplay;
 mod app;
 mod logging;
 
