@@ -163,6 +163,9 @@ impl BleHidService {
             GattLocalCharacteristic,
             IInspectable,
         >::new(|sender, _args| {
+            // windows 0.62 event handlers receive a borrowed Ref; unwrap it to
+            // the underlying GattLocalCharacteristic before calling projected APIs.
+            let sender = sender.ok()?;
             match sender.SubscribedClients() {
                 Ok(clients) => tracing::info!(
                     count = clients.Size().unwrap_or(0),
@@ -178,6 +181,9 @@ impl BleHidService {
             GattLocalCharacteristic,
             IInspectable,
         >::new(|sender, _args| {
+            // windows 0.62 event handlers receive a borrowed Ref; unwrap it to
+            // the underlying GattLocalCharacteristic before calling projected APIs.
+            let sender = sender.ok()?;
             match sender.SubscribedClients() {
                 Ok(clients) => tracing::info!(
                     count = clients.Size().unwrap_or(0),
