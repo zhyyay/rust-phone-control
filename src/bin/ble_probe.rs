@@ -3,6 +3,10 @@
 async fn main() -> anyhow::Result<()> {
     use rust_phone_control::input::ble::{service::BleHidService, windows::probe_hid_peripheral};
 
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::INFO)
+        .init();
+
     println!("Checking Windows BLE HID peripheral capability...");
     let capability = probe_hid_peripheral().await?;
     println!("Adapter: {:?}", capability.adapter_id);
@@ -17,10 +21,13 @@ async fn main() -> anyhow::Result<()> {
 
     println!("Creating HID GATT service and starting BLE advertising...");
     let service = BleHidService::start().await?;
-    println!(
-        "HID GATT service is active. Advertising status: {}",
-        service.advertising_status()?
-    );
+    let advertising_status = service.advertising_status()?;
+    println!("HID GATT advertising status: {advertising_status}");
+    if advertising_status.contains("(3)") {
+        eprintln!(
+            "WARNING: Windows aborted GATT advertising. Check the status-change event log above for the BluetoothError."
+        );
+    }
     println!("Keep this window open while pairing your iPhone. Press Ctrl+C to stop.");
 
     tokio::select! {
