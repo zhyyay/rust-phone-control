@@ -95,17 +95,17 @@ impl Render for PhoneControlApp {
                                 Button::new("mouse-click")
                                     .primary()
                                     .label("Left click")
-                                    .on_click(|_, _, _| queue_ble(crate::input::ble::desktop::left_click())),
+                                    .on_click(|_, _, _| queue_ble(left_click_ble())),
                             )
                             .child(
                                 Button::new("mouse-scroll-up")
                                     .label("Scroll up")
-                                    .on_click(|_, _, _| queue_ble(crate::input::ble::desktop::scroll(-3))),
+                                    .on_click(|_, _, _| queue_ble(scroll_ble(-3))),
                             )
                             .child(
                                 Button::new("mouse-scroll-down")
                                     .label("Scroll down")
-                                    .on_click(|_, _, _| queue_ble(crate::input::ble::desktop::scroll(3))),
+                                    .on_click(|_, _, _| queue_ble(scroll_ble(3))),
                             ),
                     ),
             )
@@ -126,7 +126,7 @@ impl Render for PhoneControlApp {
                         Button::new("keyboard-test")
                             .primary()
                             .label("Type BLE OK")
-                            .on_click(|_, _, _| queue_ble(crate::input::ble::desktop::type_sample())),
+                            .on_click(|_, _, _| queue_ble(type_sample_ble())),
                     ),
             )
             .child(Label::new(
@@ -138,7 +138,7 @@ impl Render for PhoneControlApp {
 fn move_button(id: &'static str, label: &'static str, dx: i32, dy: i32) -> impl IntoElement {
     Button::new(id)
         .label(label)
-        .on_click(move |_, _, _| queue_ble(crate::input::ble::desktop::move_mouse(dx, dy)))
+        .on_click(move |_, _, _| move_ble(dx, dy))
 }
 
 #[cfg(windows)]
@@ -170,3 +170,31 @@ fn queue_ble(result: anyhow::Result<()>) {
 
 #[cfg(not(windows))]
 fn queue_ble(_: ()) {}
+
+#[cfg(windows)]
+fn move_ble(dx: i32, dy: i32) {
+    queue_ble(crate::input::ble::desktop::move_mouse(dx, dy));
+}
+#[cfg(not(windows))]
+fn move_ble(_: i32, _: i32) {}
+
+#[cfg(windows)]
+fn left_click_ble() {
+    queue_ble(crate::input::ble::desktop::left_click());
+}
+#[cfg(not(windows))]
+fn left_click_ble() {}
+
+#[cfg(windows)]
+fn scroll_ble(amount: i32) {
+    queue_ble(crate::input::ble::desktop::scroll(amount));
+}
+#[cfg(not(windows))]
+fn scroll_ble(_: i32) {}
+
+#[cfg(windows)]
+fn type_sample_ble() {
+    queue_ble(crate::input::ble::desktop::type_sample());
+}
+#[cfg(not(windows))]
+fn type_sample_ble() {}
