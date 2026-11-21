@@ -88,6 +88,8 @@ impl BleHidService {
         .context("creating HID Control Point characteristic")?;
 
         let control_point_suspended = Arc::clone(&suspended);
+        let control_point_mouse_state = Arc::clone(&mouse_state);
+        let control_point_keyboard_state = Arc::clone(&keyboard_state);
         control_point.WriteRequested(&TypedEventHandler::<
             GattLocalCharacteristic,
             GattWriteRequestedEventArgs,
@@ -95,8 +97,8 @@ impl BleHidService {
             if let Some(args) = args.cloned() {
                 let deferral = args.GetDeferral()?;
                 let suspended = Arc::clone(&control_point_suspended);
-                let mouse_state = Arc::clone(&mouse_state);
-                let keyboard_state = Arc::clone(&keyboard_state);
+                let mouse_state = Arc::clone(&control_point_mouse_state);
+                let keyboard_state = Arc::clone(&control_point_keyboard_state);
                 tokio::spawn(async move {
                     let result = async {
                         let request = args.GetRequestAsync()?.await?;
