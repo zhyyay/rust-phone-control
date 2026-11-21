@@ -19,7 +19,8 @@ use windows_062::{
             GattServiceProviderAdvertisingParameters, GattWriteOption, GattWriteRequestedEventArgs,
         },
     },
-    Foundation::{TypedEventHandler, GUID},
+    Foundation::TypedEventHandler,
+    core::GUID,
     Storage::Streams::{DataReader, DataWriter},
 };
 
