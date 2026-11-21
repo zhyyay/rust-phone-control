@@ -6,7 +6,8 @@ and Rust-based screen automation.
 ## Current status
 
 The repository contains the GPUI Kit desktop shell, read-only iCTRL discovery, logging, normalized
-input types, HID report encoders, and an initial Windows WinRT BLE GATT peripheral implementation.
+input types, HID report encoders, a Windows WinRT BLE GATT peripheral implementation, and desktop
+UI controls for starting/stopping BLE advertising plus mouse movement, click, scroll, and ASCII typing.
 
 The Windows BLE implementation publishes:
 - HID Service with a composite relative mouse + keyboard Report Map.
@@ -19,10 +20,10 @@ The Windows BLE implementation publishes:
 This is a **Report Host** implementation. It intentionally does not publish Protocol Mode or Boot
 Protocol characteristics. Windows reserves Device Information Service (0x180A), so this application does not attempt to publish a PnP ID characteristic.
 
-**Not yet validated:** successful Windows advertising on the target adapter, iPhone discovery,
-bonding/pairing, AssistiveTouch pointer behavior, and end-to-end mouse/keyboard input. Windows
-Peripheral-role support and successful GATT service creation are capability checks, not proof that
-iOS will pair with this implementation.
+**Validated on the developer's Windows laptop and iPhone:** BLE HID advertising, iPhone AssistiveTouch
+connection, mouse movement, left click, vertical scrolling, and keyboard text input. The desktop UI
+now exposes these controls through a dedicated background BLE worker. Reconnection lifecycle,
+connection-state presentation, absolute touchscreen injection, and multi-device control remain future work.
 
 AirPlay receiver, live video renderer, screenshot pipeline, OCR automation, reconnect management,
 and multi-device sessions are not implemented yet.
