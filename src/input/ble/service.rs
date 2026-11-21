@@ -3,7 +3,7 @@
 //! Publishes the standard HID service. Mouse and keyboard input reports are dynamic
 //! notify characteristics; callers send reports after an iPhone subscribes.
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{anyhow, bail, Context, Result};
 use windows_062::{
     Devices::Bluetooth::{
         BluetoothError,
@@ -20,8 +20,8 @@ use windows_062::{
 };
 
 use super::descriptor::{
-    HID_CONTROL_POINT, HID_INFORMATION, HID_INFORMATION_VALUE, HID_PROTOCOL_MODE, HID_REPORT_MAP,
-    HID_REPORT_MAP_CHARACTERISTIC, HID_REPORT_REFERENCE,
+    HID_CONTROL_POINT, HID_INFORMATION, HID_INFORMATION_VALUE, HID_PROTOCOL_MODE,
+    HID_REPORT_MAP, HID_REPORT_MAP_CHARACTERISTIC, HID_REPORT_REFERENCE,
 };
 use super::reports::{KeyboardReport, MouseReport};
 
@@ -74,21 +74,7 @@ impl BleHidService {
         )
         .await
         .context("creating HID Control Point characteristic")?;
-<<<<<<< HEAD
-        control_point.WriteRequested(TypedEventHandler::<
-            GattLocalCharacteristic,
-            GattWriteRequestedEventArgs,
-        >::new(|_sender, args| {
-            if let Some(args) = args.cloned() {
-                let deferral = args.GetDeferral()?;
-                tokio::spawn(async move {
-                    let result = async {
-                        let request = args.GetRequestAsync()?.await?;
-                        if request.Option()? == GattWriteOption::WriteWithResponse {
-                            request.Respond()?;
-                        }
-                        Ok::<(), windows_062::core::Error>(())
-=======
+
         control_point.WriteRequested(
             &TypedEventHandler::<GattLocalCharacteristic, GattWriteRequestedEventArgs>::new(
                 |_sender, args| {
@@ -103,26 +89,21 @@ impl BleHidService {
                                 Ok::<(), windows_062::core::Error>(())
                             }
                             .await;
+
                             if let Err(error) = result {
                                 tracing::warn!("HID Control Point write failed: {error}");
                             }
                             if let Err(error) = deferral.Complete() {
-                                tracing::warn!("HID Control Point deferral completion failed: {error}");
+                                tracing::warn!(
+                                    "HID Control Point deferral completion failed: {error}"
+                                );
                             }
                         });
->>>>>>> e5a5e35bed37d40aa65a70dc54632f6079d0d90b
                     }
-                    .await;
-                    if let Err(error) = result {
-                        tracing::warn!("HID Control Point write failed: {error}");
-                    }
-                    if let Err(error) = deferral.Complete() {
-                        tracing::warn!("HID Control Point deferral completion failed: {error}");
-                    }
-                });
-            }
-            Ok(())
-        }))?;
+                    Ok(())
+                },
+            ),
+        )?;
 
         let protocol_mode = create_characteristic(
             &service,
@@ -133,22 +114,7 @@ impl BleHidService {
         )
         .await
         .context("creating HID Protocol Mode characteristic")?;
-<<<<<<< HEAD
-        protocol_mode.WriteRequested(TypedEventHandler::<
-            GattLocalCharacteristic,
-            GattWriteRequestedEventArgs,
-        >::new(|_sender, args| {
-            if let Some(args) = args.cloned() {
-                let deferral = args.GetDeferral()?;
-                tokio::spawn(async move {
-                    let result = async {
-                        let request = args.GetRequestAsync()?.await?;
-                        let reader = DataReader::FromBuffer(&request.Value()?)?;
-                        let requested_mode = reader.ReadByte()?;
-                        if requested_mode == 1 {
-                            if request.Option()? == GattWriteOption::WriteWithResponse {
-                                request.Respond()?;
-=======
+
         protocol_mode.WriteRequested(
             &TypedEventHandler::<GattLocalCharacteristic, GattWriteRequestedEventArgs>::new(
                 |_sender, args| {
@@ -159,6 +125,7 @@ impl BleHidService {
                                 let request = args.GetRequestAsync()?.await?;
                                 let reader = DataReader::FromBuffer(&request.Value()?)?;
                                 let requested_mode = reader.ReadByte()?;
+
                                 if requested_mode == 1 {
                                     if request.Option()? == GattWriteOption::WriteWithResponse {
                                         request.Respond()?;
@@ -167,24 +134,23 @@ impl BleHidService {
                                     request.RespondWithProtocolError(0x03)?;
                                 }
                                 Ok::<(), windows_062::core::Error>(())
->>>>>>> e5a5e35bed37d40aa65a70dc54632f6079d0d90b
                             }
-                        } else {
-                            request.RespondWithProtocolError(0x03)?;
-                        }
-                        Ok::<(), windows_062::core::Error>(())
+                            .await;
+
+                            if let Err(error) = result {
+                                tracing::warn!("HID Protocol Mode write failed: {error}");
+                            }
+                            if let Err(error) = deferral.Complete() {
+                                tracing::warn!(
+                                    "HID Protocol Mode deferral completion failed: {error}"
+                                );
+                            }
+                        });
                     }
-                    .await;
-                    if let Err(error) = result {
-                        tracing::warn!("HID Protocol Mode write failed: {error}");
-                    }
-                    if let Err(error) = deferral.Complete() {
-                        tracing::warn!("HID Protocol Mode deferral completion failed: {error}");
-                    }
-                });
-            }
-            Ok(())
-        }))?;
+                    Ok(())
+                },
+            ),
+        )?;
 
         let mouse_report = create_input_report_characteristic(&service, 4)
             .await
@@ -256,9 +222,7 @@ async fn create_static_characteristic(
     parameters.SetStaticValue(&buffer)?;
 
     let uuid = GattCharacteristic::ConvertShortIdToUuid(short_uuid)?;
-    let result = service
-        .CreateCharacteristicAsync(uuid, &parameters)?
-        .await?;
+    let result = service.CreateCharacteristicAsync(uuid, &parameters)?.await?;
     let error = result.Error()?;
     if error != BluetoothError::Success {
         return Err(anyhow!(
@@ -279,9 +243,7 @@ async fn create_characteristic(
     parameters.SetWriteProtectionLevel(GattProtectionLevel::Plain)?;
 
     let uuid = GattCharacteristic::ConvertShortIdToUuid(short_uuid)?;
-    let result = service
-        .CreateCharacteristicAsync(uuid, &parameters)?
-        .await?;
+    let result = service.CreateCharacteristicAsync(uuid, &parameters)?.await?;
     let error = result.Error()?;
     if error != BluetoothError::Success {
         return Err(anyhow!(
@@ -302,21 +264,6 @@ async fn create_input_report_characteristic(
     )
     .await?;
 
-<<<<<<< HEAD
-    characteristic.ReadRequested(TypedEventHandler::<
-        GattLocalCharacteristic,
-        GattReadRequestedEventArgs,
-    >::new(move |_sender, args| {
-        if let Some(args) = args.cloned() {
-            let deferral = args.GetDeferral()?;
-            tokio::spawn(async move {
-                let result = async {
-                    let request = args.GetRequestAsync()?.await?;
-                    let writer = DataWriter::new()?;
-                    writer.WriteBytes(&vec![0; report_len])?;
-                    request.RespondWithValue(&writer.DetachBuffer()?)?;
-                    Ok::<(), windows_062::core::Error>(())
-=======
     characteristic.ReadRequested(
         &TypedEventHandler::<GattLocalCharacteristic, GattReadRequestedEventArgs>::new(
             move |_sender, args| {
@@ -331,26 +278,21 @@ async fn create_input_report_characteristic(
                             Ok::<(), windows_062::core::Error>(())
                         }
                         .await;
+
                         if let Err(error) = result {
                             tracing::warn!("HID input report read failed: {error}");
                         }
                         if let Err(error) = deferral.Complete() {
-                            tracing::warn!("HID input report deferral completion failed: {error}");
+                            tracing::warn!(
+                                "HID input report deferral completion failed: {error}"
+                            );
                         }
                     });
->>>>>>> e5a5e35bed37d40aa65a70dc54632f6079d0d90b
                 }
-                .await;
-                if let Err(error) = result {
-                    tracing::warn!("HID input report read failed: {error}");
-                }
-                if let Err(error) = deferral.Complete() {
-                    tracing::warn!("HID input report deferral completion failed: {error}");
-                }
-            });
-        }
-        Ok(())
-    }))?;
+                Ok(())
+            },
+        ),
+    )?;
 
     Ok(characteristic)
 }
@@ -363,9 +305,7 @@ async fn add_report_reference(
     let buffer = buffer_from_bytes(&[report_id, 0x01])?;
     parameters.SetStaticValue(&buffer)?;
     let uuid = GattDescriptor::ConvertShortIdToUuid(HID_REPORT_REFERENCE)?;
-    let result = characteristic
-        .CreateDescriptorAsync(uuid, &parameters)?
-        .await?;
+    let result = characteristic.CreateDescriptorAsync(uuid, &parameters)?.await?;
     let error = result.Error()?;
     if error != BluetoothError::Success {
         bail!("creating Report Reference descriptor for report {report_id} failed: {error:?}");
