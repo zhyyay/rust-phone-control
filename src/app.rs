@@ -143,7 +143,7 @@ fn move_button(id: &'static str, label: &'static str, dx: i32, dy: i32) -> impl 
 
 #[cfg(windows)]
 fn start_ble() {
-    queue_ble(crate::input::ble::desktop::start());
+    queue_ble(rust_phone_control::input::ble::desktop::start());
 }
 
 #[cfg(not(windows))]
@@ -153,7 +153,7 @@ fn start_ble() {
 
 #[cfg(windows)]
 fn stop_ble() {
-    queue_ble(crate::input::ble::desktop::stop());
+    queue_ble(rust_phone_control::input::ble::desktop::stop());
 }
 
 #[cfg(not(windows))]
@@ -173,28 +173,28 @@ fn queue_ble(_: ()) {}
 
 #[cfg(windows)]
 fn move_ble(dx: i32, dy: i32) {
-    queue_ble(crate::input::ble::desktop::move_mouse(dx, dy));
+    queue_ble(rust_phone_control::input::ble::desktop::move_mouse(dx, dy));
 }
 #[cfg(not(windows))]
 fn move_ble(_: i32, _: i32) {}
 
 #[cfg(windows)]
 fn left_click_ble() {
-    queue_ble(crate::input::ble::desktop::left_click());
+    queue_ble(rust_phone_control::input::ble::desktop::left_click());
 }
 #[cfg(not(windows))]
 fn left_click_ble() {}
 
 #[cfg(windows)]
 fn scroll_ble(amount: i32) {
-    queue_ble(crate::input::ble::desktop::scroll(amount));
+    queue_ble(rust_phone_control::input::ble::desktop::scroll(amount));
 }
 #[cfg(not(windows))]
 fn scroll_ble(_: i32) {}
 
 #[cfg(windows)]
 fn type_sample_ble() {
-    queue_ble(crate::input::ble::desktop::type_sample());
+    queue_ble(rust_phone_control::input::ble::desktop::type_sample());
 }
 #[cfg(not(windows))]
 fn type_sample_ble() {}
