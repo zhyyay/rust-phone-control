@@ -14,8 +14,8 @@ impl Render for PhoneControlApp {
             .flex()
             .flex_col()
             .size_full()
-            .p_6()
-            .gap_4()
+            .p_3()
+            .gap_2()
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
             .child(
@@ -26,23 +26,39 @@ impl Render for PhoneControlApp {
                     .child(Label::new("Rust Phone Control"))
                     .child(Label::new("Phase 1 · BLE HID")),
             )
-            .child(Label::new("iPhone wireless input control"))
+            .child(Label::new("iPhone wireless control"))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .p_2()
+                    .rounded_lg()
+                    .border_1()
+                    .border_color(cx.theme().border)
+                    .child(Label::new("AirPlay screen mirror"))
+                    .child(
+                        Button::new("airplay-start")
+                            .primary()
+                            .label("Start mirror")
+                            .on_click(|_, _, _| start_airplay()),
+                    )
+                    .child(
+                        Button::new("airplay-stop")
+                            .label("Stop mirror")
+                            .on_click(|_, _, _| stop_airplay()),
+                    ),
+            )
             .child(
                 div()
                     .flex()
                     .flex_col()
                     .gap_2()
-                    .p_4()
+                    .p_2()
                     .rounded_lg()
                     .border_1()
                     .border_color(cx.theme().border)
-                    .child(Label::new("1. Bluetooth connection"))
-                    .child(Label::new(
-                        "Start BLE advertising, then on iPhone open Settings → Accessibility → Touch → AssistiveTouch → Devices → Bluetooth Devices and connect to danna.",
-                    ))
-                    .child(Label::new(
-                        "The app starts the HID service on this PC. Keep this app open while controlling the phone.",
-                    ))
+                    .child(Label::new("Bluetooth · connect iPhone AssistiveTouch to danna"))
                     .child(
                         div()
                             .flex()
@@ -65,14 +81,11 @@ impl Render for PhoneControlApp {
                     .flex()
                     .flex_col()
                     .gap_2()
-                    .p_4()
+                    .p_2()
                     .rounded_lg()
                     .border_1()
                     .border_color(cx.theme().border)
-                    .child(Label::new("2. Mouse"))
-                    .child(Label::new(
-                        "Use the direction buttons for small relative movements. These are pointer movements, not absolute touchscreen taps.",
-                    ))
+                    .child(Label::new("Mouse · relative pointer movement"))
                     .child(
                         div()
                             .flex()
@@ -114,14 +127,11 @@ impl Render for PhoneControlApp {
                     .flex()
                     .flex_col()
                     .gap_2()
-                    .p_4()
+                    .p_2()
                     .rounded_lg()
                     .border_1()
                     .border_color(cx.theme().border)
-                    .child(Label::new("3. Keyboard"))
-                    .child(Label::new(
-                        "Send a short ASCII test string to the focused text field on iPhone.",
-                    ))
+                    .child(Label::new("Keyboard · type into the focused iPhone field"))
                     .child(
                         Button::new("keyboard-test")
                             .primary()
@@ -129,9 +139,7 @@ impl Render for PhoneControlApp {
                             .on_click(|_, _, _| type_sample_ble()),
                     ),
             )
-            .child(Label::new(
-                "Tip: start advertising first, connect the iPhone in AssistiveTouch, then use the controls above. Check logs/app.log for command errors.",
-            ))
+            .child(Label::new("AirPlay requires the AirBridge receiver and the same Wi-Fi network. See logs/app.log for errors."))
     }
 }
 
@@ -198,3 +206,23 @@ fn type_sample_ble() {
 }
 #[cfg(not(windows))]
 fn type_sample_ble() {}
+
+#[cfg(windows)]
+fn start_airplay() {
+    if let Err(error) = crate::airplay::start() {
+        tracing::error!(error = %format!("{error:#}"), "Could not start AirPlay receiver");
+    }
+}
+
+#[cfg(not(windows))]
+fn start_airplay() {}
+
+#[cfg(windows)]
+fn stop_airplay() {
+    if let Err(error) = crate::airplay::stop() {
+        tracing::error!(error = %format!("{error:#}"), "Could not stop AirPlay receiver");
+    }
+}
+
+#[cfg(not(windows))]
+fn stop_airplay() {}
