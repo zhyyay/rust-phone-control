@@ -8,6 +8,8 @@ pub mod descriptor;
 pub mod reports;
 #[cfg(windows)]
 pub mod windows;
+#[cfg(windows)]
+pub mod service;
 
 pub use capability::{BleCapability, BleCapabilityStatus};
 pub use descriptor::{
