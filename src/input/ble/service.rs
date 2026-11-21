@@ -14,9 +14,8 @@ use windows_062::{
         BluetoothError,
         GenericAttributeProfile::{
             GattCharacteristicProperties, GattCommunicationStatus, GattLocalCharacteristic,
-            GattLocalCharacteristicParameters,
-            GattLocalDescriptorParameters, GattLocalService, GattProtectionLevel,
-            GattReadRequestedEventArgs, GattServiceProvider,
+            GattLocalCharacteristicParameters, GattLocalDescriptorParameters, GattLocalService,
+            GattProtectionLevel, GattReadRequestedEventArgs, GattServiceProvider,
             GattServiceProviderAdvertisingParameters, GattWriteOption, GattWriteRequestedEventArgs,
         },
     },
