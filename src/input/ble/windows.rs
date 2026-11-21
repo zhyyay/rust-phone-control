@@ -1,8 +1,7 @@
 //! Windows BLE HID host capability checks.
 //!
-//! This module intentionally does not advertise yet. The first milestone verifies that
-//! the default adapter supports BLE Peripheral mode and that Windows can create the
-//! standard HID-over-GATT service provider.
+//! This module only probes adapter capability and creates a temporary HID service provider.
+//! Actual HID, Battery, and Device Information publication and advertising live in service.rs.
 
 use anyhow::{Context, Result};
 use windows_062::Devices::Bluetooth::BluetoothError;
