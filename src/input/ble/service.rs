@@ -223,13 +223,21 @@ impl BleHidService {
         let report_bytes = report.as_bytes();
         *self.mouse_state.lock().unwrap_or_else(|p| p.into_inner()) = report_bytes.to_vec();
         let buffer = buffer_from_bytes(&report_bytes)?;
-        let status = self
+        let results = self
             .mouse_report
             .NotifyValueAsync(&buffer)?
             .await
             .context("sending mouse HID notification")?;
-        if status != GattCommunicationStatus::Success {
-            bail!("mouse HID notification was not accepted: {status:?}");
+
+        for index in 0..results.Size()? {
+            let result = results.GetAt(index)?;
+            let status = result.Status()?;
+            if status != GattCommunicationStatus::Success {
+                bail!(
+                    "mouse HID notification failed for a subscribed client: {status:?}                      (protocol error: {:?})",
+                    result.ProtocolError()
+                );
+            }
         }
         Ok(())
     }
@@ -245,13 +253,21 @@ impl BleHidService {
             .lock()
             .unwrap_or_else(|p| p.into_inner()) = report_bytes.to_vec();
         let buffer = buffer_from_bytes(&report_bytes)?;
-        let status = self
+        let results = self
             .keyboard_report
             .NotifyValueAsync(&buffer)?
             .await
             .context("sending keyboard HID notification")?;
-        if status != GattCommunicationStatus::Success {
-            bail!("keyboard HID notification was not accepted: {status:?}");
+
+        for index in 0..results.Size()? {
+            let result = results.GetAt(index)?;
+            let status = result.Status()?;
+            if status != GattCommunicationStatus::Success {
+                bail!(
+                    "keyboard HID notification failed for a subscribed client: {status:?}                      (protocol error: {:?})",
+                    result.ProtocolError()
+                );
+            }
         }
         Ok(())
     }
