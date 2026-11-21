@@ -24,7 +24,7 @@ Published services and characteristics:
 - HID Service (0x1812): HID Information, Report Map, HID Control Point, mouse Input Report
   (report ID 1), and keyboard Input Report (report ID 2).
 - Battery Service (0x180F): readable Battery Level (100% placeholder).
-- Device Information Service (0x180A): readable PnP ID.
+- Device Information Service (0x180A) is not published by this app: Windows reserves DIS for the system and returns `BluetoothError.DisabledByPolicy` when an app tries to create it.
 - Report Reference descriptors identify each input report and its report ID.
 - HID, Battery, and Device Information characteristic reads/writes require an encrypted link.
 
@@ -33,10 +33,6 @@ are intentionally not published because Boot Keyboard / Boot Mouse characteristi
 implemented. The Report Host profile permits Protocol Mode to be absent. HID Control Point
 Suspend and Exit Suspend commands suppress notifications while suspended and clear the last
 reported input state.
-
-The PnP ID currently uses the USB-IF reserved test VID (0xFFFF), product ID 1, version 1.0.0.
-It is for development/testing only and must be replaced with a legitimately assigned VID/PID
-before distributing the application.
 
 Run the Windows BLE diagnostic:
 
@@ -76,7 +72,7 @@ do not invent a handshake or send plaintext control requests.
 Implemented:
 - GPUI Kit desktop shell, logging, and read-only iCTRL discovery.
 - Platform-independent mouse/keyboard input event types and report encoders.
-- Initial Windows WinRT BLE HID Report Host GATT services and advertising implementation.
+- Initial Windows WinRT BLE HID Report Host and Battery GATT services and advertising implementation.
 - HID suspend/resume handling and current input-report readback.
 
 Not implemented or not yet validated:
