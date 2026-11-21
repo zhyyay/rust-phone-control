@@ -6,7 +6,7 @@
 
 use anyhow::{Context, Result, anyhow, bail};
 use std::sync::{
-    Arc,
+    Arc, Mutex,
     atomic::{AtomicBool, Ordering},
 };
 use windows_062::{
@@ -46,6 +46,8 @@ pub struct BleHidService {
     mouse_report: GattLocalCharacteristic,
     keyboard_report: GattLocalCharacteristic,
     suspended: Arc<AtomicBool>,
+    mouse_state: Arc<Mutex<Vec<u8>>>,
+    keyboard_state: Arc<Mutex<Vec<u8>>>,
 }
 
 impl BleHidService {
@@ -74,6 +76,8 @@ impl BleHidService {
         .context("creating HID Report Map characteristic")?;
 
         let suspended = Arc::new(AtomicBool::new(false));
+        let mouse_state = Arc::new(Mutex::new(vec![0; 4]));
+        let keyboard_state = Arc::new(Mutex::new(vec![0; 8]));
         let control_point = create_characteristic(
             &hid_service,
             HID_CONTROL_POINT,
@@ -91,6 +95,8 @@ impl BleHidService {
             if let Some(args) = args.cloned() {
                 let deferral = args.GetDeferral()?;
                 let suspended = Arc::clone(&control_point_suspended);
+                let mouse_state = Arc::clone(&mouse_state);
+                let keyboard_state = Arc::clone(&keyboard_state);
                 tokio::spawn(async move {
                     let result = async {
                         let request = args.GetRequestAsync()?.await?;
@@ -103,7 +109,11 @@ impl BleHidService {
                         }
 
                         match reader.ReadByte()? {
-                            0x00 => suspended.store(true, Ordering::Release),
+                            0x00 => {
+                                suspended.store(true, Ordering::Release);
+                                *mouse_state.lock().unwrap_or_else(|p| p.into_inner()) = vec![0; 4];
+                                *keyboard_state.lock().unwrap_or_else(|p| p.into_inner()) = vec![0; 8];
+                            }
                             0x01 => suspended.store(false, Ordering::Release),
                             _ => {
                                 if request.Option()? == GattWriteOption::WriteWithResponse {
@@ -131,12 +141,12 @@ impl BleHidService {
             Ok(())
         }))?;
 
-        let mouse_report = create_input_report_characteristic(&hid_service, 4)
+        let mouse_report = create_input_report_characteristic(&hid_service, Arc::clone(&mouse_state))
             .await
             .context("creating mouse input Report characteristic")?;
         add_report_reference(&mouse_report, 1).await?;
 
-        let keyboard_report = create_input_report_characteristic(&hid_service, 8)
+        let keyboard_report = create_input_report_characteristic(&hid_service, Arc::clone(&keyboard_state))
             .await
             .context("creating keyboard input Report characteristic")?;
         add_report_reference(&keyboard_report, 2).await?;
@@ -186,6 +196,8 @@ impl BleHidService {
             mouse_report,
             keyboard_report,
             suspended,
+            mouse_state,
+            keyboard_state,
         })
     }
 
@@ -194,7 +206,9 @@ impl BleHidService {
         if self.suspended.load(Ordering::Acquire) {
             return Ok(());
         }
-        let buffer = buffer_from_bytes(&report.as_bytes())?;
+        let report_bytes = report.as_bytes();
+        *self.mouse_state.lock().unwrap_or_else(|p| p.into_inner()) = report_bytes.to_vec();
+        let buffer = buffer_from_bytes(&report_bytes)?;
         self.mouse_report
             .NotifyValueAsync(&buffer)?
             .await
@@ -207,7 +221,9 @@ impl BleHidService {
         if self.suspended.load(Ordering::Acquire) {
             return Ok(());
         }
-        let buffer = buffer_from_bytes(&report.as_bytes())?;
+        let report_bytes = report.as_bytes();
+        *self.keyboard_state.lock().unwrap_or_else(|p| p.into_inner()) = report_bytes.to_vec();
+        let buffer = buffer_from_bytes(&report_bytes)?;
         self.keyboard_report
             .NotifyValueAsync(&buffer)?
             .await
@@ -299,7 +315,7 @@ async fn create_characteristic(
 
 async fn create_input_report_characteristic(
     service: &GattLocalService,
-    report_len: usize,
+    current_report: Arc<Mutex<Vec<u8>>>,
 ) -> Result<GattLocalCharacteristic> {
     let characteristic = create_characteristic(
         service,
@@ -314,11 +330,13 @@ async fn create_input_report_characteristic(
     >::new(move |_sender, args| {
         if let Some(args) = args.cloned() {
             let deferral = args.GetDeferral()?;
+            let current_report = Arc::clone(&current_report);
             tokio::spawn(async move {
                 let result = async {
                     let request = args.GetRequestAsync()?.await?;
+                    let report = current_report.lock().unwrap_or_else(|p| p.into_inner()).clone();
                     let writer = DataWriter::new()?;
-                    writer.WriteBytes(&vec![0; report_len])?;
+                    writer.WriteBytes(&report)?;
                     request.RespondWithValue(&writer.DetachBuffer()?)?;
                     Ok::<(), windows_062::core::Error>(())
                 }
