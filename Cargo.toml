@@ -12,6 +12,10 @@ path = "src/main.rs"
 name = "ictrl-probe"
 path = "src/bin/ictrl_probe.rs"
 
+[[bin]]
+name = "ble-probe"
+path = "src/bin/ble_probe.rs"
+
 [dependencies]
 anyhow = "1"
 gpui-kit = "0.10.0"
