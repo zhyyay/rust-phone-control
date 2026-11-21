@@ -36,8 +36,12 @@ impl Render for PhoneControlApp {
                     .border_1()
                     .border_color(cx.theme().border)
                     .child(Label::new("Device connection"))
-                    .child(Label::new("Configure your iPhone LAN address and start iCTRL Runner."))
-                    .child(Label::new("Default iCTRL port: 8200 · Remote Access must be enabled on the phone.")),
+                    .child(Label::new(
+                        "Configure your iPhone LAN address and start iCTRL Runner.",
+                    ))
+                    .child(Label::new(
+                        "Default iCTRL port: 8200 · Remote Access must be enabled on the phone.",
+                    )),
             )
             .child(
                 div()
@@ -47,12 +51,18 @@ impl Render for PhoneControlApp {
                         Button::new("docs")
                             .primary()
                             .label("Connection instructions")
-                            .on_click(|_, _, _| println!("See docs/DEVELOPMENT.md for iCTRL setup.")),
+                            .on_click(|_, _, _| {
+                                println!("See docs/DEVELOPMENT.md for iCTRL setup.");
+                            }),
                     )
                     .child(
                         Button::new("probe")
                             .label("Probe from terminal")
-                            .on_click(|_, _, _| println!("Run: cargo run --bin ictrl-probe -- http://PHONE-IP:8200")),
+                            .on_click(|_, _, _| {
+                                println!(
+                                    "Run: cargo run --bin ictrl-probe -- http://PHONE-IP:8200"
+                                );
+                            }),
                     ),
             )
             .child(Label::new(
