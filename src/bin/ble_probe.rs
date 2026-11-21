@@ -1,14 +1,10 @@
 #[cfg(windows)]
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    use rust_phone_control::input::{
-        ble::{
-            reports::{KeyboardReport, MouseReport},
-            service::BleHidService,
-            windows::probe_hid_peripheral,
-        },
-        event::{KeyModifiers, MouseButtons},
+    use rust_phone_control::input::ble::{
+        BleCapabilityStatus, BleInputController, windows::probe_hid_peripheral,
     };
+    use rust_phone_control::input::event::MouseButtons;
 
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::INFO)
@@ -19,20 +15,15 @@ async fn main() -> anyhow::Result<()> {
     println!("Adapter: {:?}", capability.adapter_id);
     println!("Status: {:?}", capability.status);
 
-    if !matches!(
-        capability.status,
-        rust_phone_control::input::ble::BleCapabilityStatus::Supported
-    ) {
+    if !matches!(capability.status, BleCapabilityStatus::Supported) {
         anyhow::bail!("The adapter is not ready to host a BLE HID peripheral.");
     }
 
     println!("Creating HID GATT service and starting BLE advertising...");
-    let service = BleHidService::start().await?;
-    // Windows may report a transient Aborted status immediately after StartAdvertising,
-    // then transition to Started asynchronously. Wait briefly for the settled state.
+    let controller = BleInputController::start().await?;
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
     let advertising_status = loop {
-        let status = service.advertising_status()?;
+        let status = controller.advertising_status()?;
         if status.contains("(2)") || tokio::time::Instant::now() >= deadline {
             break status;
         }
@@ -41,23 +32,22 @@ async fn main() -> anyhow::Result<()> {
 
     println!("HID GATT advertising status: {advertising_status}");
     if !advertising_status.contains("(2)") {
-        eprintln!(
-            "WARNING: Windows did not report Started within 2 seconds. Check the status-change event log above."
-        );
+        eprintln!("WARNING: Windows did not report Started within 2 seconds.");
     } else {
         println!("Windows BLE GATT advertising is started.");
     }
+
     println!("Keep this window open while your iPhone is connected.");
-    println!("Watch for mouse and keyboard report subscription count logs.");
-    println!("When BOTH counts show 1, open an editable text field on iPhone, focus it,");
-    println!("then press Enter here to send a small mouse move and the letter 'a'.");
-    println!("Do not press Enter until both report subscriptions are logged.");
+    println!("Wait until BOTH mouse and keyboard subscription counts show 1.");
+    println!("On iPhone, open Notes and focus an empty note text field.");
+    println!("Then press Enter here once to test mouse move, left click, scroll, and text.");
+    println!("The test types: BLE OK");
     println!("Press Ctrl+C to stop without sending a test.");
 
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
             println!("Stopping BLE HID advertising...");
-            service.stop()?;
+            controller.stop()?;
         }
         line = async {
             use tokio::io::AsyncBufReadExt;
@@ -67,24 +57,21 @@ async fn main() -> anyhow::Result<()> {
             Ok::<String, std::io::Error>(line)
         } => {
             let _line = line?;
-            println!("Sending mouse movement test (24, 0)...");
-            service.send_mouse_report(MouseReport::new(MouseButtons::NONE, 24, 0, 0)).await?;
-            service.send_mouse_report(MouseReport::release()).await?;
-            println!("Mouse report notifications submitted.");
-
-            println!("Sending keyboard test: lowercase 'a'...");
-            service.send_keyboard_report(KeyboardReport::new(
-                KeyModifiers::NONE,
-                [0x04, 0, 0, 0, 0, 0],
-            )).await?;
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-            service.send_keyboard_report(KeyboardReport::release()).await?;
-            println!("Keyboard report notifications submitted.");
-            println!("Test complete. Press Ctrl+C to stop.");
+            println!("Testing relative mouse movement...");
+            controller.move_mouse(24, 0).await?;
+            println!("Testing left mouse click...");
+            controller.click(MouseButtons::LEFT).await?;
+            println!("Testing vertical scroll...");
+            controller.scroll(1).await?;
+            println!("Typing ASCII test text...");
+            controller.type_text("BLE OK").await?;
+            controller.release_all().await?;
+            println!("Input test reports submitted. Check the iPhone, then press Ctrl+C.");
             tokio::signal::ctrl_c().await?;
-            service.stop()?;
+            controller.stop()?;
         }
     }
+
     Ok(())
 }
 
