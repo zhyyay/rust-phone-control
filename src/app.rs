@@ -123,11 +123,7 @@ impl Render for PhoneControlApp {
                         format!("AirPlay status: {}", self.airplay_status)
                     })),
             )
-            #[cfg(windows)]
-            .child(preview_panel(
-                self.preview_image.clone(),
-                self.preview_status.clone(),
-            ))
+            .child(preview_panel_for_app(self))
             .child(
                 div()
                     .flex()
@@ -222,6 +218,16 @@ impl Render for PhoneControlApp {
     }
 }
 
+
+#[cfg(windows)]
+fn preview_panel_for_app(app: &PhoneControlApp) -> impl IntoElement {
+    preview_panel(app.preview_image.clone(), app.preview_status.clone())
+}
+
+#[cfg(not(windows))]
+fn preview_panel_for_app(_: &PhoneControlApp) -> impl IntoElement {
+    Label::new("AirPlay live preview is available on Windows")
+}
 
 #[cfg(windows)]
 fn preview_panel(image: Option<Arc<Image>>, status: String) -> impl IntoElement {
