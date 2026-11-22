@@ -10,6 +10,7 @@ mod config;
 mod discovery;
 mod plist;
 mod pairing;
+mod pairing_store;
 mod pair_setup;
 mod rtsp;
 mod srp;
