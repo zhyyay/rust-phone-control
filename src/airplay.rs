@@ -16,7 +16,7 @@ mod event;
 #[allow(dead_code)]
 mod fairplay;
 #[allow(dead_code)]
-mod media;
+mod media;\n#[allow(dead_code)]\nmod mirror_crypto;
 mod pair_setup;
 mod pair_verify;
 mod pairing;
