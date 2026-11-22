@@ -1,7 +1,7 @@
 //! Built-in AirPlay control-plane prototype.
 //!
 //! Modules are intentionally separated by responsibility. The current code
-//! provides mDNS publication, a TCP listener, OPTIONS, and /server-info only.
+//! provides mDNS publication, a TCP listener, OPTIONS, /server-info, and basic binary-plist /info handling.
 //! It does not yet implement AirPlay pairing, FairPlay, encrypted media, or
 //! video decoding, and advertises zero feature bits rather than claiming those
 //! unsupported capabilities.
