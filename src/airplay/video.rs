@@ -48,6 +48,7 @@ pub enum AvcConfigError {
     InvalidNalLength,
     TruncatedNal,
     OutputTooLarge,
+    InvalidSps,
     SizeOverflow,
 }
 
@@ -251,6 +252,243 @@ impl AvcConfiguration {
             offset = end;
         }
         Ok(output)
+    }
+}
+
+
+/// Coded picture dimensions parsed from an H.264 sequence parameter set.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AvcVideoDimensions {
+    pub width: u32,
+    pub height: u32,
+}
+
+impl AvcConfiguration {
+    /// Read the dimensions from the first SPS in this configuration.
+    ///
+    /// Returns None when the avcC record did not contain an SPS. Malformed or
+    /// unsupported SPS syntax is rejected instead of guessing a frame size.
+    pub fn video_dimensions(&self) -> Result<Option<AvcVideoDimensions>, AvcConfigError> {
+        self.sequence_parameter_sets
+            .first()
+            .map(|sps| parse_h264_sps_dimensions(sps))
+            .transpose()
+    }
+}
+
+fn parse_h264_sps_dimensions(sps: &[u8]) -> Result<AvcVideoDimensions, AvcConfigError> {
+    if sps.len() < 4 || sps[0] & 0x80 != 0 || sps[0] & 0x1f != 7 {
+        return Err(AvcConfigError::InvalidSps);
+    }
+
+    let mut rbsp = Vec::with_capacity(sps.len().saturating_sub(1));
+    let mut zero_count = 0usize;
+    let mut index = 1usize;
+    while index < sps.len() {
+        let byte = sps[index];
+        if zero_count >= 2 && byte == 3 {
+            if index + 1 >= sps.len() || sps[index + 1] > 3 {
+                return Err(AvcConfigError::InvalidSps);
+            }
+            zero_count = 0;
+            index += 1;
+            continue;
+        }
+        rbsp.push(byte);
+        zero_count = if byte == 0 { zero_count.saturating_add(1) } else { 0 };
+        index += 1;
+    }
+
+    let mut bits = H264BitReader::new(&rbsp);
+    let profile_idc = bits.read_bits(8)?;
+    let _constraint_flags = bits.read_bits(8)?;
+    let _level_idc = bits.read_bits(8)?;
+    let _seq_parameter_set_id = bits.read_ue()?;
+
+    let mut chroma_format_idc = 1u32;
+    let mut separate_colour_plane = false;
+    if matches!(
+        profile_idc,
+        100 | 110 | 122 | 244 | 44 | 83 | 86 | 118 | 128 | 138 | 139 | 134 | 135 | 144
+    ) {
+        chroma_format_idc = bits.read_ue()?;
+        if chroma_format_idc > 3 {
+            return Err(AvcConfigError::InvalidSps);
+        }
+        if chroma_format_idc == 3 {
+            separate_colour_plane = bits.read_bit()?;
+        }
+        let bit_depth_luma_minus8 = bits.read_ue()?;
+        let bit_depth_chroma_minus8 = bits.read_ue()?;
+        if bit_depth_luma_minus8 > 6 || bit_depth_chroma_minus8 > 6 {
+            return Err(AvcConfigError::InvalidSps);
+        }
+        let _qpprime_y_zero_transform_bypass_flag = bits.read_bit()?;
+        if bits.read_bit()? {
+            let list_count = if chroma_format_idc == 3 { 12 } else { 8 };
+            for list_index in 0..list_count {
+                if bits.read_bit()? {
+                    skip_scaling_list(&mut bits, if list_index < 6 { 16 } else { 64 })?;
+                }
+            }
+        }
+    }
+
+    let log2_max_frame_num_minus4 = bits.read_ue()?;
+    if log2_max_frame_num_minus4 > 12 {
+        return Err(AvcConfigError::InvalidSps);
+    }
+    let pic_order_cnt_type = bits.read_ue()?;
+    match pic_order_cnt_type {
+        0 => {
+            if bits.read_ue()? > 12 {
+                return Err(AvcConfigError::InvalidSps);
+            }
+        }
+        1 => {
+            let _delta_pic_order_always_zero_flag = bits.read_bit()?;
+            let _offset_for_non_ref_pic = bits.read_se()?;
+            let _offset_for_top_to_bottom_field = bits.read_se()?;
+            let cycle_count = bits.read_ue()?;
+            if cycle_count > 255 {
+                return Err(AvcConfigError::InvalidSps);
+            }
+            for _ in 0..cycle_count {
+                let _offset_for_ref_frame = bits.read_se()?;
+            }
+        }
+        2 => {}
+        _ => return Err(AvcConfigError::InvalidSps),
+    }
+
+    let _max_num_ref_frames = bits.read_ue()?;
+    let _gaps_in_frame_num_value_allowed_flag = bits.read_bit()?;
+    let pic_width_in_mbs_minus1 = bits.read_ue()?;
+    let pic_height_in_map_units_minus1 = bits.read_ue()?;
+    let frame_mbs_only_flag = bits.read_bit()?;
+    if !frame_mbs_only_flag {
+        let _mb_adaptive_frame_field_flag = bits.read_bit()?;
+    }
+    let _direct_8x8_inference_flag = bits.read_bit()?;
+
+    let (crop_left, crop_right, crop_top, crop_bottom) = if bits.read_bit()? {
+        (bits.read_ue()?, bits.read_ue()?, bits.read_ue()?, bits.read_ue()?)
+    } else {
+        (0, 0, 0, 0)
+    };
+
+    let frame_factor = if frame_mbs_only_flag { 1u64 } else { 2u64 };
+    let coded_width = u64::from(pic_width_in_mbs_minus1)
+        .checked_add(1)
+        .and_then(|value| value.checked_mul(16))
+        .ok_or(AvcConfigError::InvalidSps)?;
+    let coded_height = u64::from(pic_height_in_map_units_minus1)
+        .checked_add(1)
+        .and_then(|value| value.checked_mul(16))
+        .and_then(|value| value.checked_mul(frame_factor))
+        .ok_or(AvcConfigError::InvalidSps)?;
+
+    let chroma_array_type = if separate_colour_plane { 0 } else { chroma_format_idc };
+    let (sub_width_c, sub_height_c) = match chroma_array_type {
+        0 => (1u64, 1u64),
+        1 => (2, 2),
+        2 => (2, 1),
+        3 => (1, 1),
+        _ => return Err(AvcConfigError::InvalidSps),
+    };
+    let crop_unit_x = if chroma_array_type == 0 { 1 } else { sub_width_c };
+    let crop_unit_y = if chroma_array_type == 0 {
+        frame_factor
+    } else {
+        sub_height_c * frame_factor
+    };
+    let crop_x = u64::from(crop_left)
+        .checked_add(u64::from(crop_right))
+        .and_then(|value| value.checked_mul(crop_unit_x))
+        .ok_or(AvcConfigError::InvalidSps)?;
+    let crop_y = u64::from(crop_top)
+        .checked_add(u64::from(crop_bottom))
+        .and_then(|value| value.checked_mul(crop_unit_y))
+        .ok_or(AvcConfigError::InvalidSps)?;
+    let width = coded_width.checked_sub(crop_x).ok_or(AvcConfigError::InvalidSps)?;
+    let height = coded_height.checked_sub(crop_y).ok_or(AvcConfigError::InvalidSps)?;
+    if width == 0
+        || height == 0
+        || width > u64::from(MAX_FRAME_DIMENSION)
+        || height > u64::from(MAX_FRAME_DIMENSION)
+    {
+        return Err(AvcConfigError::InvalidSps);
+    }
+
+    Ok(AvcVideoDimensions {
+        width: u32::try_from(width).map_err(|_| AvcConfigError::InvalidSps)?,
+        height: u32::try_from(height).map_err(|_| AvcConfigError::InvalidSps)?,
+    })
+}
+
+fn skip_scaling_list(bits: &mut H264BitReader<'_>, size: usize) -> Result<(), AvcConfigError> {
+    let mut last_scale = 8i32;
+    let mut next_scale = 8i32;
+    for _ in 0..size {
+        if next_scale != 0 {
+            let delta_scale = bits.read_se()?;
+            next_scale = (last_scale + delta_scale + 256).rem_euclid(256);
+        }
+        if next_scale != 0 {
+            last_scale = next_scale;
+        }
+    }
+    Ok(())
+}
+
+struct H264BitReader<'a> {
+    bytes: &'a [u8],
+    bit_offset: usize,
+}
+
+impl<'a> H264BitReader<'a> {
+    fn new(bytes: &'a [u8]) -> Self {
+        Self { bytes, bit_offset: 0 }
+    }
+
+    fn read_bit(&mut self) -> Result<bool, AvcConfigError> {
+        let byte_index = self.bit_offset / 8;
+        let bit_index = 7 - (self.bit_offset % 8);
+        let byte = *self.bytes.get(byte_index).ok_or(AvcConfigError::InvalidSps)?;
+        self.bit_offset = self.bit_offset.checked_add(1).ok_or(AvcConfigError::InvalidSps)?;
+        Ok((byte >> bit_index) & 1 != 0)
+    }
+
+    fn read_bits(&mut self, count: usize) -> Result<u32, AvcConfigError> {
+        if count > 32 {
+            return Err(AvcConfigError::InvalidSps);
+        }
+        let mut value = 0u32;
+        for _ in 0..count {
+            value = (value << 1) | u32::from(self.read_bit()?);
+        }
+        Ok(value)
+    }
+
+    fn read_ue(&mut self) -> Result<u32, AvcConfigError> {
+        let mut leading_zero_bits = 0usize;
+        while !self.read_bit()? {
+            leading_zero_bits += 1;
+            if leading_zero_bits > 31 {
+                return Err(AvcConfigError::InvalidSps);
+            }
+        }
+        let suffix = self.read_bits(leading_zero_bits)?;
+        ((1u64 << leading_zero_bits) - 1)
+            .checked_add(u64::from(suffix))
+            .and_then(|value| u32::try_from(value).ok())
+            .ok_or(AvcConfigError::InvalidSps)
+    }
+
+    fn read_se(&mut self) -> Result<i32, AvcConfigError> {
+        let code_num = self.read_ue()?;
+        let magnitude = i32::try_from(code_num.div_ceil(2)).map_err(|_| AvcConfigError::InvalidSps)?;
+        Ok(if code_num & 1 == 0 { -magnitude } else { magnitude })
     }
 }
 
@@ -787,6 +1025,32 @@ impl<'a> Nv12Frame<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_baseline_sps_dimensions() {
+        // Baseline SPS: 40 macroblocks by 30 macroblock rows, progressive,
+        // with no cropping, yielding 640x480.
+        let sps = [
+            0x67, 0x42, 0x00, 0x1e, 0xf4, 0x05, 0x01, 0x7f, 0xca, 0x80,
+        ];
+        let result = parse_h264_sps_dimensions(&sps);
+        assert!(result.is_ok(), "unexpected SPS parse error: {result:?}");
+        let dimensions = result.unwrap();
+        assert_eq!(dimensions.width, 640);
+        assert_eq!(dimensions.height, 480);
+    }
+
+    #[test]
+    fn rejects_invalid_sps_dimensions() {
+        assert_eq!(
+            parse_h264_sps_dimensions(&[0x68, 0, 0, 0]),
+            Err(AvcConfigError::InvalidSps)
+        );
+        assert_eq!(
+            parse_h264_sps_dimensions(&[0x67, 0, 0, 0]),
+            Err(AvcConfigError::InvalidSps)
+        );
+    }
 
     #[test]
     fn parses_airplay_avcc_configuration_and_converts_access_unit() {
