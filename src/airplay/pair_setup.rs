@@ -148,6 +148,20 @@ pub fn sign_accessory_identity_message(message: &[u8]) -> Result<Vec<u8>, String
     Ok(state.accessory.signing_key.sign(message).to_bytes().to_vec())
 }
 
+#[cfg(test)]
+pub fn test_register_controller(identifier: &[u8], public_key: [u8; 32]) {
+    let lock = pairing_state().expect("pairing state");
+    let mut state = lock.lock().expect("pairing state lock");
+    state.controllers.insert(identifier.to_vec(), public_key);
+}
+
+#[cfg(test)]
+pub fn test_accessory_public_key() -> [u8; 32] {
+    let lock = pairing_state().expect("pairing state");
+    let state = lock.lock().expect("pairing state lock");
+    state.accessory.public_key()
+}
+
 /// Look up a paired controller's long-term Ed25519 public key.
 pub fn paired_controller_public_key(identifier: &[u8]) -> Result<Option<[u8; 32]>, String> {
     let lock = pairing_state()?;
