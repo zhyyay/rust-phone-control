@@ -26,6 +26,8 @@ mod server;
 mod setup;
 mod srp;
 mod tlv8;
+#[allow(dead_code)]
+mod timing;
 
 #[cfg(windows)]
 use std::sync::{Mutex, OnceLock};
