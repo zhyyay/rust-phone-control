@@ -151,7 +151,7 @@ impl Render for PhoneControlApp {
                             .on_click(|_, _, _| type_sample_ble()),
                     ),
             )
-            .child(Label::new("Built-in AirPlay discovery/control prototype · secure pairing and video mirroring are not implemented yet."))
+            .child(Label::new("AirPlay Pair-Setup SRP M1-M4 prototype · M5/M6, Pair-Verify and video mirroring are not implemented yet."))
     }
 }
 
