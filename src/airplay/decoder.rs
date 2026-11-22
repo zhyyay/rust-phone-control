@@ -550,6 +550,23 @@ impl<'runtime> H264FramePipeline<'runtime> {
         Ok(published)
     }
 
+    /// Decrypt and decode one complete encrypted AVCC access unit.
+    ///
+    /// The caller must supply the cipher for this exact stream and invoke
+    /// this method once per access unit in sender order. FairPlay key unwrap
+    /// and transport-fragment reconstruction remain outside this method.
+    pub fn submit_encrypted_access_unit(
+        &mut self,
+        processor: &crate::airplay::video::MirrorStreamProcessor,
+        cipher: &mut crate::airplay::mirror_crypto::MirrorStreamCipher,
+        encrypted_payload: &[u8],
+    ) -> Result<usize, MediaFoundationError> {
+        let annex_b = processor
+            .decrypt_video_packet(cipher, encrypted_payload)
+            .map_err(MediaFoundationError::VideoDecryption)?;
+        self.submit_access_unit(&annex_b)
+    }
+
     /// Discard any pending frame when this mirror session is ending.
     pub fn clear_pending_frame(&self) -> Result<(), MediaFoundationError> {
         self.frames
@@ -580,6 +597,7 @@ pub enum MediaFoundationError {
     ProcessInputFailed(i32),
     OutputInfoFailed(i32),
     FrameSizeOverflow,
+    VideoDecryption(crate::airplay::video::EncryptedAccessUnitError),
     FrameConversion(crate::airplay::video::FrameConversionError),
     FrameMailbox(crate::airplay::video::FrameMailboxError),
     ProcessOutputFailed(i32),
@@ -659,6 +677,9 @@ impl fmt::Display for MediaFoundationError {
                 *hr as u32
             ),
             Self::FrameSizeOverflow => f.write_str("decoded frame allocation size overflowed"),
+            Self::VideoDecryption(error) => {
+                write!(f, "encrypted H.264 access unit decryption failed: {error}")
+            }
             Self::FrameConversion(error) => {
                 write!(f, "decoded NV12 frame conversion failed: {error}")
             }
