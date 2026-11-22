@@ -14,6 +14,7 @@ use super::{
     pairing, plist,
     setup::{self, SetupRequest},
     srp::SrpServer,
+    timing::TimingClient,
     tlv8::{self, Tlv},
 };
 use ::plist::{Dictionary, Value};
@@ -45,11 +46,13 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
     stream.set_read_timeout(Some(Duration::from_secs(15)))?;
     stream.set_write_timeout(Some(Duration::from_secs(5)))?;
 
+    let peer_ip = stream.peer_addr()?.ip();
     let mut pending = Vec::with_capacity(READ_CHUNK_BYTES);
     let mut pair_setup_srp: Option<SrpServer> = None;
     let mut pair_setup_session_key: Option<[u8; 64]> = None;
     let mut pair_verify_session: Option<PairVerifySession> = None;
     let mut event_channel: Option<EventChannel> = None;
+    let mut timing_client: Option<TimingClient> = None;
     let mut media_receiver: Option<UdpMediaReceiver> = None;
     tracing::info!("AirPlay RTSP session started");
 
@@ -171,7 +174,9 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
             ("SETUP", _, "RTSP/1.0") => {
                 match handle_setup_request(
                     &request.body,
+                    peer_ip,
                     &mut event_channel,
+                    &mut timing_client,
                     &mut media_receiver,
                 ) {
                     Ok(body) => write_binary_plist_response(
@@ -212,6 +217,7 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
             }
             ("TEARDOWN", _, "RTSP/1.0") => {
                 media_receiver = None;
+                timing_client = None;
                 event_channel = None;
                 let response = format!(
                     "RTSP/1.0 200 OK\r\nCSeq: {}\r\nServer: RustPhoneControl/0.1\r\nContent-Length: 0\r\n\r\n",
@@ -414,7 +420,9 @@ fn write_binary_plist_response(
 
 fn handle_setup_request(
     body: &[u8],
+    peer_ip: std::net::IpAddr,
     event_channel: &mut Option<EventChannel>,
+    timing_client: &mut Option<TimingClient>,
     media_receiver: &mut Option<UdpMediaReceiver>,
 ) -> Result<Vec<u8>, (u16, String)> {
     let setup = setup::parse_setup_request(body).map_err(|reason| (400, reason))?;
@@ -423,21 +431,30 @@ fn handle_setup_request(
             let channel = EventChannel::bind()
                 .map_err(|error| (503, format!("could not bind event channel: {error}")))?;
             let event_port = channel.port();
-            if session.timing_protocol.as_deref() == Some("NTP") {
-                tracing::warn!(
-                    "Sender requested NTP timing; timing responder is not implemented, returning timingPort=0"
-                );
-            }
-            if session.timing_protocol.as_deref() == Some("PTP") {
-                tracing::info!("Sender selected PTP timing; no separate NTP timing socket is required");
-            }
+            let new_timing_client = match session.timing_protocol.as_deref() {
+                Some("NTP") => {
+                    let sender_port = session.timing_port.ok_or_else(|| {
+                        (400, "NTP SETUP is missing the sender timingPort".to_owned())
+                    })?;
+                    Some(
+                        TimingClient::start(peer_ip, sender_port)
+                            .map_err(|error| (503, format!("could not start NTP timing client: {error}")))?,
+                    )
+                }
+                Some("PTP") => {
+                    tracing::info!("Sender selected PTP timing; separate NTP timing client is not started");
+                    None
+                }
+                Some(other) => return Err((400, format!("unsupported timing protocol {other}"))),
+                None => None,
+            };
+            let timing_port = new_timing_client.as_ref().map_or(0, TimingClient::port);
 
             let mut response = Dictionary::new();
             response.insert("eventPort".into(), Value::Integer(event_port.into()));
-            // Zero means this receiver does not expose a separate NTP timing
-            // endpoint. PTP-capable senders can use their PTP timing path.
-            response.insert("timingPort".into(), Value::Integer(0.into()));
+            response.insert("timingPort".into(), Value::Integer(timing_port.into()));
             *event_channel = Some(channel);
+            *timing_client = new_timing_client;
             plist::encode_binary(&Value::Dictionary(response))
                 .map_err(|error| (503, format!("could not encode session SETUP response: {error}")))
         }
