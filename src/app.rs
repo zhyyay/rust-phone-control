@@ -214,7 +214,7 @@ impl Render for PhoneControlApp {
                             .on_click(|_, _, _| type_sample_ble()),
                     ),
             )
-            .child(Label::new("AirPlay discovery and RTSP control · TCP mirror packets are accepted, but FairPlay response, video decryption, decoding, and live preview are not connected yet."))
+            .child(Label::new("AirPlay discovery and RTSP control · waiting for FairPlay media-key recovery before video packets can be decrypted and decoded into the preview."))
     }
 }
 
@@ -253,7 +253,7 @@ fn preview_panel(image: Option<Arc<Image>>, status: String) -> impl IntoElement 
             .flex()
             .items_center()
             .justify_center()
-            .child(Label::new(status))
+            .child(Label::new(if status.is_empty() { "Waiting for decoded video frames".to_owned() } else { status }))
     };
     panel = panel.child(surface);
     panel
