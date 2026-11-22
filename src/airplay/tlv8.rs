@@ -21,7 +21,11 @@ impl std::fmt::Display for Tlv8Error {
             Self::TruncatedHeader { offset } => {
                 write!(formatter, "truncated TLV8 header at byte {offset}")
             }
-            Self::TruncatedValue { offset, expected, remaining } => write!(
+            Self::TruncatedValue {
+                offset,
+                expected,
+                remaining,
+            } => write!(
                 formatter,
                 "truncated TLV8 value at byte {offset}: expected {expected} bytes, found {remaining}"
             ),
@@ -56,8 +60,9 @@ pub fn decode(input: &[u8]) -> Result<Vec<Tlv>, Tlv8Error> {
 
         let value = &input[value_offset..value_offset + length];
         if let Some(previous) = items.last_mut() {
-            if previous.kind == kind && previous.value.len() % 255 == 0
+            if previous.kind == kind
                 && previous.value.len() >= 255
+                && previous.value.len() % 255 == 0
             {
                 previous.value.extend_from_slice(value);
                 offset = value_offset + length;
@@ -127,8 +132,14 @@ mod tests {
         assert_eq!(
             decode(&encoded).expect("decode repeated values"),
             vec![
-                Tlv { kind: 6, value: vec![1] },
-                Tlv { kind: 6, value: vec![2] },
+                Tlv {
+                    kind: 6,
+                    value: vec![1],
+                },
+                Tlv {
+                    kind: 6,
+                    value: vec![2],
+                },
             ]
         );
     }
@@ -147,7 +158,10 @@ mod tests {
 
     #[test]
     fn encodes_empty_values() {
-        let item = Tlv { kind: 255, value: Vec::new() };
+        let item = Tlv {
+            kind: 255,
+            value: Vec::new(),
+        };
         assert_eq!(encode(std::slice::from_ref(&item)), [255, 0]);
         assert_eq!(decode(&[255, 0]).expect("decode empty TLV"), vec![item]);
     }
