@@ -6,7 +6,9 @@ use gpui_kit::component::{
 use gpui_kit::*;
 
 #[derive(Default)]
-pub struct PhoneControlApp;
+pub struct PhoneControlApp {
+    airplay_status: String,
+}
 
 impl Render for PhoneControlApp {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -53,13 +55,24 @@ impl Render for PhoneControlApp {
                         Button::new("airplay-start")
                             .primary()
                             .label("Start mirror")
-                            .on_click(|_, _, _| start_airplay()),
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.airplay_status = start_airplay_status();
+                                cx.notify();
+                            })),
                     )
                     .child(
                         Button::new("airplay-stop")
                             .label("Stop mirror")
-                            .on_click(|_, _, _| stop_airplay()),
-                    ),
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.airplay_status = stop_airplay_status();
+                                cx.notify();
+                            })),
+                    )
+                    .child(Label::new(if self.airplay_status.is_empty() {
+                        "AirPlay status: stopped".to_owned()
+                    } else {
+                        format!("AirPlay status: {}", self.airplay_status)
+                    })),
             )
             .child(
                 div()
@@ -238,21 +251,41 @@ fn airplay_pairing_code_label() -> String {
 }
 
 #[cfg(windows)]
-fn start_airplay() {
-    if let Err(error) = crate::airplay::start() {
-        tracing::error!(error = %format!("{error:#}"), "Could not start AirPlay receiver");
+fn start_airplay_status() -> String {
+    match crate::airplay::start() {
+        Ok(()) => {
+            tracing::info!("AirPlay start button completed successfully");
+            "Running · TCP 7000 · mDNS published".to_owned()
+        }
+        Err(error) => {
+            let message = format!("{error:#}");
+            tracing::error!(error = %message, "Could not start AirPlay receiver");
+            format!("Start failed: {message}")
+        }
     }
 }
 
 #[cfg(not(windows))]
-fn start_airplay() {}
+fn start_airplay_status() -> String {
+    "Unavailable · Windows only".to_owned()
+}
 
 #[cfg(windows)]
-fn stop_airplay() {
-    if let Err(error) = crate::airplay::stop() {
-        tracing::error!(error = %format!("{error:#}"), "Could not stop AirPlay receiver");
+fn stop_airplay_status() -> String {
+    match crate::airplay::stop() {
+        Ok(()) => {
+            tracing::info!("AirPlay stop button completed successfully");
+            "Stopped".to_owned()
+        }
+        Err(error) => {
+            let message = format!("{error:#}");
+            tracing::error!(error = %message, "Could not stop AirPlay receiver");
+            format!("Stop failed: {message}")
+        }
     }
 }
 
 #[cfg(not(windows))]
-fn stop_airplay() {}
+fn stop_airplay_status() -> String {
+    "Unavailable · Windows only".to_owned()
+}
