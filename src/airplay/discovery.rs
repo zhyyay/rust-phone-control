@@ -57,12 +57,18 @@ impl Advertisement {
             .context("spawn mDNS event monitor thread")?;
 
         let device_id = config::device_id();
+        let (public_key, pairing_identifier) = super::pair_setup::discovery_identity()
+            .map_err(anyhow::Error::msg)
+            .context("load persistent AirPlay discovery identity")?;
         let airplay_properties = [
             ("deviceid", device_id.as_str()),
             ("features", config::FEATURES),
             ("model", config::MODEL),
             ("srcvers", config::SOURCE_VERSION),
             ("flags", config::STATUS_FLAGS),
+            ("pk", public_key.as_str()),
+            ("pi", pairing_identifier.as_str()),
+            ("vv", "2"),
         ];
         let airplay_service = ServiceInfo::new(
             config::SERVICE_TYPE,
@@ -88,6 +94,9 @@ impl Advertisement {
             ("am", config::MODEL),
             ("vs", config::SOURCE_VERSION),
             ("sf", config::STATUS_FLAGS),
+            ("ft", config::FEATURES),
+            ("pk", public_key.as_str()),
+            ("vv", "2"),
         ];
         let raop_service = ServiceInfo::new(
             config::RAOP_SERVICE_TYPE,
