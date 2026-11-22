@@ -853,7 +853,13 @@ mod tests {
             })
             .expect("data port");
         assert!(data_port > 0);
-        assert_eq!(negotiated.get("type").and_then(Value::as_unsigned_integer), Some(110));
+        assert_eq!(
+            negotiated.get("type").and_then(|value| match value {
+                Value::Integer(integer) => integer.as_unsigned(),
+                _ => None,
+            }),
+            Some(110)
+        );
         assert!(media.is_some());
     }
 
