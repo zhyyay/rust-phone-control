@@ -9,8 +9,8 @@
 
 use num_bigint::BigUint;
 use num_traits::Zero;
-use rand::rngs::OsRng;
 use rand::RngCore;
+use rand::rngs::OsRng;
 use sha2::{Digest, Sha512};
 use subtle::ConstantTimeEq;
 
@@ -160,14 +160,7 @@ impl SrpServer {
             *out = left ^ right;
         }
         let hi = hash(&[USERNAME]);
-        let expected = hash(&[
-            &xor,
-            &hi,
-            &self.salt,
-            &a_bytes,
-            &b_bytes,
-            &session_key,
-        ]);
+        let expected = hash(&[&xor, &hi, &self.salt, &a_bytes, &b_bytes, &session_key]);
         if !bool::from(expected.as_slice().ct_eq(client_proof)) {
             return Err(SrpError::InvalidClientProof);
         }
@@ -220,7 +213,7 @@ fn pad(value: &BigUint) -> Result<Vec<u8>, SrpError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{hash, modulus, pad, password_exponent, generator, SrpError, SrpServer};
+    use super::{SrpError, SrpServer, generator, hash, modulus, pad, password_exponent};
     use num_bigint::BigUint;
     use num_traits::Zero;
 
@@ -271,12 +264,9 @@ mod tests {
     #[test]
     fn server_and_client_derive_matching_hap_session_and_proofs() {
         let salt = [0x5au8; 16];
-        let server = SrpServer::new_with_parameters(
-            "518-08-582",
-            salt,
-            BigUint::from(0x123456789abcdefu64),
-        )
-        .unwrap();
+        let server =
+            SrpServer::new_with_parameters("518-08-582", salt, BigUint::from(0x123456789abcdefu64))
+                .unwrap();
         let (client_key, client_m1, client_a) = client_proof(
             "518-08-582",
             &salt,
@@ -296,12 +286,9 @@ mod tests {
     #[test]
     fn rejects_a_tampered_client_proof() {
         let salt = [0x33u8; 16];
-        let server = SrpServer::new_with_parameters(
-            "518-08-582",
-            salt,
-            BigUint::from(987654321u64),
-        )
-        .unwrap();
+        let server =
+            SrpServer::new_with_parameters("518-08-582", salt, BigUint::from(987654321u64))
+                .unwrap();
         let (_, mut proof, client_a) = client_proof(
             "518-08-582",
             &salt,
@@ -317,12 +304,8 @@ mod tests {
 
     #[test]
     fn rejects_zero_and_out_of_range_client_public_values() {
-        let server = SrpServer::new_with_parameters(
-            "518-08-582",
-            [0x11; 16],
-            BigUint::from(123u8),
-        )
-        .unwrap();
+        let server =
+            SrpServer::new_with_parameters("518-08-582", [0x11; 16], BigUint::from(123u8)).unwrap();
         assert_eq!(
             server.verify_client(&[0], &[0; 64]),
             Err(SrpError::InvalidClientPublicKey)
@@ -335,12 +318,8 @@ mod tests {
 
     #[test]
     fn rejects_wrong_proof_length() {
-        let server = SrpServer::new_with_parameters(
-            "518-08-582",
-            [0x22; 16],
-            BigUint::from(123u8),
-        )
-        .unwrap();
+        let server =
+            SrpServer::new_with_parameters("518-08-582", [0x22; 16], BigUint::from(123u8)).unwrap();
         assert_eq!(
             server.verify_client(&[1], &[0; 63]),
             Err(SrpError::InvalidClientProof)
@@ -350,8 +329,7 @@ mod tests {
     #[test]
     fn validates_salt_and_private_ephemeral() {
         assert_eq!(
-            SrpServer::new_with_parameters("518-08-582", [0; 16], BigUint::zero())
-                .err(),
+            SrpServer::new_with_parameters("518-08-582", [0; 16], BigUint::zero()).err(),
             Some(SrpError::InvalidPrivateKey)
         );
     }

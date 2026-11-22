@@ -8,7 +8,11 @@ use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::time::Duration;
 
-use super::{config, pairing, plist, srp::SrpServer, tlv8::{self, Tlv}};
+use super::{
+    config, pairing, plist,
+    srp::SrpServer,
+    tlv8::{self, Tlv},
+};
 use ::plist::{Dictionary, Value};
 
 const MAX_HEADER_BYTES: usize = 16 * 1024;
@@ -64,8 +68,7 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
                 );
                 write_response(&mut stream, &response, 200)?;
             }
-            ("GET", "/server-info", "HTTP/1.1")
-            | ("GET", "/server-info", "RTSP/1.0") => {
+            ("GET", "/server-info", "HTTP/1.1") | ("GET", "/server-info", "RTSP/1.0") => {
                 let body = server_info_plist();
                 let response = format!(
                     "HTTP/1.1 200 OK\r\nContent-Type: text/x-apple-plist+xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
@@ -95,12 +98,14 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
                     }
                     Err(error) => {
                         tracing::warn!(status = error.status, reason = %error.reason, "Pair-Setup request rejected");
-                        let reason = if error.status == 503 { "Service Unavailable" } else { "Bad Request" };
+                        let reason = if error.status == 503 {
+                            "Service Unavailable"
+                        } else {
+                            "Bad Request"
+                        };
                         let response = format!(
                             "RTSP/1.0 {} {}\r\nCSeq: {}\r\nServer: RustPhoneControl/0.1\r\nContent-Length: 0\r\n\r\n",
-                            error.status,
-                            reason,
-                            request.cseq
+                            error.status, reason, request.cseq
                         );
                         write_response(&mut stream, &response, error.status)?;
                     }
@@ -155,10 +160,7 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
 }
 
 /// Read one complete request and retain bytes belonging to a subsequent request.
-fn read_request(
-    stream: &mut TcpStream,
-    pending: &mut Vec<u8>,
-) -> std::io::Result<Option<Request>> {
+fn read_request(stream: &mut TcpStream, pending: &mut Vec<u8>) -> std::io::Result<Option<Request>> {
     let mut chunk = [0u8; READ_CHUNK_BYTES];
 
     let header_end = loop {
@@ -237,7 +239,10 @@ fn read_request(
     }
 
     let request_end = header_end.checked_add(content_length).ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::InvalidData, "AirPlay request size overflow")
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "AirPlay request size overflow",
+        )
     })?;
 
     while pending.len() < request_end {
@@ -268,11 +273,7 @@ fn find_header_end(bytes: &[u8]) -> Option<usize> {
     bytes.windows(4).position(|window| window == b"\r\n\r\n")
 }
 
-fn write_response(
-    stream: &mut TcpStream,
-    response: &str,
-    status: u16,
-) -> std::io::Result<()> {
+fn write_response(stream: &mut TcpStream, response: &str, status: u16) -> std::io::Result<()> {
     stream.write_all(response.as_bytes())?;
     stream.flush()?;
     tracing::info!(
@@ -291,11 +292,17 @@ struct PairSetupFailure {
 
 impl PairSetupFailure {
     fn bad_request(reason: impl Into<String>) -> Self {
-        Self { status: 400, reason: reason.into() }
+        Self {
+            status: 400,
+            reason: reason.into(),
+        }
     }
 
     fn unavailable(reason: impl Into<String>) -> Self {
-        Self { status: 503, reason: reason.into() }
+        Self {
+            status: 503,
+            reason: reason.into(),
+        }
     }
 }
 
@@ -307,12 +314,16 @@ fn handle_pair_setup(
     session_key: &mut Option<[u8; 64]>,
     setup_code: Option<&str>,
 ) -> Result<Vec<u8>, PairSetupFailure> {
-    let fields = tlv8::decode(body)
-        .map_err(|error| PairSetupFailure::bad_request(error.to_string()))?;
+    let fields =
+        tlv8::decode(body).map_err(|error| PairSetupFailure::bad_request(error.to_string()))?;
     let mut states = fields.iter().filter(|field| field.kind == 0x06);
-    let state = states.next().ok_or_else(|| PairSetupFailure::bad_request("missing Pair-Setup State"))?;
+    let state = states
+        .next()
+        .ok_or_else(|| PairSetupFailure::bad_request("missing Pair-Setup State"))?;
     if states.next().is_some() || state.value.len() != 1 {
-        return Err(PairSetupFailure::bad_request("invalid Pair-Setup State field"));
+        return Err(PairSetupFailure::bad_request(
+            "invalid Pair-Setup State field",
+        ));
     }
 
     match state.value[0] {
@@ -320,9 +331,7 @@ fn handle_pair_setup(
             pairing::parse_m1(body)
                 .map_err(|error| PairSetupFailure::bad_request(error.to_string()))?;
             let code = setup_code.ok_or_else(|| {
-                PairSetupFailure::unavailable(
-                    "the receiver has no generated pairing code",
-                )
+                PairSetupFailure::unavailable("the receiver has no generated pairing code")
             })?;
             if !pairing::is_valid_setup_code(code) {
                 return Err(PairSetupFailure::unavailable(
@@ -333,13 +342,20 @@ fn handle_pair_setup(
             let server = SrpServer::new(code)
                 .map_err(|error| PairSetupFailure::unavailable(error.to_string()))?;
             let response = tlv8::encode(&[
-                Tlv { kind: 0x06, value: vec![0x02] },
+                Tlv {
+                    kind: 0x06,
+                    value: vec![0x02],
+                },
                 Tlv {
                     kind: 0x03,
-                    value: server.public_key()
+                    value: server
+                        .public_key()
                         .map_err(|error| PairSetupFailure::unavailable(error.to_string()))?,
                 },
-                Tlv { kind: 0x02, value: server.salt().to_vec() },
+                Tlv {
+                    kind: 0x02,
+                    value: server.salt().to_vec(),
+                },
             ]);
             *srp_state = Some(server);
             *session_key = None;
@@ -355,8 +371,14 @@ fn handle_pair_setup(
             match server.verify_client(&message.public_key, &message.proof) {
                 Ok(result) => {
                     let response = tlv8::encode(&[
-                        Tlv { kind: 0x06, value: vec![0x04] },
-                        Tlv { kind: 0x04, value: result.proof.to_vec() },
+                        Tlv {
+                            kind: 0x06,
+                            value: vec![0x04],
+                        },
+                        Tlv {
+                            kind: 0x04,
+                            value: result.proof.to_vec(),
+                        },
                     ]);
                     *session_key = Some(result.session_key);
                     Ok(response)
@@ -365,8 +387,14 @@ fn handle_pair_setup(
                     tracing::warn!(%error, "Pair-Setup SRP proof rejected");
                     *session_key = None;
                     Ok(tlv8::encode(&[
-                        Tlv { kind: 0x06, value: vec![0x04] },
-                        Tlv { kind: 0x07, value: vec![0x02] },
+                        Tlv {
+                            kind: 0x06,
+                            value: vec![0x04],
+                        },
+                        Tlv {
+                            kind: 0x07,
+                            value: vec![0x02],
+                        },
                     ]))
                 }
             }
@@ -429,16 +457,19 @@ fn txt_airplay_dictionary() -> Dictionary {
     dictionary.insert("deviceid".into(), Value::String(config::device_id()));
     dictionary.insert("features".into(), Value::String(config::FEATURES.into()));
     dictionary.insert("model".into(), Value::String(config::MODEL.into()));
-    dictionary.insert("srcvers".into(), Value::String(config::SOURCE_VERSION.into()));
+    dictionary.insert(
+        "srcvers".into(),
+        Value::String(config::SOURCE_VERSION.into()),
+    );
     dictionary.insert("flags".into(), Value::String("0x0".into()));
     dictionary
 }
 
 #[cfg(test)]
 mod tests {
+    use super::plist;
     use super::{build_info_response, find_header_end, handle_pair_setup, server_info_plist};
     use crate::airplay::tlv8::{self, Tlv};
-    use super::plist;
     use ::plist::{Dictionary, Value};
 
     #[test]
@@ -479,38 +510,71 @@ mod tests {
         let dict = value.as_dictionary().expect("response dictionary");
 
         for key in ["deviceid", "features", "model", "srcvers", "flags"] {
-            assert!(matches!(dict.get(key), Some(Value::String(_))), "missing string key {key}");
+            assert!(
+                matches!(dict.get(key), Some(Value::String(_))),
+                "missing string key {key}"
+            );
         }
         assert_eq!(dict.get("features").and_then(Value::as_string), Some("0x0"));
     }
 
-
     #[test]
     fn pair_setup_m1_returns_srp_challenge() {
         let request = tlv8::encode(&[
-            Tlv { kind: 0x06, value: vec![0x01] },
-            Tlv { kind: 0x00, value: vec![0x00] },
+            Tlv {
+                kind: 0x06,
+                value: vec![0x01],
+            },
+            Tlv {
+                kind: 0x00,
+                value: vec![0x00],
+            },
         ]);
         let mut srp = None;
         let mut session_key = None;
-        let response = handle_pair_setup(
-            &request,
-            &mut srp,
-            &mut session_key,
-            Some("518-08-582"),
-        ).expect("M1 response");
+        let response = handle_pair_setup(&request, &mut srp, &mut session_key, Some("518-08-582"))
+            .expect("M1 response");
         let fields = tlv8::decode(&response).expect("decode M2");
-        assert_eq!(fields.iter().find(|field| field.kind == 0x06).unwrap().value, [0x02]);
-        assert_eq!(fields.iter().find(|field| field.kind == 0x02).unwrap().value.len(), 16);
-        assert_eq!(fields.iter().find(|field| field.kind == 0x03).unwrap().value.len(), 384);
+        assert_eq!(
+            fields
+                .iter()
+                .find(|field| field.kind == 0x06)
+                .unwrap()
+                .value,
+            [0x02]
+        );
+        assert_eq!(
+            fields
+                .iter()
+                .find(|field| field.kind == 0x02)
+                .unwrap()
+                .value
+                .len(),
+            16
+        );
+        assert_eq!(
+            fields
+                .iter()
+                .find(|field| field.kind == 0x03)
+                .unwrap()
+                .value
+                .len(),
+            384
+        );
         assert!(srp.is_some());
     }
 
     #[test]
     fn pair_setup_requires_explicit_setup_code() {
         let request = tlv8::encode(&[
-            Tlv { kind: 0x06, value: vec![0x01] },
-            Tlv { kind: 0x00, value: vec![0x00] },
+            Tlv {
+                kind: 0x06,
+                value: vec![0x01],
+            },
+            Tlv {
+                kind: 0x00,
+                value: vec![0x00],
+            },
         ]);
         let mut srp = None;
         let mut session_key = None;
@@ -523,9 +587,18 @@ mod tests {
     #[test]
     fn pair_setup_rejects_m3_without_m1() {
         let request = tlv8::encode(&[
-            Tlv { kind: 0x06, value: vec![0x03] },
-            Tlv { kind: 0x03, value: vec![0x01] },
-            Tlv { kind: 0x04, value: vec![0x00; 64] },
+            Tlv {
+                kind: 0x06,
+                value: vec![0x03],
+            },
+            Tlv {
+                kind: 0x03,
+                value: vec![0x01],
+            },
+            Tlv {
+                kind: 0x04,
+                value: vec![0x00; 64],
+            },
         ]);
         let mut srp = None;
         let mut session_key = None;
@@ -534,12 +607,17 @@ mod tests {
         assert_eq!(error.status, 400);
     }
 
-
     #[test]
     fn pair_setup_rejects_invalid_setup_code_format() {
         let request = tlv8::encode(&[
-            Tlv { kind: 0x06, value: vec![0x01] },
-            Tlv { kind: 0x00, value: vec![0x00] },
+            Tlv {
+                kind: 0x06,
+                value: vec![0x01],
+            },
+            Tlv {
+                kind: 0x00,
+                value: vec![0x00],
+            },
         ]);
         let mut srp = None;
         let mut session_key = None;
@@ -552,13 +630,28 @@ mod tests {
     #[test]
     fn pair_setup_returns_authentication_error_for_bad_m3_proof() {
         let m1 = tlv8::encode(&[
-            Tlv { kind: 0x06, value: vec![0x01] },
-            Tlv { kind: 0x00, value: vec![0x00] },
+            Tlv {
+                kind: 0x06,
+                value: vec![0x01],
+            },
+            Tlv {
+                kind: 0x00,
+                value: vec![0x00],
+            },
         ]);
         let m3 = tlv8::encode(&[
-            Tlv { kind: 0x06, value: vec![0x03] },
-            Tlv { kind: 0x03, value: vec![0x01] },
-            Tlv { kind: 0x04, value: vec![0x00; 64] },
+            Tlv {
+                kind: 0x06,
+                value: vec![0x03],
+            },
+            Tlv {
+                kind: 0x03,
+                value: vec![0x01],
+            },
+            Tlv {
+                kind: 0x04,
+                value: vec![0x00; 64],
+            },
         ]);
         let mut srp = None;
         let mut session_key = None;
@@ -567,8 +660,16 @@ mod tests {
         let response = handle_pair_setup(&m3, &mut srp, &mut session_key, Some("518-08-582"))
             .expect("bad proof is represented as an M4 TLV error");
         let fields = tlv8::decode(&response).expect("decode M4 error");
-        assert!(fields.iter().any(|field| field.kind == 0x06 && field.value == [0x04]));
-        assert!(fields.iter().any(|field| field.kind == 0x07 && field.value == [0x02]));
+        assert!(
+            fields
+                .iter()
+                .any(|field| field.kind == 0x06 && field.value == [0x04])
+        );
+        assert!(
+            fields
+                .iter()
+                .any(|field| field.kind == 0x07 && field.value == [0x02])
+        );
         assert!(session_key.is_none());
     }
 

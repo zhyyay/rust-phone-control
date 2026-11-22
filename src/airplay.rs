@@ -8,12 +8,12 @@
 
 mod config;
 mod discovery;
-mod plist;
 mod pairing;
+mod plist;
 mod rtsp;
+mod server;
 mod srp;
 mod tlv8;
-mod server;
 
 #[cfg(windows)]
 use std::sync::{Mutex, OnceLock};

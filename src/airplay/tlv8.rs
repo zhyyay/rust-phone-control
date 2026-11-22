@@ -11,8 +11,14 @@ pub struct Tlv {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Tlv8Error {
-    TruncatedHeader { offset: usize },
-    TruncatedValue { offset: usize, expected: usize, remaining: usize },
+    TruncatedHeader {
+        offset: usize,
+    },
+    TruncatedValue {
+        offset: usize,
+        expected: usize,
+        remaining: usize,
+    },
 }
 
 impl std::fmt::Display for Tlv8Error {
@@ -103,13 +109,19 @@ pub fn encode(items: &[Tlv]) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::{decode, encode, Tlv, Tlv8Error};
+    use super::{Tlv, Tlv8Error, decode, encode};
 
     #[test]
     fn encodes_and_decodes_multiple_values() {
         let items = vec![
-            Tlv { kind: 6, value: vec![2] },
-            Tlv { kind: 3, value: vec![1, 2, 3, 4] },
+            Tlv {
+                kind: 6,
+                value: vec![2],
+            },
+            Tlv {
+                kind: 3,
+                value: vec![1, 2, 3, 4],
+            },
         ];
         assert_eq!(decode(&encode(&items)).expect("decode TLV8"), items);
     }
@@ -123,7 +135,10 @@ mod tests {
         let encoded = encode(std::slice::from_ref(&item));
         assert_eq!(encoded[1], 255);
         assert_eq!(encoded[257], 3);
-        assert_eq!(decode(&encoded).expect("decode fragmented value"), vec![item]);
+        assert_eq!(
+            decode(&encoded).expect("decode fragmented value"),
+            vec![item]
+        );
     }
 
     #[test]
@@ -152,7 +167,11 @@ mod tests {
         ));
         assert!(matches!(
             decode(&[3, 4, 1, 2]),
-            Err(Tlv8Error::TruncatedValue { expected: 4, remaining: 2, .. })
+            Err(Tlv8Error::TruncatedValue {
+                expected: 4,
+                remaining: 2,
+                ..
+            })
         ));
     }
 

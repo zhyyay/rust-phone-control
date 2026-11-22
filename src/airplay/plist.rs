@@ -35,10 +35,7 @@ mod tests {
         root.insert("nested".into(), Value::Dictionary(nested));
         root.insert(
             "items".into(),
-            Value::Array(vec![
-                Value::String("first".into()),
-                Value::Boolean(false),
-            ]),
+            Value::Array(vec![Value::String("first".into()), Value::Boolean(false)]),
         );
         Value::Dictionary(root)
     }

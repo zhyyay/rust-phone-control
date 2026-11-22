@@ -3,8 +3,8 @@
 //! This module validates TLV8 envelopes for M1 and M3. SRP operations and the
 //! per-connection protocol state are owned by the RTSP layer.
 
-use rand::rngs::OsRng;
 use rand::Rng;
+use rand::rngs::OsRng;
 
 use super::tlv8::{self, Tlv};
 
@@ -72,8 +72,18 @@ pub struct PairSetupM3 {
 
 pub fn parse_m1(payload: &[u8]) -> Result<PairSetupM1, PairSetupError> {
     let fields = tlv8::decode(payload).map_err(|_| PairSetupError::InvalidTlv)?;
-    let state = unique_field(&fields, TLV_STATE, PairSetupError::MissingState, PairSetupError::DuplicateState)?;
-    let method = unique_field(&fields, TLV_METHOD, PairSetupError::MissingMethod, PairSetupError::DuplicateMethod)?;
+    let state = unique_field(
+        &fields,
+        TLV_STATE,
+        PairSetupError::MissingState,
+        PairSetupError::DuplicateState,
+    )?;
+    let method = unique_field(
+        &fields,
+        TLV_METHOD,
+        PairSetupError::MissingMethod,
+        PairSetupError::DuplicateMethod,
+    )?;
 
     if state != [STATE_M1] {
         return Err(PairSetupError::InvalidState);
@@ -81,27 +91,47 @@ pub fn parse_m1(payload: &[u8]) -> Result<PairSetupM1, PairSetupError> {
     if method != [METHOD_PAIR_SETUP] {
         return Err(PairSetupError::InvalidMethod);
     }
-    Ok(PairSetupM1 { method: METHOD_PAIR_SETUP })
+    Ok(PairSetupM1 {
+        method: METHOD_PAIR_SETUP,
+    })
 }
 
 pub fn parse_m3(payload: &[u8]) -> Result<PairSetupM3, PairSetupError> {
     let fields = tlv8::decode(payload).map_err(|_| PairSetupError::InvalidTlv)?;
-    let state = unique_field(&fields, TLV_STATE, PairSetupError::MissingState, PairSetupError::DuplicateState)?;
+    let state = unique_field(
+        &fields,
+        TLV_STATE,
+        PairSetupError::MissingState,
+        PairSetupError::DuplicateState,
+    )?;
     if state != [STATE_M3] {
         return Err(PairSetupError::InvalidState);
     }
 
-    let public_key = unique_field(&fields, TLV_PUBLIC_KEY, PairSetupError::MissingPublicKey, PairSetupError::DuplicatePublicKey)?;
+    let public_key = unique_field(
+        &fields,
+        TLV_PUBLIC_KEY,
+        PairSetupError::MissingPublicKey,
+        PairSetupError::DuplicatePublicKey,
+    )?;
     if public_key.is_empty() || public_key.len() > SRP_PUBLIC_KEY_BYTES {
         return Err(PairSetupError::InvalidPublicKey);
     }
 
-    let proof = unique_field(&fields, TLV_PROOF, PairSetupError::MissingProof, PairSetupError::DuplicateProof)?;
+    let proof = unique_field(
+        &fields,
+        TLV_PROOF,
+        PairSetupError::MissingProof,
+        PairSetupError::DuplicateProof,
+    )?;
     if proof.len() != SRP_PROOF_BYTES {
         return Err(PairSetupError::InvalidProof);
     }
 
-    Ok(PairSetupM3 { public_key: public_key.to_vec(), proof: proof.to_vec() })
+    Ok(PairSetupM3 {
+        public_key: public_key.to_vec(),
+        proof: proof.to_vec(),
+    })
 }
 
 /// Generate a random eight-digit HomeKit setup code using the operating-system RNG.
@@ -110,9 +140,8 @@ pub fn generate_setup_code() -> String {
     let mut rng = OsRng;
     loop {
         let digits: Vec<u8> = (0..8).map(|_| rng.gen_range(0..=9)).collect();
-        let raw = String::from_utf8(
-            digits.iter().map(|digit| b'0' + *digit).collect()
-        ).expect("decimal digits are valid UTF-8");
+        let raw = String::from_utf8(digits.iter().map(|digit| b'0' + *digit).collect())
+            .expect("decimal digits are valid UTF-8");
         let code = format!("{}-{}-{}", &raw[0..3], &raw[3..5], &raw[5..8]);
         if is_valid_setup_code(&code) {
             return code;
@@ -126,9 +155,10 @@ pub fn is_valid_setup_code(code: &str) -> bool {
     if bytes.len() != 10
         || bytes[3] != b'-'
         || bytes[6] != b'-'
-        || !bytes.iter().enumerate().all(|(index, byte)| {
-            index == 3 || index == 6 || byte.is_ascii_digit()
-        })
+        || !bytes
+            .iter()
+            .enumerate()
+            .all(|(index, byte)| index == 3 || index == 6 || byte.is_ascii_digit())
     {
         return false;
     }
@@ -154,13 +184,19 @@ fn unique_field<'a>(
 
 #[cfg(test)]
 mod tests {
-    use super::{is_valid_setup_code, parse_m1, parse_m3, PairSetupError};
-    use crate::airplay::tlv8::{encode, Tlv};
+    use super::{PairSetupError, is_valid_setup_code, parse_m1, parse_m3};
+    use crate::airplay::tlv8::{Tlv, encode};
 
     fn m1() -> Vec<u8> {
         encode(&[
-            Tlv { kind: 0x06, value: vec![0x01] },
-            Tlv { kind: 0x00, value: vec![0x00] },
+            Tlv {
+                kind: 0x06,
+                value: vec![0x01],
+            },
+            Tlv {
+                kind: 0x00,
+                value: vec![0x00],
+            },
         ])
     }
 
@@ -171,15 +207,24 @@ mod tests {
 
     #[test]
     fn rejects_missing_state() {
-        let payload = encode(&[Tlv { kind: 0x00, value: vec![0x00] }]);
+        let payload = encode(&[Tlv {
+            kind: 0x00,
+            value: vec![0x00],
+        }]);
         assert_eq!(parse_m1(&payload), Err(PairSetupError::MissingState));
     }
 
     #[test]
     fn rejects_wrong_state() {
         let payload = encode(&[
-            Tlv { kind: 0x06, value: vec![0x03] },
-            Tlv { kind: 0x00, value: vec![0x00] },
+            Tlv {
+                kind: 0x06,
+                value: vec![0x03],
+            },
+            Tlv {
+                kind: 0x00,
+                value: vec![0x00],
+            },
         ]);
         assert_eq!(parse_m1(&payload), Err(PairSetupError::InvalidState));
     }
@@ -187,8 +232,14 @@ mod tests {
     #[test]
     fn rejects_wrong_method() {
         let payload = encode(&[
-            Tlv { kind: 0x06, value: vec![0x01] },
-            Tlv { kind: 0x00, value: vec![0x02] },
+            Tlv {
+                kind: 0x06,
+                value: vec![0x01],
+            },
+            Tlv {
+                kind: 0x00,
+                value: vec![0x02],
+            },
         ]);
         assert_eq!(parse_m1(&payload), Err(PairSetupError::InvalidMethod));
     }
@@ -196,9 +247,18 @@ mod tests {
     #[test]
     fn rejects_duplicate_state() {
         let payload = encode(&[
-            Tlv { kind: 0x06, value: vec![0x01] },
-            Tlv { kind: 0x06, value: vec![0x01] },
-            Tlv { kind: 0x00, value: vec![0x00] },
+            Tlv {
+                kind: 0x06,
+                value: vec![0x01],
+            },
+            Tlv {
+                kind: 0x06,
+                value: vec![0x01],
+            },
+            Tlv {
+                kind: 0x00,
+                value: vec![0x00],
+            },
         ]);
         assert_eq!(parse_m1(&payload), Err(PairSetupError::DuplicateState));
     }
@@ -212,9 +272,18 @@ mod tests {
     #[test]
     fn parses_pair_setup_m3() {
         let payload = encode(&[
-            Tlv { kind: 0x06, value: vec![0x03] },
-            Tlv { kind: 0x03, value: vec![0x11; 384] },
-            Tlv { kind: 0x04, value: vec![0x22; 64] },
+            Tlv {
+                kind: 0x06,
+                value: vec![0x03],
+            },
+            Tlv {
+                kind: 0x03,
+                value: vec![0x11; 384],
+            },
+            Tlv {
+                kind: 0x04,
+                value: vec![0x22; 64],
+            },
         ]);
         let parsed = parse_m3(&payload).unwrap();
         assert_eq!(parsed.public_key, vec![0x11; 384]);
@@ -224,19 +293,39 @@ mod tests {
     #[test]
     fn rejects_invalid_m3_lengths() {
         let short_proof = encode(&[
-            Tlv { kind: 0x06, value: vec![0x03] },
-            Tlv { kind: 0x03, value: vec![0x11; 384] },
-            Tlv { kind: 0x04, value: vec![0x22; 63] },
+            Tlv {
+                kind: 0x06,
+                value: vec![0x03],
+            },
+            Tlv {
+                kind: 0x03,
+                value: vec![0x11; 384],
+            },
+            Tlv {
+                kind: 0x04,
+                value: vec![0x22; 63],
+            },
         ]);
         assert_eq!(parse_m3(&short_proof), Err(PairSetupError::InvalidProof));
         let oversized_key = encode(&[
-            Tlv { kind: 0x06, value: vec![0x03] },
-            Tlv { kind: 0x03, value: vec![0x11; 385] },
-            Tlv { kind: 0x04, value: vec![0x22; 64] },
+            Tlv {
+                kind: 0x06,
+                value: vec![0x03],
+            },
+            Tlv {
+                kind: 0x03,
+                value: vec![0x11; 385],
+            },
+            Tlv {
+                kind: 0x04,
+                value: vec![0x22; 64],
+            },
         ]);
-        assert_eq!(parse_m3(&oversized_key), Err(PairSetupError::InvalidPublicKey));
+        assert_eq!(
+            parse_m3(&oversized_key),
+            Err(PairSetupError::InvalidPublicKey)
+        );
     }
-
 
     #[test]
     fn generated_setup_codes_are_valid_and_formatted() {
