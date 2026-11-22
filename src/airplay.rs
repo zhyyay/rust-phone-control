@@ -12,7 +12,6 @@ mod plist;
 mod pairing;
 mod rtsp;
 mod srp;
-mod srp;
 mod tlv8;
 mod server;
 
