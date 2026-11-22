@@ -138,6 +138,9 @@ impl FairPlaySession {
                 if self.initial_mode.is_none() {
                     return Err("FairPlay key message received before initial message".to_owned());
                 }
+                if self.key_message.is_some() {
+                    return Err("FairPlay key message was already received".to_owned());
+                }
                 self.key_message = Some(message.body);
                 Ok(FairPlayState::KeyMessageReceived)
             }
@@ -271,6 +274,13 @@ mod tests {
         assert_eq!(
             session.accept(key).expect("accept key"),
             FairPlayState::KeyMessageReceived
+        );
+        assert!(session.has_key_message());
+
+        let duplicate_key = parse_message(&key_message()).expect("duplicate key message");
+        assert_eq!(
+            session.accept(duplicate_key).unwrap_err(),
+            "FairPlay key message was already received"
         );
         assert!(session.has_key_message());
     }
