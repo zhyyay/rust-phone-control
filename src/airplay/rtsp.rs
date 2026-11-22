@@ -315,10 +315,13 @@ mod tests {
 
     #[test]
     fn finds_header_terminator() {
-        assert_eq!(find_header_end(b"OPTIONS * RTSP/1.0\\r\\nCSeq: 1\\r\\n\\r\\n"), Some(27));
-        assert_eq!(find_header_end(b"OPTIONS * RTSP/1.0\\r\\n"), None);
+        let request = b"OPTIONS * RTSP/1.0\r\nCSeq: 1\r\n\r\n";
+        assert_eq!(
+            find_header_end(request),
+            Some(b"OPTIONS * RTSP/1.0\r\nCSeq: 1".len())
+        );
+        assert_eq!(find_header_end(b"OPTIONS * RTSP/1.0\r\n"), None);
     }
-
     #[test]
     fn server_info_contains_declared_model_and_zero_features() {
         let body = server_info_plist();
