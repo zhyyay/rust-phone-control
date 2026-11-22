@@ -8,7 +8,8 @@
 
 mod config;
 mod discovery;
-// The parser is introduced before the UDP media receiver is wired in.
+// UDP media reception is implemented independently and will be started only
+// after RTSP stream setup negotiates the receiver address.
 #[allow(dead_code)]
 mod media;
 mod pair_setup;
