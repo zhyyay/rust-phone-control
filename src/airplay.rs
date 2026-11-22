@@ -8,6 +8,8 @@
 
 mod config;
 mod discovery;
+#[allow(dead_code)]
+mod event;
 // UDP media reception is implemented independently and will be started only
 // after RTSP stream setup negotiates the receiver address.
 #[allow(dead_code)]
