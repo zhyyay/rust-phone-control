@@ -222,12 +222,11 @@ impl H264Decoder {
         .map_err(|error| MediaFoundationError::EnumerationFailed(error.code().0))?;
 
         let activations = ActivationArray { ptr: raw, count };
-        let activation = activations
-            .ptr
-            .as_ref()
-            .and_then(|_| unsafe { (*activations.ptr).as_ref() })
-            .ok_or(MediaFoundationError::NoH264Decoder)?
-            .clone();
+        let activation = unsafe {
+            activations.ptr.as_ref().and_then(Option::as_ref)
+        }
+        .ok_or(MediaFoundationError::NoH264Decoder)?
+        .clone();
 
         // SAFETY: activation is a live IMFActivate returned by MFTEnumEx.
         let transform = unsafe {
@@ -344,7 +343,7 @@ impl H264Decoder {
         let stream_info = unsafe { self.transform.GetOutputStreamInfo(self.output_stream) }
             .map_err(|error| MediaFoundationError::OutputInfoFailed(error.code().0))?;
         let caller_allocates =
-            stream_info.dwFlags & MFT_OUTPUT_STREAM_PROVIDES_SAMPLES.0 == 0;
+            stream_info.dwFlags & (MFT_OUTPUT_STREAM_PROVIDES_SAMPLES.0 as u32) == 0;
 
         let supplied_sample = if caller_allocates {
             let frame_bytes = self.width
