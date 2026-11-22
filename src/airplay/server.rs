@@ -77,6 +77,19 @@ fn run_listener(listener: TcpListener, stop: Arc<AtomicBool>) {
 }
 
 fn handle_client(stream: TcpStream, peer: std::net::SocketAddr) {
+    // On Windows, accepted sockets can retain the listener's nonblocking
+    // mode. RTSP uses blocking reads with explicit timeouts, so switch each
+    // client connection back to blocking mode before handing it to the parser.
+    if let Err(error) = stream.set_nonblocking(false) {
+        tracing::error!(
+            %peer,
+            error_kind = ?error.kind(),
+            error = %error,
+            "Failed to set AirPlay client socket to blocking mode"
+        );
+        return;
+    }
+
     tracing::info!(%peer, "AirPlay client handler entered");
     match rtsp::serve(stream) {
         Ok(()) => tracing::info!(%peer, "AirPlay client handler completed normally"),
