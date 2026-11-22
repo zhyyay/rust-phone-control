@@ -290,7 +290,7 @@ fn parse_h264_sps_dimensions(sps: &[u8]) -> Result<AvcVideoDimensions, AvcConfig
             if index + 1 >= sps.len() || sps[index + 1] > 3 {
                 return Err(AvcConfigError::InvalidSps);
             }
-            zero_count = 0;
+            zero_count = 2;
             index += 1;
             continue;
         }
@@ -301,7 +301,10 @@ fn parse_h264_sps_dimensions(sps: &[u8]) -> Result<AvcVideoDimensions, AvcConfig
 
     let mut bits = H264BitReader::new(&rbsp);
     let profile_idc = bits.read_bits(8)?;
-    let _constraint_flags = bits.read_bits(8)?;
+    let constraint_flags = bits.read_bits(8)?;
+    if constraint_flags & 0x03 != 0 {
+        return Err(AvcConfigError::InvalidSps);
+    }
     let _level_idc = bits.read_bits(8)?;
     let _seq_parameter_set_id = bits.read_ue()?;
 
@@ -432,7 +435,8 @@ fn skip_scaling_list(bits: &mut H264BitReader<'_>, size: usize) -> Result<(), Av
     for _ in 0..size {
         if next_scale != 0 {
             let delta_scale = bits.read_se()?;
-            next_scale = (last_scale + delta_scale + 256).rem_euclid(256);
+            next_scale = (i64::from(last_scale) + i64::from(delta_scale) + 256)
+                .rem_euclid(256) as i32;
         }
         if next_scale != 0 {
             last_scale = next_scale;
@@ -1036,7 +1040,9 @@ mod tests {
         fn push_ue(bits: &mut Vec<bool>, value: u32) {
             let code = value + 1;
             let width = (u32::BITS - code.leading_zeros()) as usize;
-            bits.extend(std::iter::repeat_n(false, width - 1));
+            for _ in 0..width - 1 {
+                bits.push(false);
+            }
             push_bits(bits, code, width);
         }
 
