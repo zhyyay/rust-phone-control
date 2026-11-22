@@ -3,6 +3,9 @@
 //! This module validates TLV8 envelopes for M1 and M3. SRP operations and the
 //! per-connection protocol state are owned by the RTSP layer.
 
+use rand::rngs::OsRng;
+use rand::Rng;
+
 use super::tlv8::{self, Tlv};
 
 const TLV_METHOD: u8 = 0x00;
@@ -99,6 +102,22 @@ pub fn parse_m3(payload: &[u8]) -> Result<PairSetupM3, PairSetupError> {
     }
 
     Ok(PairSetupM3 { public_key: public_key.to_vec(), proof: proof.to_vec() })
+}
+
+/// Generate a random eight-digit HomeKit setup code using the operating-system RNG.
+/// The returned string uses the standard XXX-XX-XXX display format.
+pub fn generate_setup_code() -> String {
+    let mut rng = OsRng;
+    loop {
+        let digits: Vec<u8> = (0..8).map(|_| rng.gen_range(0..=9)).collect();
+        let raw = String::from_utf8(
+            digits.iter().map(|digit| b'0' + *digit).collect()
+        ).expect("decimal digits are valid UTF-8");
+        let code = format!("{}-{}-{}", &raw[0..3], &raw[3..5], &raw[5..8]);
+        if is_valid_setup_code(&code) {
+            return code;
+        }
+    }
 }
 
 /// Pairing setup codes use the standard XXX-XX-XXX display format.
@@ -216,6 +235,18 @@ mod tests {
             Tlv { kind: 0x04, value: vec![0x22; 64] },
         ]);
         assert_eq!(parse_m3(&oversized_key), Err(PairSetupError::InvalidPublicKey));
+    }
+
+
+    #[test]
+    fn generated_setup_codes_are_valid_and_formatted() {
+        for _ in 0..128 {
+            let code = super::generate_setup_code();
+            assert_eq!(code.len(), 10);
+            assert!(is_valid_setup_code(&code), "invalid generated code: {code}");
+            assert_eq!(code.as_bytes()[3], b'-');
+            assert_eq!(code.as_bytes()[6], b'-');
+        }
     }
 
     #[test]
