@@ -137,6 +137,8 @@ impl SrpServer {
             return Err(SrpError::InvalidClientProof);
         }
 
+        let a_bytes = a.to_bytes_be();
+        let b_bytes = self.public_b.to_bytes_be();
         let a_pad = pad(&a)?;
         let b_pad = pad(&self.public_b)?;
         let u = BigUint::from_bytes_be(&hash(&[&a_pad, &b_pad]));
@@ -149,8 +151,10 @@ impl SrpServer {
         let shared_bytes = shared.to_bytes_be();
         let session_key = hash(&[&shared_bytes]);
 
-        let hn = hash(&[&pad(&n)?]);
-        let hg = hash(&[&pad(&g)?]);
+        // HAP's proof transcript hashes N, g, A, and B in minimal
+        // big-endian form; PAD is used only for k and u calculations.
+        let hn = hash(&[&n.to_bytes_be()]);
+        let hg = hash(&[&g.to_bytes_be()]);
         let mut xor = [0u8; 64];
         for (out, (left, right)) in xor.iter_mut().zip(hn.iter().zip(hg.iter())) {
             *out = left ^ right;
@@ -160,15 +164,15 @@ impl SrpServer {
             &xor,
             &hi,
             &self.salt,
-            &a_pad,
-            &b_pad,
+            &a_bytes,
+            &b_bytes,
             &session_key,
         ]);
         if !bool::from(expected.as_slice().ct_eq(client_proof)) {
             return Err(SrpError::InvalidClientProof);
         }
 
-        let server_proof = hash(&[&a_pad, &expected, &session_key]);
+        let server_proof = hash(&[&a_bytes, &expected, &session_key]);
         Ok(SrpServerProof {
             session_key,
             proof: server_proof,
@@ -241,8 +245,8 @@ mod tests {
         let shared = base.modpow(&exponent, &n);
         let session_key = hash(&[&shared.to_bytes_be()]);
 
-        let hn = hash(&[&pad(&n).unwrap()]);
-        let hg = hash(&[&pad(&g).unwrap()]);
+        let hn = hash(&[&n.to_bytes_be()]);
+        let hg = hash(&[&g.to_bytes_be()]);
         let mut xor = [0u8; 64];
         for (out, (left, right)) in xor.iter_mut().zip(hn.iter().zip(hg.iter())) {
             *out = left ^ right;
@@ -252,8 +256,8 @@ mod tests {
             &xor,
             &hi,
             salt,
-            &a_pad,
-            &b_pad,
+            &a_public.to_bytes_be(),
+            &b_public.to_bytes_be(),
             &session_key,
         ]);
         (session_key, proof, a_pad)
