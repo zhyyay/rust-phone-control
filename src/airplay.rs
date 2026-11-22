@@ -20,6 +20,8 @@ mod pairing_store;
 mod plist;
 mod rtsp;
 mod server;
+#[allow(dead_code)]
+mod setup;
 mod srp;
 mod tlv8;
 
