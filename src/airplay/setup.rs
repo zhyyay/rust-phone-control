@@ -21,6 +21,10 @@ pub(super) struct SessionSetup {
     pub session_uuid: Option<String>,
     pub screen_mirroring: bool,
     pub timing_protocol: Option<String>,
+    /// FairPlay-wrapped 16-byte video key supplied by the sender.
+    pub fairplay_ekey: Option<[u8; 72]>,
+    /// Optional stream IV supplied alongside the wrapped key.
+    pub fairplay_eiv: Option<[u8; 16]>,
 }
 
 /// One stream descriptor from a subsequent SETUP request.
@@ -100,6 +104,9 @@ pub(super) fn parse_setup_request(bytes: &[u8]) -> Result<SetupRequest, String> 
         None => false,
     };
 
+    let fairplay_ekey = fixed_data::<72>(dictionary.get("ekey"), "ekey")?;
+    let fairplay_eiv = fixed_data::<16>(dictionary.get("eiv"), "eiv")?;
+
     let timing_protocol = match dictionary.get("timingProtocol") {
         Some(value) => {
             let protocol = value
@@ -128,7 +135,27 @@ pub(super) fn parse_setup_request(bytes: &[u8]) -> Result<SetupRequest, String> 
         session_uuid,
         screen_mirroring,
         timing_protocol,
+        fairplay_ekey,
+        fairplay_eiv,
     }))
+}
+
+fn fixed_data<const N: usize>(
+    value: Option<&Value>,
+    field: &str,
+) -> Result<Option<[u8; N]>, String> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let bytes = match value {
+        Value::Data(bytes) => bytes,
+        _ => return Err(format!("SETUP {field} must be a data value")),
+    };
+    let data: [u8; N] = bytes
+        .as_slice()
+        .try_into()
+        .map_err(|_| format!("SETUP {field} must be exactly {N} bytes"))?;
+    Ok(Some(data))
 }
 
 fn unsigned_integer(value: Option<&Value>) -> Option<u64> {
@@ -148,6 +175,8 @@ mod tests {
     fn parses_session_level_setup_metadata() {
         let mut dictionary = Dictionary::new();
         dictionary.insert("timingPort".into(), Value::Integer(7010.into()));
+        dictionary.insert("ekey".into(), Value::Data(vec![0x11; 72]));
+        dictionary.insert("eiv".into(), Value::Data(vec![0x22; 16]));
         dictionary.insert(
             "sessionUUID".into(),
             Value::String("48FE92D4-3786-4D24-8270-752ACCCF8A47".into()),
@@ -166,6 +195,8 @@ mod tests {
                 );
                 assert!(session.screen_mirroring);
                 assert_eq!(session.timing_protocol.as_deref(), Some("PTP"));
+                assert_eq!(session.fairplay_ekey, Some([0x11; 72]));
+                assert_eq!(session.fairplay_eiv, Some([0x22; 16]));
             }
             SetupRequest::Streams(_) => panic!("expected session SETUP"),
         }
@@ -194,6 +225,21 @@ mod tests {
                 connection_id: Some(3_873_339_193_950_757_022),
             }])
         );
+    }
+
+    #[test]
+    fn rejects_invalid_fairplay_key_material_lengths_and_types() {
+        let mut root = Dictionary::new();
+        root.insert("isScreenMirroringSession".into(), Value::Boolean(true));
+        root.insert("ekey".into(), Value::Data(vec![0; 71]));
+        let bytes = plist::encode_binary(&Value::Dictionary(root)).expect("encode plist");
+        assert!(parse_setup_request(&bytes).is_err());
+
+        let mut root = Dictionary::new();
+        root.insert("isScreenMirroringSession".into(), Value::Boolean(true));
+        root.insert("eiv".into(), Value::String("not binary data".into()));
+        let bytes = plist::encode_binary(&Value::Dictionary(root)).expect("encode plist");
+        assert!(parse_setup_request(&bytes).is_err());
     }
 
     #[test]
