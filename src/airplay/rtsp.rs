@@ -442,7 +442,7 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
                         Ok((body, None)) => {
                             pair_verify_shared_secret = None;
                             body
-                        },
+                        }
                         Err(error) => {
                             tracing::warn!(%error, "Pair-Verify exchange rejected");
                             pair_verify_session = None;
@@ -1209,9 +1209,15 @@ mod tests {
         let mut event = None;
         let mut timing = None;
         let mut media = None;
-        let response =
-            handle_setup_request(&session_body, peer_ip, &mut event, &mut timing, &mut media, None)
-                .expect("session SETUP");
+        let response = handle_setup_request(
+            &session_body,
+            peer_ip,
+            &mut event,
+            &mut timing,
+            &mut media,
+            None,
+        )
+        .expect("session SETUP");
         let value = plist::decode(&response).expect("decode session response");
         let dictionary = value.as_dictionary().expect("session response dictionary");
         let event_port = dictionary
@@ -1242,9 +1248,15 @@ mod tests {
         let stream_body =
             plist::encode_binary(&Value::Dictionary(root)).expect("encode stream setup");
 
-        let response =
-            handle_setup_request(&stream_body, peer_ip, &mut event, &mut timing, &mut media, None)
-                .expect("screen stream SETUP");
+        let response = handle_setup_request(
+            &stream_body,
+            peer_ip,
+            &mut event,
+            &mut timing,
+            &mut media,
+            None,
+        )
+        .expect("screen stream SETUP");
         let value = plist::decode(&response).expect("decode stream response");
         let dictionary = value.as_dictionary().expect("stream response dictionary");
         let streams = dictionary
@@ -1291,8 +1303,9 @@ mod tests {
         let mut event = None;
         let mut timing = None;
         let mut media = None;
-        let response = handle_setup_request(&body, peer_ip, &mut event, &mut timing, &mut media, None)
-            .expect("NTP session SETUP");
+        let response =
+            handle_setup_request(&body, peer_ip, &mut event, &mut timing, &mut media, None)
+                .expect("NTP session SETUP");
         let value = plist::decode(&response).expect("decode NTP response");
         let dictionary = value.as_dictionary().expect("NTP response dictionary");
         let timing_port = dictionary
