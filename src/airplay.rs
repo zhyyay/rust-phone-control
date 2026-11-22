@@ -1,8 +1,8 @@
 //! Built-in AirPlay receiver protocol implementation (in progress).
 //!
 //! The endpoint publishes mDNS, handles RTSP control and pairing exchanges,
-//! negotiates session/event/timing channels, and binds the screen-mirroring UDP
-//! data port. It parses media packet envelopes but does not yet decrypt video,
+//! negotiates session/event/timing channels, and accepts the screen-mirroring
+//! TCP data stream. It parses media packet envelopes but does not yet decrypt video,
 //! reassemble frames, decode H.264/HEVC, or render frames in the GPUI window.
 //! PTP synchronization and unsupported AirPlay feature bits remain disabled.
 
