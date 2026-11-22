@@ -164,7 +164,7 @@ impl Render for PhoneControlApp {
                             .on_click(|_, _, _| type_sample_ble()),
                     ),
             )
-            .child(Label::new("AirPlay RTSP SETUP and UDP media reception · decryption, frame decoding, and video rendering are not implemented."))
+            .child(Label::new("AirPlay discovery and RTSP control · TCP mirror packets are accepted, but FairPlay response, video decryption, decoding, and live preview are not connected yet."))
     }
 }
 
