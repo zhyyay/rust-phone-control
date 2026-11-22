@@ -33,7 +33,9 @@ use ::plist::{Dictionary, Value};
 const MAX_HEADER_BYTES: usize = 16 * 1024;
 const MAX_BODY_BYTES: usize = 64 * 1024;
 const READ_CHUNK_BYTES: usize = 2048;
-const MEDIA_PACKET_QUEUE_CAPACITY: usize = 128;
+// Bound queued media payload memory to 128 MiB at the maximum packet size.
+// A count-only queue of 128 packets could otherwise retain up to 2 GiB.
+const MEDIA_PACKET_QUEUE_CAPACITY: usize = 8;
 const MAX_MIRROR_PAYLOAD_BYTES: usize = 16 * 1024 * 1024;
 const MEDIA_ACCEPT_POLL_INTERVAL: Duration = Duration::from_millis(20);
 
