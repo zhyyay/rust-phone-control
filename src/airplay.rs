@@ -9,6 +9,7 @@
 mod config;
 mod discovery;
 mod plist;
+mod pairing;
 mod rtsp;
 mod tlv8;
 mod server;
