@@ -5,7 +5,8 @@
 //! TCP data stream. The RTSP media worker still cannot decrypt sender video
 //! until FairPlay key recovery is implemented; the GPUI preview consumes the
 //! latest-frame mailbox once a decoded frame is published.
-//! PTP synchronization and unsupported AirPlay feature bits remain disabled.
+//! Only the screen-mirroring discovery bit is advertised; audio, FairPlay
+//! key recovery, PTP synchronization, and other unsupported features remain disabled.
 
 mod config;
 #[cfg(windows)]
