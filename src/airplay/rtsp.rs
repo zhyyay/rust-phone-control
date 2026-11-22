@@ -884,7 +884,9 @@ mod tests {
 
     #[test]
     fn stream_setup_requires_session_setup_and_rejects_other_types() {
+        let peer_ip = "127.0.0.1".parse().expect("loopback IP");
         let mut event = None;
+        let mut timing = None;
         let mut media = None;
         let mut stream = Dictionary::new();
         stream.insert("type".into(), Value::Integer(96.into()));
@@ -900,7 +902,8 @@ mod tests {
         let mut session = Dictionary::new();
         session.insert("timingProtocol".into(), Value::String("PTP".into()));
         let body = plist::encode_binary(&Value::Dictionary(session)).expect("encode session setup");
-        handle_setup_request(&body, &mut event, &mut media).expect("session setup");
+        handle_setup_request(&body, peer_ip, &mut event, &mut timing, &mut media)
+            .expect("session setup");
 
         let mut unsupported_stream = Dictionary::new();
         unsupported_stream.insert("type".into(), Value::Integer(96.into()));
@@ -911,7 +914,7 @@ mod tests {
         );
         let body = plist::encode_binary(&Value::Dictionary(root)).expect("encode audio stream setup");
         assert_eq!(
-            handle_setup_request(&body, &mut event, &mut media).unwrap_err().0,
+            handle_setup_request(&body, peer_ip, &mut event, &mut timing, &mut media).unwrap_err().0,
             501
         );
     }
