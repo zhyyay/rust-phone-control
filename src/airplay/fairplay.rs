@@ -25,6 +25,7 @@ pub enum FairPlayParseError {
     InvalidMagic,
     UnsupportedMajorVersion(u8),
     UnsupportedPhase(u8),
+    InvalidPayloadLength { declared: usize, actual: usize },
     InvalidInitialLength(usize),
     InvalidKeyMessageLength(usize),
 }
@@ -39,6 +40,12 @@ impl std::fmt::Display for FairPlayParseError {
             }
             Self::UnsupportedPhase(phase) => {
                 write!(formatter, "unsupported FairPlay message phase {phase}")
+            }
+            Self::InvalidPayloadLength { declared, actual } => {
+                write!(
+                    formatter,
+                    "FairPlay header declares {declared} payload bytes, got {actual}"
+                )
             }
             Self::InvalidInitialLength(length) => {
                 write!(
@@ -69,6 +76,16 @@ pub fn parse_message(body: &[u8]) -> Result<FairPlayMessage, FairPlayParseError>
     // Packed FPLY header: signature[0..4], major[4], minor[5], phase[6].
     if body[4] != 3 {
         return Err(FairPlayParseError::UnsupportedMajorVersion(body[4]));
+    }
+
+    let declared_payload_length =
+        u32::from_be_bytes(body[8..12].try_into().expect("four-byte length field")) as usize;
+    let actual_payload_length = body.len() - 12;
+    if declared_payload_length != actual_payload_length {
+        return Err(FairPlayParseError::InvalidPayloadLength {
+            declared: declared_payload_length,
+            actual: actual_payload_length,
+        });
     }
 
     let phase = body[6];
@@ -152,6 +169,7 @@ mod tests {
         body[4] = 3;
         body[5] = 1;
         body[6] = 1;
+        body[8..12].copy_from_slice(&4u32.to_be_bytes());
         body[14] = mode;
         body
     }
@@ -162,6 +180,7 @@ mod tests {
         body[4] = 3;
         body[5] = 1;
         body[6] = 3;
+        body[8..12].copy_from_slice(&152u32.to_be_bytes());
         body
     }
 
@@ -207,6 +226,26 @@ mod tests {
         assert_eq!(
             parse_message(&body).unwrap_err(),
             FairPlayParseError::UnsupportedMajorVersion(2)
+        );
+
+        let mut body = initial_message(3);
+        body[8..12].copy_from_slice(&3u32.to_be_bytes());
+        assert_eq!(
+            parse_message(&body).unwrap_err(),
+            FairPlayParseError::InvalidPayloadLength {
+                declared: 3,
+                actual: 4,
+            }
+        );
+
+        let mut body = key_message();
+        body[8..12].copy_from_slice(&151u32.to_be_bytes());
+        assert_eq!(
+            parse_message(&body).unwrap_err(),
+            FairPlayParseError::InvalidPayloadLength {
+                declared: 151,
+                actual: 152,
+            }
         );
 
         assert_eq!(
