@@ -437,8 +437,9 @@ fn handle_setup_request(
                         (400, "NTP SETUP is missing the sender timingPort".to_owned())
                     })?;
                     Some(
-                        TimingClient::start(peer_ip, sender_port)
-                            .map_err(|error| (503, format!("could not start NTP timing client: {error}")))?,
+                        TimingClient::start(peer_ip, sender_port).map_err(|error| {
+                            (503, format!("could not start NTP timing client: {error}"))
+                        })?,
                     )
                 }
                 Some("PTP") => {
@@ -465,13 +466,19 @@ fn handle_setup_request(
                 return Err((455, "stream SETUP received before session SETUP".to_owned()));
             }
             if streams.len() != 1 {
-                return Err((501, "only one media stream per RTSP session is supported".to_owned()));
+                return Err((
+                    501,
+                    "only one media stream per RTSP session is supported".to_owned(),
+                ));
             }
             let stream = &streams[0];
             if stream.stream_type != 110 {
                 return Err((
                     501,
-                    format!("media stream type {} is not supported; only screen mirroring type 110 is accepted", stream.stream_type),
+                    format!(
+                        "media stream type {} is not supported; only screen mirroring type 110 is accepted",
+                        stream.stream_type
+                    ),
                 ));
             }
 
@@ -827,8 +834,14 @@ mod tests {
         let mut event = None;
         let mut timing = None;
         let mut media = None;
-        let response = handle_setup_request(&session_body, peer_ip, &mut event, &mut timing, &mut media)
-            .expect("session SETUP");
+        let response = handle_setup_request(
+            &session_body,
+            peer_ip,
+            &mut event,
+            &mut timing,
+            &mut media,
+        )
+        .expect("session SETUP");
         let value = plist::decode(&response).expect("decode session response");
         let dictionary = value.as_dictionary().expect("session response dictionary");
         let event_port = dictionary
@@ -856,8 +869,14 @@ mod tests {
         let stream_body =
             plist::encode_binary(&Value::Dictionary(root)).expect("encode stream setup");
 
-        let response = handle_setup_request(&stream_body, peer_ip, &mut event, &mut timing, &mut media)
-            .expect("screen stream SETUP");
+        let response = handle_setup_request(
+            &stream_body,
+            peer_ip,
+            &mut event,
+            &mut timing,
+            &mut media,
+        )
+        .expect("screen stream SETUP");
         let value = plist::decode(&response).expect("decode stream response");
         let dictionary = value.as_dictionary().expect("stream response dictionary");
         let streams = dictionary
@@ -918,7 +937,9 @@ mod tests {
         assert!(timing_port > 0);
 
         let mut request = [0u8; 64];
-        let (length, peer) = sender.recv_from(&mut request).expect("receive NTP timing request");
+        let (length, peer) = sender
+            .recv_from(&mut request)
+            .expect("receive NTP timing request");
         assert_eq!(length, 32);
         assert_eq!(&request[..2], &[0x80, 0xD2]);
         assert_eq!(peer.port(), timing_port as u16);
@@ -943,13 +964,16 @@ mod tests {
         let body = plist::encode_binary(&Value::Dictionary(root)).expect("encode stream setup");
 
         assert_eq!(
-            handle_setup_request(&body, peer_ip, &mut event, &mut timing, &mut media).unwrap_err().0,
+            handle_setup_request(&body, peer_ip, &mut event, &mut timing, &mut media)
+                .unwrap_err()
+                .0,
             455
         );
 
         let mut session = Dictionary::new();
         session.insert("sessionUUID".into(), Value::String("test-session".into()));
-        let body = plist::encode_binary(&Value::Dictionary(session)).expect("encode session setup");
+        let body =
+            plist::encode_binary(&Value::Dictionary(session)).expect("encode session setup");
         handle_setup_request(&body, peer_ip, &mut event, &mut timing, &mut media)
             .expect("session setup");
 
@@ -960,9 +984,12 @@ mod tests {
             "streams".into(),
             Value::Array(vec![Value::Dictionary(unsupported_stream)]),
         );
-        let body = plist::encode_binary(&Value::Dictionary(root)).expect("encode audio stream setup");
+        let body =
+            plist::encode_binary(&Value::Dictionary(root)).expect("encode audio stream setup");
         assert_eq!(
-            handle_setup_request(&body, peer_ip, &mut event, &mut timing, &mut media).unwrap_err().0,
+            handle_setup_request(&body, peer_ip, &mut event, &mut timing, &mut media)
+                .unwrap_err()
+                .0,
             501
         );
     }
