@@ -230,12 +230,13 @@ fn read_mirror_stream(
             timestamp: parsed.timestamp,
             payload: parsed.payload.to_vec(),
         };
-        match sender.try_send(owned) {
+        // TCP mirror payloads must remain in receive order. In particular,
+        // dropping one encrypted packet would advance the sender's CTR stream
+        // without advancing the receiver's cipher, corrupting every later
+        // packet. A bounded blocking send applies backpressure instead.
+        match sender.send(owned) {
             Ok(()) => received = received.saturating_add(1),
-            Err(mpsc::TrySendError::Full(_)) => {
-                tracing::warn!(%peer_addr, "AirPlay media processing queue is full; dropping TCP packet");
-            }
-            Err(mpsc::TrySendError::Disconnected(_)) => break,
+            Err(_) => break,
         }
     }
     tracing::debug!(%peer_addr, received, "AirPlay mirror TCP stream reader stopped");
