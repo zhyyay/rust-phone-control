@@ -40,7 +40,8 @@ use std::sync::{Mutex, OnceLock};
 #[cfg(windows)]
 struct ReceiverRuntime {
     server: server::ControlServer,
-    advertisement: discovery::Advertisement,\n    _media_foundation: Option<decoder::MediaFoundationRuntime>,
+    advertisement: discovery::Advertisement,
+    _media_foundation: Option<decoder::MediaFoundationRuntime>,
 }
 
 #[cfg(windows)]
@@ -73,11 +74,29 @@ pub fn start() -> anyhow::Result<()> {
     }
 
     let _pairing_code = setup_code();
+    let media_foundation = match decoder::MediaFoundationRuntime::startup() {
+        Ok(runtime) => {
+            match runtime.decoder_inventory() {
+                Ok(inventory) => tracing::info!(
+                    h264_decoders = inventory.h264,
+                    hevc_decoders = inventory.hevc,
+                    "Media Foundation video decoder inventory"
+                ),
+                Err(error) => tracing::warn!(%error, "Could not enumerate Media Foundation decoders"),
+            }
+            Some(runtime)
+        }
+        Err(error) => {
+            tracing::warn!(%error, "Media Foundation unavailable; AirPlay control remains available");
+            None
+        }
+    };
     let server = server::ControlServer::start()?;
     let advertisement = discovery::Advertisement::start()?;
     *runtime = Some(ReceiverRuntime {
         server,
         advertisement,
+        _media_foundation: media_foundation,
     });
     tracing::info!(
         "Built-in AirPlay discovery/control endpoint started; secure mirroring is not implemented yet"
