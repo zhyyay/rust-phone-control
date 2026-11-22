@@ -8,7 +8,8 @@ use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::time::Duration;
 
-use super::config;
+use super::{config, plist};
+use ::plist::{Dictionary, Value};
 
 const MAX_HEADER_BYTES: usize = 16 * 1024;
 const MAX_BODY_BYTES: usize = 64 * 1024;
@@ -72,17 +73,27 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
                 write_response(&mut stream, &response, 200)?;
                 return Ok(());
             }
-            ("GET", "/info", "RTSP/1.0") => {
-                // Conservative placeholder: real AirPlay senders commonly
-                // require binary plist and capability data not implemented here.
-                let body = info_plist();
-                let response = format!(
-                    "RTSP/1.0 200 OK\r\nCSeq: {}\r\nServer: RustPhoneControl/0.1\r\nContent-Type: text/x-apple-plist+xml\r\nContent-Length: {}\r\n\r\n{}",
-                    request.cseq,
-                    body.len(),
-                    body
-                );
-                write_response(&mut stream, &response, 200)?;
+            ("GET", "/info", "RTSP/1.0") | ("POST", "/info", "RTSP/1.0") => {
+                match build_info_response(&request.body) {
+                    Ok(body) => {
+                        let header = format!(
+                            "RTSP/1.0 200 OK\\r\\nCSeq: {}\\r\\nServer: RustPhoneControl/0.1\\r\\nContent-Type: application/x-apple-binary-plist\\r\\nContent-Length: {}\\r\\n\\r\\n",
+                            request.cseq,
+                            body.len()
+                        );
+                        stream.write_all(header.as_bytes())?;
+                        stream.write_all(&body)?;
+                        stream.flush()?;
+                    }
+                    Err(reason) => {
+                        tracing::warn!(%reason, "Rejected invalid AirPlay /info plist request");
+                        let response = format!(
+                            "RTSP/1.0 400 Bad Request\\r\\nCSeq: {}\\r\\nServer: RustPhoneControl/0.1\\r\\nContent-Length: 0\\r\\n\\r\\n",
+                            request.cseq
+                        );
+                        write_response(&mut stream, &response, 400)?;
+                    }
+                }
             }
             _ => {
                 tracing::warn!(
@@ -248,39 +259,79 @@ fn server_info_plist() -> String {
     )
 }
 
-fn info_plist() -> String {
-    format!(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\"><dict><key>deviceID</key><string>{}</string><key>features</key><integer>0</integer><key>model</key><string>{}</string><key>protocolVersion</key><string>1.0</string><key>sourceVersion</key><string>{}</string><key>statusFlags</key><integer>0</integer></dict></plist>",
-        config::device_id(),
-        config::MODEL,
-        config::SOURCE_VERSION
-    )
+fn build_info_response(request_body: &[u8]) -> Result<Vec<u8>, String> {
+    if !request_body.is_empty() {
+        let request = plist::decode(request_body).map_err(|error| error.to_string())?;
+        let dictionary = request
+            .as_dictionary()
+            .ok_or_else(|| "AirPlay /info request root must be a dictionary".to_owned())?;
+
+        if let Some(qualifier) = dictionary.get("qualifier") {
+            let values = qualifier
+                .as_array()
+                .ok_or_else(|| "AirPlay /info qualifier must be an array".to_owned())?;
+            if values.iter().any(|value| value.as_string().is_none()) {
+                return Err("AirPlay /info qualifier entries must be strings".to_owned());
+            }
+        }
+    }
+
+    let mut response = Dictionary::new();
+    response.insert("deviceID".into(), Value::String(config::device_id()));
+    response.insert("features".into(), Value::Integer(0.into()));
+    response.insert("model".into(), Value::String(config::MODEL.into()));
+    response.insert("protocolVersion".into(), Value::String("1.0".into()));
+    response.insert("sourceVersion".into(), Value::String(config::SOURCE_VERSION.into()));
+    response.insert("statusFlags".into(), Value::Integer(0.into()));
+
+    plist::encode_binary(&Value::Dictionary(response)).map_err(|error| error.to_string())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{find_header_end, info_plist, server_info_plist};
+    use super::{build_info_response, find_header_end, server_info_plist};
+    use super::plist;
+    use ::plist::{Dictionary, Value};
 
     #[test]
     fn finds_header_terminator() {
-        assert_eq!(
-            find_header_end(b"OPTIONS * RTSP/1.0\r\nCSeq: 1\r\n\r\n"),
-            Some(27)
-        );
-        assert_eq!(find_header_end(b"OPTIONS * RTSP/1.0\r\n"), None);
+        assert_eq!(find_header_end(b"OPTIONS * RTSP/1.0\\r\\nCSeq: 1\\r\\n\\r\\n"), Some(27));
+        assert_eq!(find_header_end(b"OPTIONS * RTSP/1.0\\r\\n"), None);
     }
 
     #[test]
     fn server_info_contains_declared_model_and_zero_features() {
-        let plist = server_info_plist();
-        assert!(plist.contains("<key>features</key><integer>0</integer>"));
-        assert!(plist.contains("<key>model</key><string>RustPhoneControl1,1</string>"));
+        let body = server_info_plist();
+        assert!(body.contains("<key>features</key><integer>0</integer>"));
+        assert!(body.contains("<key>model</key><string>RustPhoneControl1,1</string>"));
     }
 
     #[test]
-    fn info_contains_conservative_capabilities() {
-        let plist = info_plist();
-        assert!(plist.contains("<key>features</key><integer>0</integer>"));
-        assert!(plist.contains("<key>statusFlags</key><integer>0</integer>"));
+    fn info_response_is_binary_plist_with_conservative_capabilities() {
+        let bytes = build_info_response(&[]).expect("build /info response");
+        assert!(bytes.starts_with(b"bplist00"));
+        let value = plist::decode(&bytes).expect("decode response");
+        let dict = value.as_dictionary().expect("response dictionary");
+        assert_eq!(dict.get("features").and_then(Value::as_signed_integer), Some(0));
+        assert_eq!(dict.get("statusFlags").and_then(Value::as_signed_integer), Some(0));
+    }
+
+    #[test]
+    fn info_request_parses_binary_qualifier_array() {
+        let mut request = Dictionary::new();
+        request.insert(
+            "qualifier".into(),
+            Value::Array(vec![Value::String("deviceID".into()), Value::String("features".into())]),
+        );
+        let bytes = plist::encode_binary(&Value::Dictionary(request)).expect("encode request");
+        assert!(build_info_response(&bytes).is_ok());
+    }
+
+    #[test]
+    fn info_request_rejects_invalid_qualifier() {
+        let mut request = Dictionary::new();
+        request.insert("qualifier".into(), Value::String("deviceID".into()));
+        let bytes = plist::encode_binary(&Value::Dictionary(request)).expect("encode request");
+        assert!(build_info_response(&bytes).is_err());
     }
 }
