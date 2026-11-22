@@ -2,8 +2,8 @@
 //!
 //! Modules are intentionally separated by responsibility. The current code
 //! provides mDNS publication, a TCP listener, OPTIONS, /server-info, and basic binary-plist /info handling.
-//! Pair-Setup implements the SRP M1-M4 and encrypted identity M5-M6 exchanges.
-//! Pair-Verify, FairPlay, encrypted media, and video decoding are not implemented.
+//! Pair-Setup implements SRP and encrypted identity exchange. Pair-Verify implements the authenticated ephemeral key exchange.
+//! FairPlay, encrypted media transport, and video decoding are not implemented.
 //! The endpoint advertises zero feature bits rather than claiming unsupported capabilities.
 
 mod config;
