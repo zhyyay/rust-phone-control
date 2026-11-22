@@ -134,6 +134,27 @@ fn pairing_state() -> Result<&'static Mutex<PairingState>, String> {
     }
 }
 
+/// Return the persisted accessory identifier used by Pair-Verify.
+pub fn accessory_identifier() -> Result<Vec<u8>, String> {
+    let lock = pairing_state()?;
+    let state = lock.lock().map_err(|_| "AirPlay pairing state lock poisoned")?;
+    Ok(state.accessory.identifier.clone())
+}
+
+/// Sign a Pair-Verify transcript with the persistent accessory identity key.
+pub fn sign_accessory_identity_message(message: &[u8]) -> Result<Vec<u8>, String> {
+    let lock = pairing_state()?;
+    let state = lock.lock().map_err(|_| "AirPlay pairing state lock poisoned")?;
+    Ok(state.accessory.signing_key.sign(message).to_bytes().to_vec())
+}
+
+/// Look up a paired controller's long-term Ed25519 public key.
+pub fn paired_controller_public_key(identifier: &[u8]) -> Result<Option<[u8; 32]>, String> {
+    let lock = pairing_state()?;
+    let state = lock.lock().map_err(|_| "AirPlay pairing state lock poisoned")?;
+    Ok(state.controllers.get(identifier).copied())
+}
+
 /// Process and validate an M5 encrypted exchange, then return the M6 TLV body.
 pub fn handle_m5(session_key: &[u8; 64], encrypted_data: &[u8]) -> Result<Vec<u8>, String> {
     if encrypted_data.len() < 16 {
