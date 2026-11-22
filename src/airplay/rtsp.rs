@@ -195,6 +195,31 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
                     }
                 }
             }
+            ("RECORD", _, "RTSP/1.0") => {
+                let response = format!(
+                    "RTSP/1.0 200 OK\r\nCSeq: {}\r\nServer: RustPhoneControl/0.1\r\nContent-Length: 0\r\n\r\n",
+                    request.cseq
+                );
+                tracing::info!("AirPlay RECORD request accepted; media decryption/decoding is not active");
+                write_response(&mut stream, &response, 200)?;
+            }
+            ("POST", "/feedback", "RTSP/1.0") => {
+                let response = format!(
+                    "RTSP/1.0 200 OK\r\nCSeq: {}\r\nServer: RustPhoneControl/0.1\r\nContent-Length: 0\r\n\r\n",
+                    request.cseq
+                );
+                write_response(&mut stream, &response, 200)?;
+            }
+            ("TEARDOWN", _, "RTSP/1.0") => {
+                media_receiver = None;
+                event_channel = None;
+                let response = format!(
+                    "RTSP/1.0 200 OK\r\nCSeq: {}\r\nServer: RustPhoneControl/0.1\r\nContent-Length: 0\r\n\r\n",
+                    request.cseq
+                );
+                write_response(&mut stream, &response, 200)?;
+                return Ok(());
+            }
             _ => {
                 tracing::warn!(
                     method = %request.method,
@@ -742,7 +767,8 @@ fn txt_airplay_dictionary() -> Dictionary {
 mod tests {
     use super::plist;
     use super::{
-        Request, build_info_response, find_header_end, handle_pair_setup, server_info_plist,
+        Request, build_info_response, find_header_end, handle_pair_setup,
+        handle_setup_request, server_info_plist,
     };
     use crate::airplay::tlv8::{self, Tlv};
     use ::plist::{Dictionary, Value};
@@ -768,6 +794,84 @@ mod tests {
             body: Vec::new(),
         };
         assert_eq!(request.header("Transport"), Some("RTP/AVP/UDP;unicast"));
+    }
+
+    #[test]
+    fn session_and_video_stream_setup_negotiate_ephemeral_ports() {
+        let mut session = Dictionary::new();
+        session.insert("timingProtocol".into(), Value::String("PTP".into()));
+        session.insert("sessionUUID".into(), Value::String("test-session".into()));
+        session.insert("isScreenMirroringSession".into(), Value::Boolean(true));
+        let session_body =
+            plist::encode_binary(&Value::Dictionary(session)).expect("encode session setup");
+
+        let mut event = None;
+        let mut media = None;
+        let response = handle_setup_request(&session_body, &mut event, &mut media)
+            .expect("session SETUP");
+        let value = plist::decode(&response).expect("decode session response");
+        let dictionary = value.as_dictionary().expect("session response dictionary");
+        let event_port = dictionary
+            .get("eventPort")
+            .and_then(Value::as_unsigned_integer)
+            .expect("event port");
+        assert!(event_port > 0);
+        assert_eq!(
+            dictionary.get("timingPort").and_then(Value::as_unsigned_integer),
+            Some(0)
+        );
+        assert!(event.is_some());
+
+        let mut stream = Dictionary::new();
+        stream.insert("type".into(), Value::Integer(110.into()));
+        stream.insert("streamConnectionID".into(), Value::Integer(42.into()));
+        let mut root = Dictionary::new();
+        root.insert("streams".into(), Value::Array(vec![Value::Dictionary(stream)]));
+        let stream_body =
+            plist::encode_binary(&Value::Dictionary(root)).expect("encode stream setup");
+
+        let response = handle_setup_request(&stream_body, &mut event, &mut media)
+            .expect("screen stream SETUP");
+        let value = plist::decode(&response).expect("decode stream response");
+        let dictionary = value.as_dictionary().expect("stream response dictionary");
+        let streams = dictionary
+            .get("streams")
+            .and_then(Value::as_array)
+            .expect("response streams");
+        let negotiated = streams[0].as_dictionary().expect("stream response item");
+        let data_port = negotiated
+            .get("dataPort")
+            .and_then(Value::as_unsigned_integer)
+            .expect("data port");
+        assert!(data_port > 0);
+        assert_eq!(negotiated.get("type").and_then(Value::as_unsigned_integer), Some(110));
+        assert!(media.is_some());
+    }
+
+    #[test]
+    fn stream_setup_requires_session_setup_and_rejects_other_types() {
+        let mut event = None;
+        let mut media = None;
+        let mut stream = Dictionary::new();
+        stream.insert("type".into(), Value::Integer(96.into()));
+        let mut root = Dictionary::new();
+        root.insert("streams".into(), Value::Array(vec![Value::Dictionary(stream)]));
+        let body = plist::encode_binary(&Value::Dictionary(root)).expect("encode stream setup");
+
+        assert_eq!(
+            handle_setup_request(&body, &mut event, &mut media).unwrap_err().0,
+            455
+        );
+
+        let mut session = Dictionary::new();
+        session.insert("timingProtocol".into(), Value::String("PTP".into()));
+        let body = plist::encode_binary(&Value::Dictionary(session)).expect("encode session setup");
+        handle_setup_request(&body, &mut event, &mut media).expect("session setup");
+
+        assert_eq!(
+            handle_setup_request(&body, &mut event, &mut media).unwrap_err().0,
+            501
+        );
     }
 
     #[test]
