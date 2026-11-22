@@ -12,8 +12,6 @@ mod discovery;
 mod fairplay;
 #[allow(dead_code)]
 mod event;
-// Media reception is owned by the RTSP session and starts only after SETUP
-// negotiates the screen-mirroring data port.
 #[allow(dead_code)]
 mod media;
 mod pair_setup;
@@ -29,14 +27,15 @@ mod setup;
 mod srp;
 mod tlv8;
 #[allow(dead_code)]
-mod timing;\n#[allow(dead_code)]\nmod video;
+mod timing;
+#[allow(dead_code)]
+mod video;
 
 #[cfg(windows)]
 use std::sync::{Mutex, OnceLock};
 
 #[cfg(windows)]
 struct ReceiverRuntime {
-    // Drop the TCP listener before withdrawing its discovery record.
     server: server::ControlServer,
     advertisement: discovery::Advertisement,
 }
