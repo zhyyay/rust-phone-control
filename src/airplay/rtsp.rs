@@ -2,8 +2,9 @@
 //!
 //! The handler supports persistent RTSP connections, bounded request bodies,
 //! OPTIONS, /info, Pair-Setup, Pair-Verify, FairPlay framing, session and stream
-//! SETUP, RECORD, feedback, and TEARDOWN. FairPlay cryptographic responses,
-//! media decryption, and video decoding are not implemented.
+//! SETUP, RECORD, feedback, and TEARDOWN. FairPlay cryptographic responses
+//! and sender media decryption are not implemented; the decoder can be
+//! initialized from avcC metadata but is not yet fed real video access units.
 
 use std::io::{self, Read, Write};
 use std::net::{TcpListener, TcpStream};
