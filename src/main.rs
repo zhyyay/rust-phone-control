@@ -3,6 +3,9 @@ mod airplay;
 mod app;
 mod logging;
 
+#[cfg(windows)]
+mod platform;
+
 use anyhow::Result;
 use gpui_kit::*;
 
