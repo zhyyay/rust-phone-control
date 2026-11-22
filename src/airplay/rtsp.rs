@@ -79,7 +79,7 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
         ) {
             ("OPTIONS", _, "RTSP/1.0") => {
                 let response = format!(
-                    "RTSP/1.0 200 OK\r\nCSeq: {}\r\nServer: RustPhoneControl/0.1\r\nPublic: OPTIONS, GET, POST\r\nContent-Length: 0\r\n\r\n",
+                    "RTSP/1.0 200 OK\r\nCSeq: {}\r\nServer: RustPhoneControl/0.1\r\nPublic: OPTIONS, GET, POST, SETUP, RECORD, TEARDOWN\r\nContent-Length: 0\r\n\r\n",
                     request.cseq
                 );
                 write_response(&mut stream, &response, 200)?;
@@ -813,11 +813,17 @@ mod tests {
         let dictionary = value.as_dictionary().expect("session response dictionary");
         let event_port = dictionary
             .get("eventPort")
-            .and_then(Value::as_unsigned_integer)
+            .and_then(|value| match value {
+                Value::Integer(integer) => integer.as_unsigned(),
+                _ => None,
+            })
             .expect("event port");
         assert!(event_port > 0);
         assert_eq!(
-            dictionary.get("timingPort").and_then(Value::as_unsigned_integer),
+            dictionary.get("timingPort").and_then(|value| match value {
+                Value::Integer(integer) => integer.as_unsigned(),
+                _ => None,
+            }),
             Some(0)
         );
         assert!(event.is_some());
@@ -841,7 +847,10 @@ mod tests {
         let negotiated = streams[0].as_dictionary().expect("stream response item");
         let data_port = negotiated
             .get("dataPort")
-            .and_then(Value::as_unsigned_integer)
+            .and_then(|value| match value {
+                Value::Integer(integer) => integer.as_unsigned(),
+                _ => None,
+            })
             .expect("data port");
         assert!(data_port > 0);
         assert_eq!(negotiated.get("type").and_then(Value::as_unsigned_integer), Some(110));
@@ -868,6 +877,14 @@ mod tests {
         let body = plist::encode_binary(&Value::Dictionary(session)).expect("encode session setup");
         handle_setup_request(&body, &mut event, &mut media).expect("session setup");
 
+        let mut unsupported_stream = Dictionary::new();
+        unsupported_stream.insert("type".into(), Value::Integer(96.into()));
+        let mut root = Dictionary::new();
+        root.insert(
+            "streams".into(),
+            Value::Array(vec![Value::Dictionary(unsupported_stream)]),
+        );
+        let body = plist::encode_binary(&Value::Dictionary(root)).expect("encode audio stream setup");
         assert_eq!(
             handle_setup_request(&body, &mut event, &mut media).unwrap_err().0,
             501
