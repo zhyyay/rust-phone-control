@@ -822,9 +822,11 @@ mod tests {
         let session_body =
             plist::encode_binary(&Value::Dictionary(session)).expect("encode session setup");
 
+        let peer_ip = "127.0.0.1".parse().expect("loopback IP");
         let mut event = None;
+        let mut timing = None;
         let mut media = None;
-        let response = handle_setup_request(&session_body, &mut event, &mut media)
+        let response = handle_setup_request(&session_body, peer_ip, &mut event, &mut timing, &mut media)
             .expect("session SETUP");
         let value = plist::decode(&response).expect("decode session response");
         let dictionary = value.as_dictionary().expect("session response dictionary");
@@ -853,7 +855,7 @@ mod tests {
         let stream_body =
             plist::encode_binary(&Value::Dictionary(root)).expect("encode stream setup");
 
-        let response = handle_setup_request(&stream_body, &mut event, &mut media)
+        let response = handle_setup_request(&stream_body, peer_ip, &mut event, &mut timing, &mut media)
             .expect("screen stream SETUP");
         let value = plist::decode(&response).expect("decode stream response");
         let dictionary = value.as_dictionary().expect("stream response dictionary");
@@ -891,7 +893,7 @@ mod tests {
         let body = plist::encode_binary(&Value::Dictionary(root)).expect("encode stream setup");
 
         assert_eq!(
-            handle_setup_request(&body, &mut event, &mut media).unwrap_err().0,
+            handle_setup_request(&body, peer_ip, &mut event, &mut timing, &mut media).unwrap_err().0,
             455
         );
 
