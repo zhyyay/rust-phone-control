@@ -4,6 +4,14 @@
 //! authenticate, reassemble, or decode AirPlay media payloads.
 
 use std::fmt;
+use std::io;
+use std::net::{SocketAddr, UdpSocket};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
+use std::thread::{self, JoinHandle};
+use std::time::Duration;
 
 /// A parsed RTP version 2 packet. All byte slices borrow from the input packet.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -218,14 +226,6 @@ mod tests {
 }
 
 
-use std::io;
-use std::net::{SocketAddr, UdpSocket};
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
-};
-use std::thread::{self, JoinHandle};
-use std::time::Duration;
 
 /// Maximum UDP datagram buffer. This is large enough for the maximum IPv4 UDP
 /// payload and avoids allocating based on untrusted packet contents.
