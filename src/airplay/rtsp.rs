@@ -486,6 +486,7 @@ fn handle_setup_request(
                 "0.0.0.0:0"
                     .parse()
                     .expect("static IPv4 wildcard socket address is valid"),
+                peer_ip,
             )
             .map_err(|error| (503, format!("could not bind video UDP receiver: {error}")))?;
             let data_port = receiver.local_addr().port();
