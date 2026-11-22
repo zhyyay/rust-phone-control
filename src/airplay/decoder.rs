@@ -158,6 +158,27 @@ pub struct DecodedNv12Frame {
     pub data: Vec<u8>,
 }
 
+#[cfg(windows)]
+impl DecodedNv12Frame {
+    /// Convert the decoder's NV12 output into a tightly packed BGRA frame
+    /// for the desktop presentation layer.
+    ///
+    /// Media Foundation exposes one default stride for the NV12 surface;
+    /// the Y and interleaved UV planes use that same row pitch.
+    pub fn to_bgra(
+        &self,
+    ) -> Result<crate::airplay::video::BgraFrame, crate::airplay::video::FrameConversionError> {
+        crate::airplay::video::Nv12Frame {
+            width: self.width,
+            height: self.height,
+            y_stride: self.stride,
+            uv_stride: self.stride,
+            data: &self.data,
+        }
+        .to_bgra()
+    }
+}
+
 /// A synchronous Windows H.264 decoder MFT.
 ///
 /// This object is thread-local because Windows COM interfaces are not Send/Sync.
@@ -326,6 +347,39 @@ impl<'runtime> H264Decoder<'runtime> {
         unsafe { self.transform.ProcessInput(self.input_stream, &sample, 0) }
             .map_err(|error| MediaFoundationError::ProcessInputFailed(error.code().0))?;
         Ok(())
+    }
+
+    /// Submit one access unit and collect all immediately available output.
+    ///
+    /// Existing output is drained before accepting new input, which helps
+    /// synchronous MFTs that refuse input while decoded samples are pending.
+    /// Each drain is bounded so a malformed or unusual transform cannot keep
+    /// this call busy indefinitely.
+    pub fn submit_access_unit_and_drain(
+        &mut self,
+        access_unit: &[u8],
+    ) -> Result<Vec<DecodedNv12Frame>, MediaFoundationError> {
+        const MAX_FRAMES_PER_DRAIN: usize = 16;
+
+        let mut frames = self.drain_available_frames(MAX_FRAMES_PER_DRAIN)?;
+        self.submit_access_unit(access_unit)?;
+        frames.extend(self.drain_available_frames(MAX_FRAMES_PER_DRAIN)?);
+        Ok(frames)
+    }
+
+    /// Retrieve up to the requested number of immediately available frames.
+    pub fn drain_available_frames(
+        &mut self,
+        limit: usize,
+    ) -> Result<Vec<DecodedNv12Frame>, MediaFoundationError> {
+        let mut frames = Vec::with_capacity(limit.min(16));
+        for _ in 0..limit {
+            match self.try_get_frame()? {
+                Some(frame) => frames.push(frame),
+                None => break,
+            }
+        }
+        Ok(frames)
     }
 
     /// Retrieve one decoded NV12 frame, or None when more input is required.

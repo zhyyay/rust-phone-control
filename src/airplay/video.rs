@@ -4,6 +4,7 @@
 //! It intentionally does not implement FairPlay decryption or video decoding.
 
 use std::collections::VecDeque;
+use std::sync::{Arc, Mutex, atomic::{AtomicU64, Ordering}};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VideoCodec {
@@ -268,6 +269,70 @@ pub struct BgraFrame {
     pub data: Vec<u8>,
 }
 
+/// A single-slot, latest-frame mailbox shared by the decoder worker and UI.
+///
+/// Publishing replaces any stale frame instead of building an unbounded
+/// queue. The UI can therefore always consume the newest available image
+/// without allowing rendering lag to grow over time.
+#[derive(Debug, Default)]
+pub struct LatestFrameMailbox {
+    sequence: AtomicU64,
+    frame: Mutex<Option<(u64, Arc<BgraFrame>)>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct FrameSnapshot {
+    pub sequence: u64,
+    pub frame: Arc<BgraFrame>,
+}
+
+impl LatestFrameMailbox {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Publish a decoded frame, replacing the previous unconsumed frame.
+    pub fn publish(&self, frame: BgraFrame) -> Result<u64, FrameMailboxError> {
+        let mut slot = self.frame.lock().map_err(|_| FrameMailboxError::Poisoned)?;
+        let sequence = self.sequence.fetch_add(1, Ordering::AcqRel).wrapping_add(1);
+        *slot = Some((sequence, Arc::new(frame)));
+        Ok(sequence)
+    }
+
+    /// Take the newest frame. A frame is returned to at most one consumer.
+    pub fn take_latest(&self) -> Result<Option<FrameSnapshot>, FrameMailboxError> {
+        let mut slot = self.frame.lock().map_err(|_| FrameMailboxError::Poisoned)?;
+        Ok(slot.take().map(|(sequence, frame)| FrameSnapshot { sequence, frame }))
+    }
+
+    /// Discard any pending frame, for example when a mirror session stops.
+    pub fn clear(&self) -> Result<(), FrameMailboxError> {
+        let mut slot = self.frame.lock().map_err(|_| FrameMailboxError::Poisoned)?;
+        *slot = None;
+        Ok(())
+    }
+
+    pub fn has_pending_frame(&self) -> Result<bool, FrameMailboxError> {
+        let slot = self.frame.lock().map_err(|_| FrameMailboxError::Poisoned)?;
+        Ok(slot.is_some())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FrameMailboxError {
+    Poisoned,
+}
+
+impl std::fmt::Display for FrameMailboxError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Poisoned => f.write_str("decoded-frame mailbox lock is poisoned"),
+        }
+    }
+}
+
+impl std::error::Error for FrameMailboxError {}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FrameConversionError {
     ZeroDimension,
@@ -476,6 +541,30 @@ mod tests {
         let mut sets = CodecParameterSets::default();
         assert_eq!(sets.update_from_annex_b(VideoCodec::Hevc, &data), 3);
         assert!(sets.is_ready(VideoCodec::Hevc));
+    }
+
+    #[test]
+    fn latest_frame_mailbox_replaces_stale_frames() {
+        let mailbox = LatestFrameMailbox::new();
+        let first = BgraFrame { width: 1, height: 1, stride: 4, data: vec![1, 2, 3, 4] };
+        let second = BgraFrame { width: 1, height: 1, stride: 4, data: vec![5, 6, 7, 8] };
+
+        assert_eq!(mailbox.publish(first).unwrap(), 1);
+        assert_eq!(mailbox.publish(second).unwrap(), 2);
+        let snapshot = mailbox.take_latest().unwrap().unwrap();
+        assert_eq!(snapshot.sequence, 2);
+        assert_eq!(snapshot.frame.data, vec![5, 6, 7, 8]);
+        assert!(!mailbox.has_pending_frame().unwrap());
+        assert!(mailbox.take_latest().unwrap().is_none());
+    }
+
+    #[test]
+    fn latest_frame_mailbox_clear_discards_pending_frame() {
+        let mailbox = LatestFrameMailbox::new();
+        mailbox.publish(BgraFrame { width: 1, height: 1, stride: 4, data: vec![0; 4] }).unwrap();
+        assert!(mailbox.has_pending_frame().unwrap());
+        mailbox.clear().unwrap();
+        assert!(!mailbox.has_pending_frame().unwrap());
     }
 
     #[test]

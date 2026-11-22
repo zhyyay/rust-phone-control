@@ -7,6 +7,7 @@
 use std::fmt;
 use std::io;
 use std::net::{IpAddr, SocketAddr, UdpSocket};
+use std::sync::mpsc::{SyncSender, TrySendError};
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -301,6 +302,15 @@ pub fn parse_screen_mirror_packet(
     })
 }
 
+/// An owned, validated media packet delivered to the processing pipeline.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReceivedMediaPacket {
+    pub peer_addr: SocketAddr,
+    pub packet_type: ScreenMirrorPacketType,
+    pub timestamp: u64,
+    pub payload: Vec<u8>,
+}
+
 /// Maximum UDP datagram buffer. This is large enough for the maximum IPv4 UDP
 /// payload and avoids allocating based on untrusted packet contents.
 const MAX_UDP_DATAGRAM_SIZE: usize = 65_535;
@@ -317,8 +327,28 @@ pub struct UdpMediaReceiver {
 }
 
 impl UdpMediaReceiver {
-    /// Bind the requested address and begin parsing screen-mirroring datagrams.
+    /// Bind and parse datagrams without forwarding their payloads.
     pub fn bind(bind_addr: SocketAddr, expected_peer_ip: IpAddr) -> io::Result<Self> {
+        Self::bind_inner(bind_addr, expected_peer_ip, None)
+    }
+
+    /// Bind and forward validated packets to a bounded processing queue.
+    ///
+    /// The receive thread never blocks on downstream processing. If the queue
+    /// is full, the newest packet is dropped and counted in the log.
+    pub fn bind_with_sender(
+        bind_addr: SocketAddr,
+        expected_peer_ip: IpAddr,
+        sender: SyncSender<ReceivedMediaPacket>,
+    ) -> io::Result<Self> {
+        Self::bind_inner(bind_addr, expected_peer_ip, Some(sender))
+    }
+
+    fn bind_inner(
+        bind_addr: SocketAddr,
+        expected_peer_ip: IpAddr,
+        sender: Option<SyncSender<ReceivedMediaPacket>>,
+    ) -> io::Result<Self> {
         let socket = UdpSocket::bind(bind_addr)?;
         socket.set_read_timeout(Some(RECEIVE_POLL_INTERVAL))?;
         let local_addr = socket.local_addr()?;
@@ -327,7 +357,9 @@ impl UdpMediaReceiver {
 
         let worker = thread::Builder::new()
             .name("airplay-udp-media".to_owned())
-            .spawn(move || receive_media_loop(socket, worker_running, expected_peer_ip))?;
+            .spawn(move || {
+                receive_media_loop(socket, worker_running, expected_peer_ip, sender)
+            })?;
 
         tracing::info!(%local_addr, "AirPlay UDP media receiver bound");
         Ok(Self {
@@ -360,7 +392,16 @@ impl Drop for UdpMediaReceiver {
     }
 }
 
+<<<<<<< HEAD
 fn receive_media_loop(socket: UdpSocket, running: Arc<AtomicBool>, expected_peer_ip: IpAddr) {
+=======
+fn receive_media_loop(
+    socket: UdpSocket,
+    running: Arc<AtomicBool>,
+    expected_peer_ip: IpAddr,
+    sender: Option<SyncSender<ReceivedMediaPacket>>,
+) {
+>>>>>>> 5164f74d39ab6caf4fdd4a8fb37b129fbd965a9d
     let mut buffer = [0u8; MAX_UDP_DATAGRAM_SIZE];
 
     while running.load(Ordering::Acquire) {
@@ -383,6 +424,29 @@ fn receive_media_loop(socket: UdpSocket, running: Arc<AtomicBool>, expected_peer
                             payload_bytes = packet.payload_size,
                             "Received AirPlay screen-mirroring datagram"
                         );
+                        if let Some(sender) = sender.as_ref() {
+                            let owned = ReceivedMediaPacket {
+                                peer_addr,
+                                packet_type: packet.packet_type,
+                                timestamp: packet.timestamp,
+                                payload: packet.payload.to_vec(),
+                            };
+                            match sender.try_send(owned) {
+                                Ok(()) => {}
+                                Err(TrySendError::Full(_)) => {
+                                    tracing::warn!(
+                                        %peer_addr,
+                                        "AirPlay media processing queue is full; dropping packet"
+                                    );
+                                }
+                                Err(TrySendError::Disconnected(_)) => {
+                                    tracing::debug!(
+                                        "AirPlay media processing queue disconnected; stopping forwarding"
+                                    );
+                                    break;
+                                }
+                            }
+                        }
                     }
                     Err(error) => {
                         tracing::warn!(
@@ -451,6 +515,62 @@ mod receiver_tests {
             parse_screen_mirror_packet(&oversized),
             Err(ScreenMirrorParseError::InvalidPayloadLength)
         );
+    }
+
+    #[test]
+    fn udp_receiver_forwards_validated_packets_to_bounded_queue() {
+        use std::sync::mpsc::sync_channel;
+        use std::time::Duration;
+
+        let bind_addr: SocketAddr = "127.0.0.1:0".parse().expect("valid loopback address");
+        let (sender, receiver) = sync_channel(2);
+        let receiver_handle = UdpMediaReceiver::bind_with_sender(
+            bind_addr,
+            "127.0.0.1".parse().expect("loopback IP"),
+            sender,
+        )
+        .expect("receiver binds");
+        let socket = UdpSocket::bind("127.0.0.1:0").expect("sender socket binds");
+        let mut datagram = vec![0u8; SCREEN_MIRROR_HEADER_SIZE + 3];
+        datagram[0..4].copy_from_slice(&3u32.to_le_bytes());
+        datagram[4..6].copy_from_slice(&0u16.to_le_bytes());
+        datagram[8..16].copy_from_slice(&42u64.to_le_bytes());
+        datagram[SCREEN_MIRROR_HEADER_SIZE..].copy_from_slice(&[0xAA, 0xBB, 0xCC]);
+        socket.send_to(&datagram, receiver_handle.local_addr()).expect("send datagram");
+
+        let packet = receiver.recv_timeout(Duration::from_secs(2)).expect("packet forwarded");
+        assert_eq!(packet.packet_type, ScreenMirrorPacketType::Video);
+        assert_eq!(packet.timestamp, 42);
+        assert_eq!(packet.payload, vec![0xAA, 0xBB, 0xCC]);
+        assert_eq!(packet.peer_addr.ip(), "127.0.0.1".parse::<IpAddr>().unwrap());
+    }
+
+    #[test]
+    fn udp_receiver_does_not_block_when_processing_queue_is_full() {
+        use std::sync::mpsc::sync_channel;
+        use std::time::Duration;
+
+        let bind_addr: SocketAddr = "127.0.0.1:0".parse().expect("valid loopback address");
+        let (sender, receiver) = sync_channel(1);
+        let mut receiver_handle = UdpMediaReceiver::bind_with_sender(
+            bind_addr,
+            "127.0.0.1".parse().expect("loopback IP"),
+            sender,
+        )
+        .expect("receiver binds");
+        let socket = UdpSocket::bind("127.0.0.1:0").expect("sender socket binds");
+        let mut datagram = vec![0u8; SCREEN_MIRROR_HEADER_SIZE + 1];
+        datagram[0..4].copy_from_slice(&1u32.to_le_bytes());
+        datagram[4..6].copy_from_slice(&0u16.to_le_bytes());
+        for value in [1u8, 2u8] {
+            datagram[SCREEN_MIRROR_HEADER_SIZE] = value;
+            socket.send_to(&datagram, receiver_handle.local_addr()).expect("send datagram");
+        }
+
+        let first = receiver.recv_timeout(Duration::from_secs(2)).expect("first packet forwarded");
+        assert_eq!(first.payload, vec![1]);
+        receiver_handle.stop();
+        assert!(receiver.try_recv().is_err());
     }
 
     #[test]

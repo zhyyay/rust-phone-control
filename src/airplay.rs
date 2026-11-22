@@ -35,13 +35,17 @@ mod tlv8;
 mod video;
 
 #[cfg(windows)]
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
+
+#[cfg(windows)]
+pub use video::{BgraFrame, FrameSnapshot};
 
 #[cfg(windows)]
 struct ReceiverRuntime {
     server: server::ControlServer,
     advertisement: discovery::Advertisement,
     _media_foundation: Option<decoder::MediaFoundationRuntime>,
+    video_frames: Arc<video::LatestFrameMailbox>,
 }
 
 #[cfg(windows)]
@@ -95,10 +99,12 @@ pub fn start() -> anyhow::Result<()> {
     };
     let server = server::ControlServer::start()?;
     let advertisement = discovery::Advertisement::start()?;
+    let video_frames = Arc::new(video::LatestFrameMailbox::new());
     *runtime = Some(ReceiverRuntime {
         server,
         advertisement,
         _media_foundation: media_foundation,
+        video_frames,
     });
     tracing::info!(
         "Built-in AirPlay discovery/control endpoint started; secure mirroring is not implemented yet"
@@ -106,12 +112,47 @@ pub fn start() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Publish a decoded BGRA frame for the desktop presentation layer.
+#[cfg(windows)]
+pub fn publish_video_frame(frame: BgraFrame) -> anyhow::Result<u64> {
+    let runtime = receiver_slot()
+        .lock()
+        .map_err(|_| anyhow::anyhow!("AirPlay runtime lock is poisoned"))?;
+    let runtime = runtime
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("AirPlay receiver is not running"))?;
+    runtime
+        .video_frames
+        .publish(frame)
+        .map_err(|error| anyhow::anyhow!(error))
+}
+
+/// Take the newest decoded frame for presentation. Older pending frames are
+/// replaced by the mailbox, so consumers never build up an unbounded backlog.
+#[cfg(windows)]
+pub fn take_latest_video_frame() -> anyhow::Result<Option<FrameSnapshot>> {
+    let runtime = receiver_slot()
+        .lock()
+        .map_err(|_| anyhow::anyhow!("AirPlay runtime lock is poisoned"))?;
+    let Some(runtime) = runtime.as_ref() else {
+        return Ok(None);
+    };
+    runtime
+        .video_frames
+        .take_latest()
+        .map_err(|error| anyhow::anyhow!(error))
+}
+
 #[cfg(windows)]
 pub fn stop() -> anyhow::Result<()> {
     let mut runtime = receiver_slot()
         .lock()
         .map_err(|_| anyhow::anyhow!("AirPlay runtime lock is poisoned"))?;
-    if runtime.take().is_some() {
+    if let Some(runtime) = runtime.take() {
+        runtime
+            .video_frames
+            .clear()
+            .map_err(|error| anyhow::anyhow!(error))?;
         tracing::info!("Built-in AirPlay control endpoint stopped");
     }
     Ok(())
