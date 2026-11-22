@@ -392,16 +392,12 @@ impl Drop for UdpMediaReceiver {
     }
 }
 
-<<<<<<< HEAD
-fn receive_media_loop(socket: UdpSocket, running: Arc<AtomicBool>, expected_peer_ip: IpAddr) {
-=======
 fn receive_media_loop(
     socket: UdpSocket,
     running: Arc<AtomicBool>,
     expected_peer_ip: IpAddr,
     sender: Option<SyncSender<ReceivedMediaPacket>>,
 ) {
->>>>>>> 5164f74d39ab6caf4fdd4a8fb37b129fbd965a9d
     let mut buffer = [0u8; MAX_UDP_DATAGRAM_SIZE];
 
     while running.load(Ordering::Acquire) {
