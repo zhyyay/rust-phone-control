@@ -38,7 +38,9 @@ unsafe extern "system" {
 
 /// COM apartment initialized on the same thread that owns the MFT interfaces.
 #[cfg(windows)]
-struct ComApartment;
+struct ComApartment {
+    _thread_bound: std::marker::PhantomData<std::rc::Rc<()>>,
+}
 
 #[cfg(windows)]
 impl ComApartment {
@@ -47,7 +49,9 @@ impl ComApartment {
         // matching CoUninitialize is called by Drop on this same thread.
         unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }
             .map_err(|error| MediaFoundationError::ComInitializationFailed(error.code().0))?;
-        Ok(Self)
+        Ok(Self {
+            _thread_bound: std::marker::PhantomData,
+        })
     }
 }
 
