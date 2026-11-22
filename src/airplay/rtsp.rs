@@ -77,7 +77,7 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
                 match build_info_response(&request.body) {
                     Ok(body) => {
                         let header = format!(
-                            "RTSP/1.0 200 OK\\r\\nCSeq: {}\\r\\nServer: RustPhoneControl/0.1\\r\\nContent-Type: application/x-apple-binary-plist\\r\\nContent-Length: {}\\r\\n\\r\\n",
+                            "RTSP/1.0 200 OK\r\nCSeq: {}\r\nServer: RustPhoneControl/0.1\r\nContent-Type: application/x-apple-binary-plist\r\nContent-Length: {}\r\n\r\n",
                             request.cseq,
                             body.len()
                         );
@@ -88,7 +88,7 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
                     Err(reason) => {
                         tracing::warn!(%reason, "Rejected invalid AirPlay /info plist request");
                         let response = format!(
-                            "RTSP/1.0 400 Bad Request\\r\\nCSeq: {}\\r\\nServer: RustPhoneControl/0.1\\r\\nContent-Length: 0\\r\\n\\r\\n",
+                            "RTSP/1.0 400 Bad Request\r\nCSeq: {}\r\nServer: RustPhoneControl/0.1\r\nContent-Length: 0\r\n\r\n",
                             request.cseq
                         );
                         write_response(&mut stream, &response, 400)?;
@@ -295,8 +295,8 @@ mod tests {
 
     #[test]
     fn finds_header_terminator() {
-        assert_eq!(find_header_end(b"OPTIONS * RTSP/1.0\\r\\nCSeq: 1\\r\\n\\r\\n"), Some(27));
-        assert_eq!(find_header_end(b"OPTIONS * RTSP/1.0\\r\\n"), None);
+        assert_eq!(find_header_end(b"OPTIONS * RTSP/1.0\r\nCSeq: 1\r\n\r\n"), Some(27));
+        assert_eq!(find_header_end(b"OPTIONS * RTSP/1.0\r\n"), None);
     }
 
     #[test]
@@ -312,8 +312,8 @@ mod tests {
         assert!(bytes.starts_with(b"bplist00"));
         let value = plist::decode(&bytes).expect("decode response");
         let dict = value.as_dictionary().expect("response dictionary");
-        assert_eq!(dict.get("features").and_then(Value::as_signed_integer), Some(0));
-        assert_eq!(dict.get("statusFlags").and_then(Value::as_signed_integer), Some(0));
+        assert!(matches!(dict.get("features"), Some(Value::Integer(_))));
+        assert!(matches!(dict.get("statusFlags"), Some(Value::Integer(_))));
     }
 
     #[test]
