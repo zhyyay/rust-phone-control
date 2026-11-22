@@ -16,6 +16,209 @@ pub enum VideoCodec {
     Unknown,
 }
 
+/// Parsed H.264 AVCDecoderConfigurationRecord (avcC) from AirPlay codec packets.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AvcConfiguration {
+    pub profile: u8,
+    pub compatibility: u8,
+    pub level: u8,
+    /// Number of bytes used for each NAL length in AVCC samples (1, 2, or 4).
+    pub nal_length_size: usize,
+    pub sequence_parameter_sets: Vec<Vec<u8>>,
+    pub picture_parameter_sets: Vec<Vec<u8>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AvcConfigError {
+    TooShort,
+    UnsupportedVersion(u8),
+    InvalidReservedBits,
+    UnsupportedNalLengthSize,
+    TruncatedSpsCount,
+    TruncatedSpsLength,
+    EmptySps,
+    TruncatedSps,
+    TruncatedPpsCount,
+    TruncatedPpsLength,
+    EmptyPps,
+    TruncatedPps,
+    TooManyParameterSets,
+    TrailingData,
+    InvalidNalLength,
+    TruncatedNal,
+    SizeOverflow,
+}
+
+impl std::fmt::Display for AvcConfigError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "invalid AVC configuration: {self:?}")
+    }
+}
+
+impl std::error::Error for AvcConfigError {}
+
+impl AvcConfiguration {
+    /// Parse an ISO/IEC 14496-15 AVCDecoderConfigurationRecord.
+    /// Parsing is bounded by the supplied slice and rejects malformed lengths.
+    pub fn parse(data: &[u8]) -> Result<Self, AvcConfigError> {
+        if data.len() < 7 {
+            return Err(AvcConfigError::TooShort);
+        }
+        if data[0] != 1 {
+            return Err(AvcConfigError::UnsupportedVersion(data[0]));
+        }
+        if data[4] & 0xfc != 0xfc || data[5] & 0xe0 != 0xe0 {
+            return Err(AvcConfigError::InvalidReservedBits);
+        }
+        let nal_length_size = usize::from((data[4] & 0x03) + 1);
+        if nal_length_size == 3 {
+            return Err(AvcConfigError::UnsupportedNalLengthSize);
+        }
+
+        let mut offset = 6usize;
+        let sps_count = usize::from(data[5] & 0x1f);
+        if sps_count > 31 {
+            return Err(AvcConfigError::TooManyParameterSets);
+        }
+        let mut sequence_parameter_sets = Vec::with_capacity(sps_count);
+        for _ in 0..sps_count {
+            if data.len().saturating_sub(offset) < 2 {
+                return Err(AvcConfigError::TruncatedSpsLength);
+            }
+            let length = usize::from(u16::from_be_bytes([data[offset], data[offset + 1]]));
+            offset += 2;
+            if length == 0 {
+                return Err(AvcConfigError::EmptySps);
+            }
+            let end = offset.checked_add(length).ok_or(AvcConfigError::SizeOverflow)?;
+            if end > data.len() {
+                return Err(AvcConfigError::TruncatedSps);
+            }
+            sequence_parameter_sets.push(data[offset..end].to_vec());
+            offset = end;
+        }
+
+        if offset >= data.len() {
+            return Err(AvcConfigError::TruncatedPpsCount);
+        }
+        let pps_count = usize::from(data[offset]);
+        offset += 1;
+        if pps_count > 255 {
+            return Err(AvcConfigError::TooManyParameterSets);
+        }
+        let mut picture_parameter_sets = Vec::with_capacity(pps_count);
+        for _ in 0..pps_count {
+            if data.len().saturating_sub(offset) < 2 {
+                return Err(AvcConfigError::TruncatedPpsLength);
+            }
+            let length = usize::from(u16::from_be_bytes([data[offset], data[offset + 1]]));
+            offset += 2;
+            if length == 0 {
+                return Err(AvcConfigError::EmptyPps);
+            }
+            let end = offset.checked_add(length).ok_or(AvcConfigError::SizeOverflow)?;
+            if end > data.len() {
+                return Err(AvcConfigError::TruncatedPps);
+            }
+            picture_parameter_sets.push(data[offset..end].to_vec());
+            offset = end;
+        }
+
+        // High-profile avcC records may append chroma/bit-depth and SPS-extension
+        // fields. They are not needed for the H.264 decoder input path; retain
+        // strict framing by accepting only the standard optional extension shape.
+        if offset < data.len() {
+            let profile_has_extension = matches!(
+                data[1],
+                100 | 110 | 122 | 144 | 44 | 83 | 86 | 118 | 128 | 138 | 139 | 134 | 135
+            );
+            if !profile_has_extension || data.len() - offset < 4 {
+                return Err(AvcConfigError::TrailingData);
+            }
+            if data[offset] & 0xfc != 0xfc
+                || data[offset + 1] & 0xf8 != 0xf8
+                || data[offset + 2] & 0xf8 != 0xf8
+            {
+                return Err(AvcConfigError::InvalidReservedBits);
+            }
+            offset += 3;
+            let extension_count = usize::from(data[offset]);
+            offset += 1;
+            for _ in 0..extension_count {
+                if data.len().saturating_sub(offset) < 2 {
+                    return Err(AvcConfigError::TruncatedSpsLength);
+                }
+                let length = usize::from(u16::from_be_bytes([data[offset], data[offset + 1]]));
+                offset += 2;
+                if length == 0 {
+                    return Err(AvcConfigError::EmptySps);
+                }
+                let end = offset.checked_add(length).ok_or(AvcConfigError::SizeOverflow)?;
+                if end > data.len() {
+                    return Err(AvcConfigError::TruncatedSps);
+                }
+                offset = end;
+            }
+        }
+        if offset != data.len() {
+            return Err(AvcConfigError::TrailingData);
+        }
+
+        Ok(Self {
+            profile: data[1],
+            compatibility: data[2],
+            level: data[3],
+            nal_length_size,
+            sequence_parameter_sets,
+            picture_parameter_sets,
+        })
+    }
+
+    /// Return SPS/PPS with Annex-B start codes for decoder initialization.
+    pub fn parameter_sets_annex_b(&self) -> Vec<u8> {
+        let mut output = Vec::new();
+        for nal in self
+            .sequence_parameter_sets
+            .iter()
+            .chain(self.picture_parameter_sets.iter())
+        {
+            output.extend_from_slice(&[0, 0, 0, 1]);
+            output.extend_from_slice(nal);
+        }
+        output
+    }
+
+    /// Convert one AVCC length-prefixed access unit to Annex-B.
+    pub fn access_unit_to_annex_b(&self, data: &[u8]) -> Result<Vec<u8>, AvcConfigError> {
+        let mut offset = 0usize;
+        let mut output = Vec::with_capacity(data.len().saturating_add(16));
+        while offset < data.len() {
+            if data.len().saturating_sub(offset) < self.nal_length_size {
+                return Err(AvcConfigError::InvalidNalLength);
+            }
+            let mut length = 0usize;
+            for byte in &data[offset..offset + self.nal_length_size] {
+                length = length
+                    .checked_mul(256)
+                    .and_then(|value| value.checked_add(usize::from(*byte)))
+                    .ok_or(AvcConfigError::SizeOverflow)?;
+            }
+            offset += self.nal_length_size;
+            if length == 0 {
+                return Err(AvcConfigError::InvalidNalLength);
+            }
+            let end = offset.checked_add(length).ok_or(AvcConfigError::SizeOverflow)?;
+            if end > data.len() {
+                return Err(AvcConfigError::TruncatedNal);
+            }
+            output.extend_from_slice(&[0, 0, 0, 1]);
+            output.extend_from_slice(&data[offset..end]);
+            offset = end;
+        }
+        Ok(output)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AccessUnit {
     pub timestamp: u64,
@@ -446,6 +649,64 @@ impl<'a> Nv12Frame<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_airplay_avcc_configuration_and_converts_access_unit() {
+        // Captured-format avcC example: one SPS and one PPS.
+        let config = [
+            0x01, 0x64, 0xc0, 0x28, 0xff, 0xe1, 0x00, 0x04, 0x67, 0x64, 0xc0, 0x28, 0x01,
+            0x00, 0x02, 0x68, 0xee,
+        ];
+        let parsed = AvcConfiguration::parse(&config).expect("valid avcC record");
+        assert_eq!(parsed.profile, 0x64);
+        assert_eq!(parsed.compatibility, 0xc0);
+        assert_eq!(parsed.level, 0x28);
+        assert_eq!(parsed.nal_length_size, 4);
+        assert_eq!(parsed.sequence_parameter_sets, vec![vec![0x67, 0x64, 0xc0, 0x28]]);
+        assert_eq!(parsed.picture_parameter_sets, vec![vec![0x68, 0xee]]);
+        assert_eq!(
+            parsed.parameter_sets_annex_b(),
+            vec![0, 0, 0, 1, 0x67, 0x64, 0xc0, 0x28, 0, 0, 0, 1, 0x68, 0xee]
+        );
+
+        let avcc = [0x00, 0x00, 0x00, 0x02, 0x65, 0xaa, 0x00, 0x00, 0x00, 0x01, 0x41];
+        assert_eq!(
+            parsed.access_unit_to_annex_b(&avcc).expect("valid AVCC unit"),
+            vec![0, 0, 0, 1, 0x65, 0xaa, 0, 0, 0, 1, 0x41]
+        );
+    }
+
+    #[test]
+    fn rejects_malformed_avcc_configuration_and_access_units() {
+        assert_eq!(AvcConfiguration::parse(&[1, 2, 3]), Err(AvcConfigError::TooShort));
+        assert_eq!(
+            AvcConfiguration::parse(&[2, 0, 0, 0, 0xff, 0xe1, 0, 0]),
+            Err(AvcConfigError::UnsupportedVersion(2))
+        );
+
+        let invalid_reserved = [1, 0x64, 0, 0x1f, 0, 0xe1, 0, 0];
+        assert_eq!(
+            AvcConfiguration::parse(&invalid_reserved),
+            Err(AvcConfigError::InvalidReservedBits)
+        );
+
+        let config = [
+            0x01, 0x64, 0xc0, 0x28, 0xff, 0xe1, 0x00, 0x01, 0x67, 0x01, 0x00, 0x01, 0x68,
+        ];
+        let parsed = AvcConfiguration::parse(&config).expect("valid compact avcC");
+        assert_eq!(
+            parsed.access_unit_to_annex_b(&[0, 0, 0, 3, 0x65]),
+            Err(AvcConfigError::TruncatedNal)
+        );
+        assert_eq!(
+            parsed.access_unit_to_annex_b(&[0, 0]),
+            Err(AvcConfigError::InvalidNalLength)
+        );
+        assert_eq!(
+            parsed.access_unit_to_annex_b(&[0, 0, 0, 0]),
+            Err(AvcConfigError::InvalidNalLength)
+        );
+    }
 
     #[test]
     fn detects_h264_annex_b() {
