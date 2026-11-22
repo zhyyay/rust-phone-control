@@ -63,7 +63,12 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
             stream.write_all(response.as_bytes())
         }
         _ => {
-            tracing::debug!(method, path, protocol, "AirPlay control method is not implemented");
+            tracing::debug!(
+                method,
+                path,
+                protocol,
+                "AirPlay control method is not implemented"
+            );
             let response = format!(
                 "{protocol} 501 Not Implemented\r\nCSeq: {cseq}\r\nServer: RustPhoneControl/0.1\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
             );
@@ -82,9 +87,8 @@ fn server_info_plist() -> String {
 }
 
 fn write_http_error(stream: &mut TcpStream, status: u16, reason: &str) -> std::io::Result<()> {
-    let response = format!(
-        "HTTP/1.1 {status} {reason}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-    );
+    let response =
+        format!("HTTP/1.1 {status} {reason}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
     stream.write_all(response.as_bytes())
 }
 

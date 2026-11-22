@@ -171,9 +171,9 @@ impl BleHidService {
                     count = clients.Size().unwrap_or(0),
                     "iPhone mouse HID report subscription count changed"
                 ),
-                Err(error) => tracing::warn!(
-                    "Could not read mouse HID subscribed clients: {error}"
-                ),
+                Err(error) => {
+                    tracing::warn!("Could not read mouse HID subscribed clients: {error}")
+                }
             }
             Ok(())
         }))?;
@@ -189,9 +189,9 @@ impl BleHidService {
                     count = clients.Size().unwrap_or(0),
                     "iPhone keyboard HID report subscription count changed"
                 ),
-                Err(error) => tracing::warn!(
-                    "Could not read keyboard HID subscribed clients: {error}"
-                ),
+                Err(error) => {
+                    tracing::warn!("Could not read keyboard HID subscribed clients: {error}")
+                }
             }
             Ok(())
         }))?;

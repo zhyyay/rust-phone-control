@@ -2,11 +2,11 @@
 
 use anyhow::{Result, bail};
 
-use crate::input::event::{KeyModifiers, MouseButtons};
 use super::{
     reports::{KeyboardReport, MouseReport},
     service::BleHidService,
 };
+use crate::input::event::{KeyModifiers, MouseButtons};
 
 /// Single-phone input controller. The BLE service remains responsible for GATT transport;
 /// this type turns ordinary mouse and keyboard actions into correctly ordered HID reports.
@@ -17,7 +17,9 @@ pub struct BleInputController {
 impl BleInputController {
     /// Starts advertising the HID service and returns a ready-to-use controller.
     pub async fn start() -> Result<Self> {
-        Ok(Self { service: BleHidService::start().await? })
+        Ok(Self {
+            service: BleHidService::start().await?,
+        })
     }
 
     /// Sends relative pointer movement. Large movements are split into signed 8-bit reports.
@@ -47,7 +49,9 @@ impl BleInputController {
         if button.bits().count_ones() != 1 {
             bail!("click requires a supported mouse button");
         }
-        self.service.send_mouse_report(MouseReport::new(button, 0, 0, 0)).await?;
+        self.service
+            .send_mouse_report(MouseReport::new(button, 0, 0, 0))
+            .await?;
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
         self.service.send_mouse_report(MouseReport::release()).await
     }
@@ -74,16 +78,23 @@ impl BleInputController {
             .send_keyboard_report(KeyboardReport::new(modifiers, [usage, 0, 0, 0, 0, 0]))
             .await?;
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-        self.service.send_keyboard_report(KeyboardReport::release()).await
+        self.service
+            .send_keyboard_report(KeyboardReport::release())
+            .await
     }
 
     /// Types basic ASCII text. Unsupported non-ASCII characters return an error instead of
     /// silently producing incorrect input. Unicode text injection can be added separately.
     pub async fn type_text(&self, text: &str) -> Result<()> {
         for character in text.chars() {
-            let (usage, shifted) = ascii_key(character)
-                .ok_or_else(|| anyhow::anyhow!("unsupported character for BLE HID typing: {character:?}"))?;
-            let modifiers = if shifted { KeyModifiers::LEFT_SHIFT } else { KeyModifiers::NONE };
+            let (usage, shifted) = ascii_key(character).ok_or_else(|| {
+                anyhow::anyhow!("unsupported character for BLE HID typing: {character:?}")
+            })?;
+            let modifiers = if shifted {
+                KeyModifiers::LEFT_SHIFT
+            } else {
+                KeyModifiers::NONE
+            };
             self.tap_key(modifiers, usage).await?;
             tokio::time::sleep(std::time::Duration::from_millis(8)).await;
         }
@@ -92,8 +103,12 @@ impl BleInputController {
 
     /// Releases all mouse buttons and keyboard keys.
     pub async fn release_all(&self) -> Result<()> {
-        self.service.send_mouse_report(MouseReport::release()).await?;
-        self.service.send_keyboard_report(KeyboardReport::release()).await
+        self.service
+            .send_mouse_report(MouseReport::release())
+            .await?;
+        self.service
+            .send_keyboard_report(KeyboardReport::release())
+            .await
     }
 
     /// Stops BLE advertising.
@@ -117,17 +132,38 @@ fn ascii_key(character: char) -> Option<(u8, bool)> {
         ' ' => (0x2c, false),
         '\n' | '\r' => (0x28, false),
         '\t' => (0x2b, false),
-        '!' => (0x1e, true), '@' => (0x1f, true), '#' => (0x20, true),
-        '$' => (0x21, true), '%' => (0x22, true), '^' => (0x23, true),
-        '&' => (0x24, true), '*' => (0x25, true), '(' => (0x26, true),
-        ')' => (0x27, true), '-' => (0x2d, false), '_' => (0x2d, true),
-        '=' => (0x2e, false), '+' => (0x2e, true), '[' => (0x2f, false),
-        '{' => (0x2f, true), ']' => (0x30, false), '}' => (0x30, true),
-        '\\' => (0x31, false), '|' => (0x31, true), ';' => (0x33, false),
-        ':' => (0x33, true), '\'' => (0x34, false), '"' => (0x34, true),
-        '`' => (0x35, false), '~' => (0x35, true), ',' => (0x36, false),
-        '<' => (0x36, true), '.' => (0x37, false), '>' => (0x37, true),
-        '/' => (0x38, false), '?' => (0x38, true),
+        '!' => (0x1e, true),
+        '@' => (0x1f, true),
+        '#' => (0x20, true),
+        '$' => (0x21, true),
+        '%' => (0x22, true),
+        '^' => (0x23, true),
+        '&' => (0x24, true),
+        '*' => (0x25, true),
+        '(' => (0x26, true),
+        ')' => (0x27, true),
+        '-' => (0x2d, false),
+        '_' => (0x2d, true),
+        '=' => (0x2e, false),
+        '+' => (0x2e, true),
+        '[' => (0x2f, false),
+        '{' => (0x2f, true),
+        ']' => (0x30, false),
+        '}' => (0x30, true),
+        '\\' => (0x31, false),
+        '|' => (0x31, true),
+        ';' => (0x33, false),
+        ':' => (0x33, true),
+        '\'' => (0x34, false),
+        '"' => (0x34, true),
+        '`' => (0x35, false),
+        '~' => (0x35, true),
+        ',' => (0x36, false),
+        '<' => (0x36, true),
+        '.' => (0x37, false),
+        '>' => (0x37, true),
+        '/' => (0x38, false),
+        '?' => (0x38, true),
         _ => return None,
     };
     Some(key)

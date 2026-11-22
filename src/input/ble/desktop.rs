@@ -4,13 +4,16 @@
 //! event loop and keeps callback tasks alive while the UI is idle.
 
 use std::{
-    sync::{OnceLock, mpsc::{self, Sender}},
+    sync::{
+        OnceLock,
+        mpsc::{self, Sender},
+    },
     thread,
 };
 
-use anyhow::{Context, Result};
-use crate::input::MouseButtons;
 use super::BleInputController;
+use crate::input::MouseButtons;
+use anyhow::{Context, Result};
 
 #[derive(Debug)]
 enum Command {
@@ -99,15 +102,21 @@ fn sender() -> Result<&'static Sender<Command>> {
         .context("starting BLE controller worker thread")?;
 
     let _ = COMMANDS.set(tx);
-    COMMANDS.get().context("BLE command channel was not initialized")
+    COMMANDS
+        .get()
+        .context("BLE command channel was not initialized")
 }
 
 fn active(controller: &Option<BleInputController>) -> Result<&BleInputController> {
-    controller.as_ref().context("BLE is not started; click Connect first")
+    controller
+        .as_ref()
+        .context("BLE is not started; click Connect first")
 }
 
 fn send(command: Command) -> Result<()> {
-    sender()?.send(command).context("BLE controller worker is unavailable")
+    sender()?
+        .send(command)
+        .context("BLE controller worker is unavailable")
 }
 
 /// Start Windows BLE HID advertising. Connect the iPhone from AssistiveTouch.
@@ -139,4 +148,3 @@ pub fn scroll(amount: i32) -> Result<()> {
 pub fn type_sample() -> Result<()> {
     send(Command::TypeText("BLE OK".to_string()))
 }
-
