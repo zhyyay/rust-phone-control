@@ -52,10 +52,8 @@ pub struct PairSetupM1 {
 /// later message handlers will validate the fields relevant to each state.
 pub fn parse_m1(payload: &[u8]) -> Result<PairSetupM1, PairSetupError> {
     let fields = tlv8::decode(payload).map_err(|_| PairSetupError::InvalidTlv)?;
-    let state = unique_field(&fields, TLV_STATE)
-        .ok_or(PairSetupError::MissingState)?;
-    let method = unique_field(&fields, TLV_METHOD)
-        .ok_or(PairSetupError::MissingMethod)?;
+    let state = unique_field(&fields, TLV_STATE)?;
+    let method = unique_field(&fields, TLV_METHOD)?;
 
     if state.len() != 1 || state[0] != STATE_M1 {
         return Err(PairSetupError::InvalidState);
