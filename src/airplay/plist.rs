@@ -5,7 +5,7 @@
 
 use std::io::Cursor;
 
-use plist::{Error, Value};
+use ::plist::{Error, Value};
 
 /// Decode a property-list payload. The plist crate accepts both XML and binary
 /// encodings; AirPlay binary payloads are identified by the bplist00 header.
@@ -23,7 +23,7 @@ pub(super) fn encode_binary(value: &Value) -> Result<Vec<u8>, Error> {
 #[cfg(test)]
 mod tests {
     use super::{decode, encode_binary};
-    use plist::{Dictionary, Value};
+    use ::plist::{Dictionary, Value};
 
     fn sample_value() -> Value {
         let mut nested = Dictionary::new();
