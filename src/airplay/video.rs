@@ -987,10 +987,10 @@ impl std::fmt::Display for FrameConversionError {
 impl std::error::Error for FrameConversionError {}
 
 /// Normalize a bottom-up contiguous NV12 buffer into top-down row order.
-////
-//// Media Foundation represents a negative default stride as a bottom-up
-//// image. The Y plane and interleaved UV plane must each have their own row
-//// order reversed before the normal NV12 converter can consume the buffer.
+///
+/// Media Foundation represents a negative default stride as a bottom-up
+/// image. The Y plane and interleaved UV plane must each have their own row
+/// order reversed before the normal NV12 converter can consume the buffer.
 pub(super) fn normalize_nv12_bottom_up(
     data: &mut [u8],
     width: u32,
