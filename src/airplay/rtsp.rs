@@ -43,8 +43,10 @@ struct MirrorStreamContext {
 }
 
 /// Owns the negotiated TCP screen-mirroring listener and its bounded worker.
-/// The worker reads each 128-byte packet header and its declared payload. It
-/// does not decrypt, parse codec configuration, decode, or render video.
+/// The worker reads each 128-byte packet header and its declared payload,
+/// validates avcC configuration, and initializes an H.264 decoder from SPS
+/// dimensions. It cannot decrypt sender video or submit frames without a
+/// recovered FairPlay key and verified access-unit framing.
 struct MediaSession {
     local_addr: std::net::SocketAddr,
     running: std::sync::Arc<std::sync::atomic::AtomicBool>,
