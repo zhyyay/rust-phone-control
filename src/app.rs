@@ -37,6 +37,7 @@ impl Render for PhoneControlApp {
                     .border_1()
                     .border_color(cx.theme().border)
                     .child(Label::new("AirPlay screen mirror"))
+                    .child(Label::new(airplay_pairing_code_label()))
                     .child(
                         Button::new("airplay-start")
                             .primary()
@@ -206,6 +207,16 @@ fn type_sample_ble() {
 }
 #[cfg(not(windows))]
 fn type_sample_ble() {}
+
+#[cfg(windows)]
+fn airplay_pairing_code_label() -> String {
+    format!("iPhone pairing code: {}", crate::airplay::setup_code())
+}
+
+#[cfg(not(windows))]
+fn airplay_pairing_code_label() -> String {
+    "iPhone pairing code: Windows only".to_owned()
+}
 
 #[cfg(windows)]
 fn start_airplay() {
