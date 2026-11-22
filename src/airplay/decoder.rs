@@ -167,6 +167,27 @@ pub struct DecodedNv12Frame {
     pub data: Vec<u8>,
 }
 
+#[cfg(windows)]
+impl DecodedNv12Frame {
+    /// Convert the decoder's NV12 output into a tightly packed BGRA frame
+    /// for the desktop presentation layer.
+    ///
+    /// Media Foundation exposes one default stride for the NV12 surface;
+    /// the Y and interleaved UV planes use that same row pitch.
+    pub fn to_bgra(
+        &self,
+    ) -> Result<crate::airplay::video::BgraFrame, crate::airplay::video::FrameConversionError> {
+        crate::airplay::video::Nv12Frame {
+            width: self.width,
+            height: self.height,
+            y_stride: self.stride,
+            uv_stride: self.stride,
+            data: &self.data,
+        }
+        .to_bgra()
+    }
+}
+
 /// A synchronous Windows H.264 decoder MFT.
 ///
 /// This object is thread-local because Windows COM interfaces are not Send/Sync.
