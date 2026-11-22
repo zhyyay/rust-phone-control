@@ -512,6 +512,19 @@ impl<'runtime> H264FramePipeline<'runtime> {
         Ok(Self { decoder, frames })
     }
 
+    /// Build a decoder directly from the dimensions carried by the stream avcC SPS.
+    pub fn from_avc_configuration(
+        runtime: &'runtime MediaFoundationRuntime,
+        configuration: &crate::airplay::video::AvcConfiguration,
+        frames: std::sync::Arc<crate::airplay::video::LatestFrameMailbox>,
+    ) -> Result<Self, MediaFoundationError> {
+        let dimensions = configuration
+            .video_dimensions()
+            .map_err(MediaFoundationError::InvalidAvcConfiguration)?
+            .ok_or(MediaFoundationError::MissingSps)?;
+        Self::new(runtime, dimensions.width, dimensions.height, frames)
+    }
+
     /// Decode one complete, already-decrypted Annex-B access unit.
     ///
     /// Returns the number of output frames published. The mailbox retains
@@ -551,6 +564,8 @@ pub enum MediaFoundationError {
     StartupFailed(i32),
     EnumerationFailed(i32),
     InvalidDimensions,
+    MissingSps,
+    InvalidAvcConfiguration(crate::airplay::video::AvcConfigError),
     NoH264Decoder,
     ActivationFailed(i32),
     MediaTypeFailed(i32),
@@ -588,6 +603,10 @@ impl fmt::Display for MediaFoundationError {
                 )
             }
             Self::InvalidDimensions => f.write_str("invalid H.264 frame dimensions"),
+            Self::MissingSps => f.write_str("AVC configuration does not contain an SPS"),
+            Self::InvalidAvcConfiguration(error) => {
+                write!(f, "AVC configuration SPS is invalid: {error}")
+            }
             Self::NoH264Decoder => {
                 f.write_str("no synchronous/local H.264 decoder MFT is registered")
             }
