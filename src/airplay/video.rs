@@ -1490,10 +1490,7 @@ mod tests {
             10, 11, 12, 13, // Two interleaved UV rows.
         ];
         normalize_nv12_bottom_up(&mut data, 2, 4, 2).expect("valid bottom-up NV12");
-        assert_eq!(
-            data,
-            vec![7, 8, 5, 6, 3, 4, 1, 2, 12, 13, 10, 11]
-        );
+        assert_eq!(data, vec![7, 8, 5, 6, 3, 4, 1, 2, 12, 13, 10, 11]);
     }
 
     #[test]
