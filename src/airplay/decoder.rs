@@ -362,7 +362,8 @@ impl<'runtime> H264Decoder<'runtime> {
         let mut selected_output = None;
         for index in 0..64u32 {
             let candidate = match unsafe {
-                self.transform.GetOutputAvailableType(self.output_stream, index)
+                self.transform
+                    .GetOutputAvailableType(self.output_stream, index)
             } {
                 Ok(media_type) => media_type,
                 Err(_) => break,
@@ -377,8 +378,11 @@ impl<'runtime> H264Decoder<'runtime> {
 
         let output_type = selected_output.ok_or(MediaFoundationError::Nv12OutputUnavailable)?;
         let dimensions = unsafe { output_type.GetUINT64(&MF_MT_FRAME_SIZE) }.ok();
-        unsafe { self.transform.SetOutputType(self.output_stream, &output_type, 0) }
-            .map_err(|error| MediaFoundationError::OutputTypeFailed(error.code().0))?;
+        unsafe {
+            self.transform
+                .SetOutputType(self.output_stream, &output_type, 0)
+        }
+        .map_err(|error| MediaFoundationError::OutputTypeFailed(error.code().0))?;
 
         if let Some(frame_size) = dimensions {
             let width = (frame_size >> 32) as u32;
