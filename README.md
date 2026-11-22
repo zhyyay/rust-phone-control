@@ -1,28 +1,53 @@
 # Rust Phone Control
 
-A Windows-first Rust desktop application for controlling an iPhone over Wi-Fi through the iCTRL automation runner, with GPUI Kit as the desktop UI framework.
+A Windows-first Rust desktop application for iPhone control experiments, BLE HID input, and AirPlay receiver development.
 
-## Status
+## Current functionality
 
-Phase 1 foundation is being built. The initial milestone covers project structure, iCTRL discovery/schema inspection, a safe client boundary, configuration, logging, and a GPUI Kit shell. Encrypted pairing and RPC must follow the exact protocol exposed by the installed iCTRL runner/client; no plaintext control requests are sent.
+- GPUI Kit desktop application and structured logging.
+- Windows BLE GATT HID peripheral with mouse and keyboard report handling.
+- Desktop controls for starting/stopping BLE advertising and sending relative mouse movement, clicks, scrolling, and sample ASCII text.
+- Built-in AirPlay control-plane prototype with mDNS discovery, RTSP/HTTP parsing, plist responses, Pair-Setup (SRP and encrypted identity exchange), and Pair-Verify.
+- DPAPI-protected Windows storage for the AirPlay accessory identity and paired-controller registry.
+- Optional read-only iCTRL discovery client.
 
-## Planned stack
+BLE HID input and AirPlay video are independent connections. AssistiveTouch pointer control is not native touchscreen injection, and relative mouse movement is not precise absolute-coordinate control.
 
-- Rust stable (MSVC on Windows)
-- GPUI Kit 0.10
-- Tokio + Reqwest
-- iCTRL JSON-RPC API (port 8200 by default)
-- H.264 stream decoding: hardware-first with software fallback (Phase 2)
+## AirPlay limitations
 
-## Safety
+**This repository does not yet provide working iPhone screen mirroring.** FairPlay, encrypted media transport, stream setup, video reception, H.264/HEVC decoding, and GPUI frame rendering remain unimplemented. Pairing protocol code being present does not mean that a complete iPhone pairing or mirroring session has been validated.
 
-Only connect to iPhones you own or are authorized to administer. Keep iCTRL remote access disabled except while actively using the tool, and protect paired client credentials.
+The SRP implementation currently uses num-bigint modular exponentiation, which is variable-time. It is a development implementation and must not be treated as production-grade cryptography until secret-exponent operations are replaced with a reviewed constant-time implementation and the protocol is independently audited.
 
-## Build
+No GPL receiver is linked or launched. New dependencies must be checked for license compatibility; the project remains under Apache-2.0.
+
+## Project layout
+
+- src/input/: platform-independent input events and BLE HID implementation.
+- src/platform/windows/: Windows-specific APIs, including DPAPI.
+- src/airplay/: discovery, RTSP, plist, TLV8, pairing, persistence, and SRP modules.
+- src/ictrl/: optional read-only iCTRL discovery client.
+- src/app.rs: GPUI desktop interface.
+
+## Build and test
+
+Run from Windows PowerShell with the MSVC toolchain installed:
 
 ```powershell
-cargo check --workspace
-cargo run -p phone-desktop
+cargo fmt --all -- --check
+cargo check --all-targets
+cargo test --all-targets
+cargo run --bin phone-desktop
 ```
 
-See `docs/DEVELOPMENT.md` for setup and current implementation boundaries.
+The BLE diagnostic utility can be run separately:
+
+```powershell
+cargo run --bin ble-probe
+```
+
+The optional iCTRL discovery utility is read-only:
+
+```powershell
+cargo run --bin ictrl-probe -- http://PHONE-IP:8200
+```

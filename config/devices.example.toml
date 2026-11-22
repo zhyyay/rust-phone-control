@@ -1,0 +1,5 @@
+[[devices]]
+name = "My iPhone"
+host = "192.168.1.20"
+port = 8200
+protocol = "http"

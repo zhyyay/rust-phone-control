@@ -1,0 +1,49 @@
+//! HID-over-GATT identifiers and Report Map for a relative mouse + keyboard device.
+//!
+//! Each Report characteristic must also expose a Report Reference descriptor:
+//! report ID 1 / Input for the mouse, and report ID 2 / Input for the keyboard.
+
+/// Human Interface Device service (0x1812).
+pub const HID_SERVICE: u16 = 0x1812;
+/// HID Information characteristic (0x2A4A).
+pub const HID_INFORMATION: u16 = 0x2A4A;
+/// Report Map characteristic UUID (0x2A4B).
+pub const HID_REPORT_MAP_CHARACTERISTIC: u16 = 0x2A4B;
+/// Control Point characteristic (0x2A4C).
+pub const HID_CONTROL_POINT: u16 = 0x2A4C;
+/// Report characteristic (0x2A4D).
+pub const HID_REPORT: u16 = 0x2A4D;
+/// Report Reference descriptor (0x2908), required on each Report characteristic.
+pub const HID_REPORT_REFERENCE: u16 = 0x2908;
+/// Report Reference value for an Input Report (report type 0x01).
+pub const REPORT_TYPE_INPUT: u8 = 0x01;
+/// Protocol Mode characteristic (0x2A4E); reserved for future Boot Protocol support.
+pub const HID_PROTOCOL_MODE: u16 = 0x2A4E;
+
+/// Report ID 1: three-button relative mouse with X/Y movement and vertical wheel.
+/// Report ID 2: standard 8-byte keyboard input report.
+pub const HID_REPORT_MAP: &[u8] = &[
+    // Generic Desktop / Mouse application collection.
+    0x05, 0x01, 0x09, 0x02, 0xA1, 0x01, 0x85, 0x01, 0x09, 0x01, 0xA1, 0x00,
+    // Three mouse buttons.
+    0x05, 0x09, 0x19, 0x01, 0x29, 0x03, 0x15, 0x00, 0x25, 0x01, 0x95, 0x03, 0x75, 0x01, 0x81, 0x02,
+    0x95, 0x01, 0x75, 0x05, 0x81, 0x03, // Relative X, Y and wheel values.
+    0x05, 0x01, 0x09, 0x30, 0x09, 0x31, 0x09, 0x38, 0x15, 0x81, 0x25, 0x7F, 0x75, 0x08, 0x95, 0x03,
+    0x81, 0x06, 0xC0, 0xC0, // Generic Desktop / Keyboard application collection.
+    0x05, 0x01, 0x09, 0x06, 0xA1, 0x01, 0x85, 0x02, 0x05, 0x07, // Eight modifier keys.
+    0x19, 0xE0, 0x29, 0xE7, 0x15, 0x00, 0x25, 0x01, 0x75, 0x01, 0x95, 0x08, 0x81, 0x02,
+    // Reserved byte and six simultaneous key usages.
+    0x95, 0x01, 0x75, 0x08, 0x81, 0x01, 0x95, 0x06, 0x75, 0x08, 0x15, 0x00, 0x25, 0x65, 0x05, 0x07,
+    0x19, 0x00, 0x29, 0x65, 0x81, 0x00, 0xC0,
+];
+
+/// HID Information: bcdHID 1.11, country code 0, normally-connectable device.
+pub const HID_INFORMATION_VALUE: [u8; 4] = [0x11, 0x01, 0x00, 0x02];
+
+/// HID Control Point values.
+pub const CONTROL_POINT_SUSPEND: u8 = 0x00;
+pub const CONTROL_POINT_EXIT_SUSPEND: u8 = 0x01;
+
+/// HID Protocol Mode values; not currently published by the Report Host implementation.
+pub const PROTOCOL_MODE_BOOT: u8 = 0x00;
+pub const PROTOCOL_MODE_REPORT: u8 = 0x01;
