@@ -7,10 +7,9 @@
 use std::fmt;
 use std::io;
 use std::net::{IpAddr, SocketAddr, UdpSocket};
+use std::sync::mpsc::{SyncSender, TrySendError};
 use std::sync::{
     Arc,
-    SyncSender,
-    TrySendError,
     atomic::{AtomicBool, Ordering},
 };
 use std::thread::{self, JoinHandle};
