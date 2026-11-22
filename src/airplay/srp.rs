@@ -36,7 +36,6 @@ const MODULUS_HEX: &str = concat!(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SrpError {
     InvalidSetupCode,
-    InvalidSalt,
     InvalidPrivateKey,
     InvalidClientPublicKey,
     InvalidClientProof,
@@ -47,7 +46,6 @@ impl std::fmt::Display for SrpError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
             Self::InvalidSetupCode => "invalid SRP setup code",
-            Self::InvalidSalt => "SRP salt must be exactly 16 bytes",
             Self::InvalidPrivateKey => "SRP private ephemeral must be non-zero",
             Self::InvalidClientPublicKey => "invalid SRP client public key",
             Self::InvalidClientProof => "SRP client proof verification failed",
@@ -220,6 +218,7 @@ fn pad(value: &BigUint) -> Result<Vec<u8>, SrpError> {
 mod tests {
     use super::{hash, modulus, pad, password_exponent, generator, SrpError, SrpServer};
     use num_bigint::BigUint;
+    use num_traits::Zero;
 
     fn client_proof(
         setup_code: &str,
@@ -258,6 +257,11 @@ mod tests {
             &session_key,
         ]);
         (session_key, proof, a_pad)
+    }
+
+    #[test]
+    fn configured_group_is_exactly_3072_bits() {
+        assert_eq!(modulus().bits(), 3072);
     }
 
     #[test]
