@@ -334,12 +334,12 @@ fn handle_pair_setup(
                 .map_err(|error| PairSetupFailure::unavailable(error.to_string()))?;
             let response = tlv8::encode(&[
                 Tlv { kind: 0x06, value: vec![0x02] },
-                Tlv { kind: 0x02, value: server.salt().to_vec() },
                 Tlv {
                     kind: 0x03,
                     value: server.public_key()
                         .map_err(|error| PairSetupFailure::unavailable(error.to_string()))?,
                 },
+                Tlv { kind: 0x02, value: server.salt().to_vec() },
             ]);
             *srp_state = Some(server);
             *session_key = None;
@@ -497,7 +497,7 @@ mod tests {
             &request,
             &mut srp,
             &mut session_key,
-            Some("123-45-678"),
+            Some("518-08-582"),
         ).expect("M1 response");
         let fields = tlv8::decode(&response).expect("decode M2");
         assert_eq!(fields.iter().find(|field| field.kind == 0x06).unwrap().value, [0x02]);
@@ -562,9 +562,9 @@ mod tests {
         ]);
         let mut srp = None;
         let mut session_key = None;
-        handle_pair_setup(&m1, &mut srp, &mut session_key, Some("123-45-678"))
+        handle_pair_setup(&m1, &mut srp, &mut session_key, Some("518-08-582"))
             .expect("M1 should create SRP challenge");
-        let response = handle_pair_setup(&m3, &mut srp, &mut session_key, Some("123-45-678"))
+        let response = handle_pair_setup(&m3, &mut srp, &mut session_key, Some("518-08-582"))
             .expect("bad proof is represented as an M4 TLV error");
         let fields = tlv8::decode(&response).expect("decode M4 error");
         assert!(fields.iter().any(|field| field.kind == 0x06 && field.value == [0x04]));
