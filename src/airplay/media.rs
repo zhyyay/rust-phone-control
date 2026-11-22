@@ -167,7 +167,7 @@ mod tests {
     #[test]
     fn parses_csrc_and_header_extension() {
         let bytes = [
-            0x92, 0x60, 0, 7, 0, 0, 0, 9, 0, 0, 0, 11,
+            0x91, 0x60, 0, 7, 0, 0, 0, 9, 0, 0, 0, 11,
             0x11, 0x11, 0x22, 0x22,
             0xBE, 0xDE, 0, 1, 0xAA, 0xBB, 0xCC, 0xDD,
             0xFE,
