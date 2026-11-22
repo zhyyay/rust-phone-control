@@ -7,7 +7,7 @@
 //! currently serve.
 
 use anyhow::{Context, Result};
-use mdns_sd::{DaemonEvent, ServiceDaemon, ServiceInfo};
+use mdns_sd::{DaemonEvent, IfKind, ServiceDaemon, ServiceInfo};
 use std::thread::{self, JoinHandle};
 
 use super::config;
@@ -21,6 +21,18 @@ pub struct Advertisement {
 impl Advertisement {
     pub fn start() -> Result<Self> {
         let daemon = ServiceDaemon::new().context("create mDNS service daemon")?;
+        // Do not publish discovery records on loopback or the known Clash
+        // Meta virtual adapter. Keep normal physical interfaces enabled so
+        // both Wi-Fi and Ethernet deployments remain discoverable.
+        daemon
+            .disable_interface(IfKind::LoopbackV4)
+            .context("disable IPv4 loopback for AirPlay discovery")?;
+        daemon
+            .disable_interface(IfKind::LoopbackV6)
+            .context("disable IPv6 loopback for AirPlay discovery")?;
+        daemon
+            .disable_interface(IfKind::Name("Meta".to_owned()))
+            .context("disable Meta virtual adapter for AirPlay discovery")?;
 
         // mdns-sd creates its multicast sockets on the daemon thread. Socket
         // binding and multicast-interface errors are reported asynchronously
@@ -81,11 +93,7 @@ impl Advertisement {
         .context("build AirPlay mDNS service record")?
         .enable_addr_auto();
 
-        let raop_instance = format!(
-            "{}@{}",
-            device_id.replace(':', ""),
-            config::SERVICE_NAME
-        );
+        let raop_instance = format!("{}@{}", device_id.replace(':', ""), config::SERVICE_NAME);
         // RAOP is advertised because iOS versions commonly use it as part of
         // the Screen Mirroring discovery path. Keep the TXT record minimal:
         // no codec or encryption support is claimed by this receiver yet.
