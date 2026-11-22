@@ -25,7 +25,17 @@ struct Request {
     protocol: String,
     cseq: String,
     connection_close: bool,
+    headers: Vec<(String, String)>,
     body: Vec<u8>,
+}
+
+impl Request {
+    fn header(&self, name: &str) -> Option<&str> {
+        self.headers
+            .iter()
+            .find(|(header_name, _)| header_name.eq_ignore_ascii_case(name))
+            .map(|(_, value)| value.as_str())
+    }
 }
 
 pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
@@ -232,25 +242,55 @@ fn read_request(stream: &mut TcpStream, pending: &mut Vec<u8>) -> std::io::Resul
     }
 
     let mut content_length = 0usize;
+    let mut content_length_seen = false;
     let mut cseq = "0".to_owned();
     let mut connection_close = false;
+    let mut headers = Vec::new();
 
     for line in lines {
-        if let Some((name, value)) = line.split_once(':') {
-            let value = value.trim();
-            if name.eq_ignore_ascii_case("Content-Length") {
-                content_length = value.parse().map_err(|_| {
-                    std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        "invalid AirPlay Content-Length",
-                    )
-                })?;
-            } else if name.eq_ignore_ascii_case("CSeq") {
-                cseq = value.to_owned();
-            } else if name.eq_ignore_ascii_case("Connection") {
-                connection_close = value.eq_ignore_ascii_case("close");
-            }
+        if line.is_empty() {
+            continue;
         }
+        let (name, raw_value) = line.split_once(':').ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "malformed AirPlay request header",
+            )
+        })?;
+        let name = name.trim();
+        if name.is_empty()
+            || !name
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&byte))
+        {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "invalid AirPlay request header name",
+            ));
+        }
+        let value = raw_value.trim();
+        if name.eq_ignore_ascii_case("Content-Length") {
+            if content_length_seen {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "duplicate AirPlay Content-Length header",
+                ));
+            }
+            content_length_seen = true;
+            content_length = value.parse().map_err(|_| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "invalid AirPlay Content-Length",
+                )
+            })?;
+        } else if name.eq_ignore_ascii_case("CSeq") {
+            cseq = value.to_owned();
+        } else if name.eq_ignore_ascii_case("Connection") {
+            connection_close = value
+                .split(',')
+                .any(|token| token.trim().eq_ignore_ascii_case("close"));
+        }
+        headers.push((name.to_ascii_lowercase(), value.to_owned()));
     }
 
     if content_length > MAX_BODY_BYTES {
@@ -287,6 +327,7 @@ fn read_request(stream: &mut TcpStream, pending: &mut Vec<u8>) -> std::io::Resul
         protocol,
         cseq,
         connection_close,
+        headers,
         body,
     }))
 }
@@ -553,7 +594,7 @@ fn txt_airplay_dictionary() -> Dictionary {
 #[cfg(test)]
 mod tests {
     use super::plist;
-    use super::{build_info_response, find_header_end, handle_pair_setup, server_info_plist};
+    use super::{Request, build_info_response, find_header_end, handle_pair_setup, server_info_plist};
     use crate::airplay::tlv8::{self, Tlv};
     use ::plist::{Dictionary, Value};
 
@@ -566,6 +607,23 @@ mod tests {
         );
         assert_eq!(find_header_end(b"OPTIONS * RTSP/1.0\r\n"), None);
     }
+    #[test]
+    fn request_header_lookup_is_case_insensitive() {
+        let request = Request {
+            method: "SETUP".into(),
+            path: "/stream".into(),
+            protocol: "RTSP/1.0".into(),
+            cseq: "7".into(),
+            connection_close: false,
+            headers: vec![("transport".into(), "RTP/AVP/UDP;unicast".into())],
+            body: Vec::new(),
+        };
+        assert_eq!(
+            request.header("Transport"),
+            Some("RTP/AVP/UDP;unicast")
+        );
+    }
+
     #[test]
     fn server_info_contains_declared_model_and_zero_features() {
         let body = server_info_plist();
