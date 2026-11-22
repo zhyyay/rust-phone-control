@@ -8,12 +8,12 @@
 
 mod config;
 mod discovery;
-mod pairing;
-mod plist;
-#[cfg(windows)]
-mod pairing_store;
 mod pair_setup;
 mod pair_verify;
+mod pairing;
+#[cfg(windows)]
+mod pairing_store;
+mod plist;
 mod rtsp;
 mod server;
 mod srp;

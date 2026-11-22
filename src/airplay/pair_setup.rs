@@ -12,8 +12,8 @@ use chacha20poly1305::aead::{Aead, KeyInit};
 use chacha20poly1305::{ChaCha20Poly1305, Nonce};
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use hkdf::Hkdf;
-use rand::rngs::OsRng;
 use rand::RngCore;
+use rand::rngs::OsRng;
 use sha2::Sha512;
 
 use super::tlv8::{self, Tlv};
@@ -37,9 +37,16 @@ impl AccessoryIdentity {
         OsRng.fill_bytes(&mut random_id);
         let identifier = format!(
             "rpc-{}",
-            random_id.iter().map(|byte| format!("{:02x}", byte)).collect::<String>()
-        ).into_bytes();
-        Self { identifier, signing_key }
+            random_id
+                .iter()
+                .map(|byte| format!("{:02x}", byte))
+                .collect::<String>()
+        )
+        .into_bytes();
+        Self {
+            identifier,
+            signing_key,
+        }
     }
 
     fn from_parts(identifier: Vec<u8>, secret_key: &[u8]) -> Result<Self, String> {
@@ -77,20 +84,30 @@ impl PairingState {
                     stored.accessory_identifier,
                     &stored.accessory_secret_key,
                 )?;
-                let controllers = stored.controllers.into_iter().map(|entry| {
-                    let public_key: [u8; 32] = entry.public_key
-                        .try_into()
-                        .map_err(|_| "invalid persisted controller public key")?;
-                    Ok((entry.identifier, public_key))
-                }).collect::<Result<HashMap<_, _>, String>>()?;
-                return Ok(Self { accessory, controllers });
+                let controllers = stored
+                    .controllers
+                    .into_iter()
+                    .map(|entry| {
+                        let public_key: [u8; 32] = entry
+                            .public_key
+                            .try_into()
+                            .map_err(|_| "invalid persisted controller public key")?;
+                        Ok((entry.identifier, public_key))
+                    })
+                    .collect::<Result<HashMap<_, _>, String>>()?;
+                return Ok(Self {
+                    accessory,
+                    controllers,
+                });
             }
 
             let state = Self {
                 accessory: AccessoryIdentity::generate(),
                 controllers: HashMap::new(),
             };
-            state.persist().map_err(|error| format!("cannot create protected AirPlay pairing store: {error}"))?;
+            state.persist().map_err(|error| {
+                format!("cannot create protected AirPlay pairing store: {error}")
+            })?;
             return Ok(state);
         }
 
@@ -111,15 +128,18 @@ impl PairingState {
                 version: 1,
                 accessory_identifier: self.accessory.identifier.clone(),
                 accessory_secret_key: self.accessory.signing_key.to_bytes().to_vec(),
-                controllers: self.controllers.iter().map(|(identifier, public_key)| {
-                    StoredController {
+                controllers: self
+                    .controllers
+                    .iter()
+                    .map(|(identifier, public_key)| StoredController {
                         identifier: identifier.clone(),
                         public_key: public_key.to_vec(),
-                    }
-                }).collect(),
+                    })
+                    .collect(),
             };
-            pairing_store::save(&stored)
-                .map_err(|error| format!("cannot persist protected AirPlay pairing store: {error}"))?;
+            pairing_store::save(&stored).map_err(|error| {
+                format!("cannot persist protected AirPlay pairing store: {error}")
+            })?;
         }
         Ok(())
     }
@@ -137,15 +157,24 @@ fn pairing_state() -> Result<&'static Mutex<PairingState>, String> {
 /// Return the persisted accessory identifier used by Pair-Verify.
 pub fn accessory_identifier() -> Result<Vec<u8>, String> {
     let lock = pairing_state()?;
-    let state = lock.lock().map_err(|_| "AirPlay pairing state lock poisoned")?;
+    let state = lock
+        .lock()
+        .map_err(|_| "AirPlay pairing state lock poisoned")?;
     Ok(state.accessory.identifier.clone())
 }
 
 /// Sign a Pair-Verify transcript with the persistent accessory identity key.
 pub fn sign_accessory_identity_message(message: &[u8]) -> Result<Vec<u8>, String> {
     let lock = pairing_state()?;
-    let state = lock.lock().map_err(|_| "AirPlay pairing state lock poisoned")?;
-    Ok(state.accessory.signing_key.sign(message).to_bytes().to_vec())
+    let state = lock
+        .lock()
+        .map_err(|_| "AirPlay pairing state lock poisoned")?;
+    Ok(state
+        .accessory
+        .signing_key
+        .sign(message)
+        .to_bytes()
+        .to_vec())
 }
 
 #[cfg(test)]
@@ -165,7 +194,9 @@ pub fn test_accessory_public_key() -> [u8; 32] {
 /// Look up a paired controller's long-term Ed25519 public key.
 pub fn paired_controller_public_key(identifier: &[u8]) -> Result<Option<[u8; 32]>, String> {
     let lock = pairing_state()?;
-    let state = lock.lock().map_err(|_| "AirPlay pairing state lock poisoned")?;
+    let state = lock
+        .lock()
+        .map_err(|_| "AirPlay pairing state lock poisoned")?;
     Ok(state.controllers.get(identifier).copied())
 }
 
@@ -205,9 +236,8 @@ pub fn handle_m5(session_key: &[u8; 64], encrypted_data: &[u8]) -> Result<Vec<u8
         b"Pair-Setup-Controller-Sign-Salt",
         b"Pair-Setup-Controller-Sign-Info",
     )?;
-    let mut controller_info = Vec::with_capacity(
-        controller_x.len() + controller_id.len() + controller_public_key.len(),
-    );
+    let mut controller_info =
+        Vec::with_capacity(controller_x.len() + controller_id.len() + controller_public_key.len());
     controller_info.extend_from_slice(&controller_x);
     controller_info.extend_from_slice(controller_id);
     controller_info.extend_from_slice(&controller_public_key);
@@ -238,16 +268,27 @@ pub fn handle_m5(session_key: &[u8; 64], encrypted_data: &[u8]) -> Result<Vec<u8
     let accessory_signature = accessory.signing_key.sign(&accessory_info);
 
     let inner = tlv8::encode(&[
-        Tlv { kind: TLV_IDENTIFIER, value: accessory.identifier.clone() },
-        Tlv { kind: TLV_PUBLIC_KEY, value: accessory_public_key.to_vec() },
-        Tlv { kind: TLV_SIGNATURE, value: accessory_signature.to_bytes().to_vec() },
+        Tlv {
+            kind: TLV_IDENTIFIER,
+            value: accessory.identifier.clone(),
+        },
+        Tlv {
+            kind: TLV_PUBLIC_KEY,
+            value: accessory_public_key.to_vec(),
+        },
+        Tlv {
+            kind: TLV_SIGNATURE,
+            value: accessory_signature.to_bytes().to_vec(),
+        },
     ]);
     let encrypted_response = cipher
         .encrypt(Nonce::from_slice(NONCE_M6), inner.as_ref())
         .map_err(|_| "Pair-Setup M6 encryption failed")?;
 
     // Persist a candidate snapshot first. The registry is rolled back on failure.
-    let previous = state.controllers.insert(controller_id.to_vec(), controller_public_key);
+    let previous = state
+        .controllers
+        .insert(controller_id.to_vec(), controller_public_key);
     if let Err(error) = state.persist() {
         match previous {
             Some(public_key) => {
@@ -261,8 +302,14 @@ pub fn handle_m5(session_key: &[u8; 64], encrypted_data: &[u8]) -> Result<Vec<u8
     }
 
     Ok(tlv8::encode(&[
-        Tlv { kind: 0x06, value: vec![0x06] },
-        Tlv { kind: TLV_ENCRYPTED_DATA, value: encrypted_response },
+        Tlv {
+            kind: 0x06,
+            value: vec![0x06],
+        },
+        Tlv {
+            kind: TLV_ENCRYPTED_DATA,
+            value: encrypted_response,
+        },
     ]))
 }
 
@@ -276,7 +323,9 @@ fn derive_key(ikm: &[u8], salt: &[u8], info: &[u8]) -> Result<[u8; 32], String> 
 
 fn unique_field(fields: &[Tlv], kind: u8) -> Result<&[u8], String> {
     let mut matching = fields.iter().filter(|field| field.kind == kind);
-    let value = matching.next().ok_or_else(|| format!("Pair-Setup M5 is missing TLV {kind}"))?;
+    let value = matching
+        .next()
+        .ok_or_else(|| format!("Pair-Setup M5 is missing TLV {kind}"))?;
     if matching.next().is_some() {
         return Err(format!("Pair-Setup M5 contains duplicate TLV {kind}"));
     }
@@ -285,7 +334,7 @@ fn unique_field(fields: &[Tlv], kind: u8) -> Result<&[u8], String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{derive_key, handle_m5, NONCE_M5, NONCE_M6};
+    use super::{NONCE_M5, NONCE_M6, derive_key, handle_m5};
     use crate::airplay::tlv8::{self, Tlv};
     use chacha20poly1305::aead::{Aead, KeyInit};
     use chacha20poly1305::{ChaCha20Poly1305, Nonce};
@@ -302,46 +351,87 @@ mod tests {
             &session_key,
             b"Pair-Setup-Controller-Sign-Salt",
             b"Pair-Setup-Controller-Sign-Info",
-        ).unwrap();
+        )
+        .unwrap();
         let mut signed = controller_x.to_vec();
         signed.extend_from_slice(controller_id);
         signed.extend_from_slice(&controller_public_key);
         let signature = controller.sign(&signed);
         let inner = tlv8::encode(&[
-            Tlv { kind: 0x01, value: controller_id.to_vec() },
-            Tlv { kind: 0x03, value: controller_public_key.to_vec() },
-            Tlv { kind: 0x0a, value: signature.to_bytes().to_vec() },
+            Tlv {
+                kind: 0x01,
+                value: controller_id.to_vec(),
+            },
+            Tlv {
+                kind: 0x03,
+                value: controller_public_key.to_vec(),
+            },
+            Tlv {
+                kind: 0x0a,
+                value: signature.to_bytes().to_vec(),
+            },
         ]);
         let key = derive_key(
             &session_key,
             b"Pair-Setup-Encrypt-Salt",
             b"Pair-Setup-Encrypt-Info",
-        ).unwrap();
+        )
+        .unwrap();
         let cipher = ChaCha20Poly1305::new_from_slice(&key).unwrap();
-        let encrypted = cipher.encrypt(Nonce::from_slice(NONCE_M5), inner.as_ref()).unwrap();
+        let encrypted = cipher
+            .encrypt(Nonce::from_slice(NONCE_M5), inner.as_ref())
+            .unwrap();
         let response = handle_m5(&session_key, &encrypted).expect("valid M5");
 
         let fields = tlv8::decode(&response).unwrap();
-        assert_eq!(fields.iter().find(|field| field.kind == 0x06).unwrap().value, [0x06]);
-        let encrypted_m6 = &fields.iter().find(|field| field.kind == 0x05).unwrap().value;
-        let plaintext = cipher.decrypt(Nonce::from_slice(NONCE_M6), encrypted_m6.as_ref()).unwrap();
+        assert_eq!(
+            fields
+                .iter()
+                .find(|field| field.kind == 0x06)
+                .unwrap()
+                .value,
+            [0x06]
+        );
+        let encrypted_m6 = &fields
+            .iter()
+            .find(|field| field.kind == 0x05)
+            .unwrap()
+            .value;
+        let plaintext = cipher
+            .decrypt(Nonce::from_slice(NONCE_M6), encrypted_m6.as_ref())
+            .unwrap();
         let m6 = tlv8::decode(&plaintext).unwrap();
-        let accessory_id = m6.iter().find(|field| field.kind == 0x01).unwrap().value.clone();
-        let accessory_key: [u8; 32] = m6.iter().find(|field| field.kind == 0x03).unwrap().value.as_slice().try_into().unwrap();
+        let accessory_id = m6
+            .iter()
+            .find(|field| field.kind == 0x01)
+            .unwrap()
+            .value
+            .clone();
+        let accessory_key: [u8; 32] = m6
+            .iter()
+            .find(|field| field.kind == 0x03)
+            .unwrap()
+            .value
+            .as_slice()
+            .try_into()
+            .unwrap();
         let accessory_signature = &m6.iter().find(|field| field.kind == 0x0a).unwrap().value;
         let accessory_x = derive_key(
             &session_key,
             b"Pair-Setup-Accessory-Sign-Salt",
             b"Pair-Setup-Accessory-Sign-Info",
-        ).unwrap();
+        )
+        .unwrap();
         let mut accessory_signed = accessory_x.to_vec();
         accessory_signed.extend_from_slice(&accessory_id);
         accessory_signed.extend_from_slice(&accessory_key);
         let verifying_key = VerifyingKey::from_bytes(&accessory_key).unwrap();
-        verifying_key.verify(
-            &accessory_signed,
-            &ed25519_dalek::Signature::from_slice(accessory_signature).unwrap(),
-        ).unwrap();
+        verifying_key
+            .verify(
+                &accessory_signed,
+                &ed25519_dalek::Signature::from_slice(accessory_signature).unwrap(),
+            )
+            .unwrap();
     }
 
     #[test]

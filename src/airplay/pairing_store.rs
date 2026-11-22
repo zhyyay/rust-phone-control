@@ -2,8 +2,8 @@
 
 use std::fs::{self, OpenOptions};
 use std::io::{self, Read, Write};
-use std::path::{Path, PathBuf};
 use std::os::windows::ffi::OsStrExt;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -32,10 +32,14 @@ impl StoredPairingState {
             return Err(invalid_data("unsupported AirPlay pairing store version"));
         }
         if self.accessory_identifier.is_empty() || self.accessory_identifier.len() > 64 {
-            return Err(invalid_data("invalid accessory identifier in pairing store"));
+            return Err(invalid_data(
+                "invalid accessory identifier in pairing store",
+            ));
         }
         if self.accessory_secret_key.len() != 32 {
-            return Err(invalid_data("invalid accessory secret key in pairing store"));
+            return Err(invalid_data(
+                "invalid accessory secret key in pairing store",
+            ));
         }
         if self.controllers.len() > 1024 {
             return Err(invalid_data("too many paired controllers in pairing store"));
@@ -51,7 +55,9 @@ impl StoredPairingState {
                 .iter()
                 .any(|previous| previous.identifier == controller.identifier)
             {
-                return Err(invalid_data("duplicate controller identifier in pairing store"));
+                return Err(invalid_data(
+                    "duplicate controller identifier in pairing store",
+                ));
             }
         }
         Ok(())
@@ -70,7 +76,9 @@ pub fn load() -> io::Result<Option<StoredPairingState>> {
 
     let length = file.metadata()?.len();
     if length == 0 || length > MAX_FILE_BYTES {
-        return Err(invalid_data("AirPlay pairing store has an invalid file size"));
+        return Err(invalid_data(
+            "AirPlay pairing store has an invalid file size",
+        ));
     }
 
     let mut encrypted = Vec::with_capacity(length as usize);
@@ -91,8 +99,9 @@ pub fn save(state: &StoredPairingState) -> io::Result<()> {
         .ok_or_else(|| invalid_data("AirPlay pairing store has no parent directory"))?;
     fs::create_dir_all(directory)?;
 
-    let plaintext = serde_json::to_vec(state)
-        .map_err(|error| invalid_data(format!("cannot serialize AirPlay pairing store: {error}")))?;
+    let plaintext = serde_json::to_vec(state).map_err(|error| {
+        invalid_data(format!("cannot serialize AirPlay pairing store: {error}"))
+    })?;
     let encrypted = crate::platform::windows::dpapi::protect(&plaintext)?;
 
     let temp_path = temporary_path(&path);
@@ -129,7 +138,11 @@ fn temporary_path(path: &Path) -> PathBuf {
 
 fn replace_file(source: &Path, destination: &Path) -> io::Result<()> {
     let source: Vec<u16> = source.as_os_str().encode_wide().chain(Some(0)).collect();
-    let destination: Vec<u16> = destination.as_os_str().encode_wide().chain(Some(0)).collect();
+    let destination: Vec<u16> = destination
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect();
 
     // SAFETY: both paths are valid, NUL-terminated UTF-16 strings.
     let success = unsafe {

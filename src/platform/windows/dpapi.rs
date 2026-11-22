@@ -46,7 +46,10 @@ const CRYPTPROTECT_UI_FORBIDDEN: u32 = 0x1;
 /// Protect bytes using the current Windows user's DPAPI master keys.
 pub fn protect(plaintext: &[u8]) -> io::Result<Vec<u8>> {
     let input = input_blob(plaintext)?;
-    let mut output = DataBlob { size: 0, data: null_mut() };
+    let mut output = DataBlob {
+        size: 0,
+        data: null_mut(),
+    };
 
     // SAFETY: input points to a valid buffer for the duration of the call;
     // DPAPI allocates output memory that is released with LocalFree below.
@@ -71,7 +74,10 @@ pub fn protect(plaintext: &[u8]) -> io::Result<Vec<u8>> {
 /// Decrypt bytes previously protected for the current Windows user.
 pub fn unprotect(ciphertext: &[u8]) -> io::Result<Vec<u8>> {
     let input = input_blob(ciphertext)?;
-    let mut output = DataBlob { size: 0, data: null_mut() };
+    let mut output = DataBlob {
+        size: 0,
+        data: null_mut(),
+    };
 
     // SAFETY: input points to a valid buffer for the duration of the call;
     // DPAPI allocates output memory that is released with LocalFree below.

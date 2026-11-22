@@ -9,7 +9,9 @@ use std::net::TcpStream;
 use std::time::Duration;
 
 use super::{
-    config, pair_setup, pair_verify::{self, PairVerifySession}, pairing, plist,
+    config, pair_setup,
+    pair_verify::{self, PairVerifySession},
+    pairing, plist,
     srp::SrpServer,
     tlv8::{self, Tlv},
 };
@@ -123,17 +125,15 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
                 }
             }
             ("POST", "/pair-verify", "RTSP/1.0") => {
-                let response_body = match handle_pair_verify(
-                    &request.body,
-                    &mut pair_verify_session,
-                ) {
-                    Ok(body) => body,
-                    Err(error) => {
-                        tracing::warn!(%error, "Pair-Verify exchange rejected");
-                        pair_verify_session = None;
-                        pair_verify::error_response()
-                    }
-                };
+                let response_body =
+                    match handle_pair_verify(&request.body, &mut pair_verify_session) {
+                        Ok(body) => body,
+                        Err(error) => {
+                            tracing::warn!(%error, "Pair-Verify exchange rejected");
+                            pair_verify_session = None;
+                            pair_verify::error_response()
+                        }
+                    };
                 let header = format!(
                     "RTSP/1.0 200 OK\r\nCSeq: {}\r\nServer: RustPhoneControl/0.1\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\n\r\n",
                     request.cseq,
@@ -437,20 +437,34 @@ fn handle_pair_setup(
             if encrypted_data.len() != 1 {
                 *session_key = None;
                 return Ok(tlv8::encode(&[
-                    Tlv { kind: 0x06, value: vec![0x06] },
-                    Tlv { kind: 0x07, value: vec![0x02] },
+                    Tlv {
+                        kind: 0x06,
+                        value: vec![0x06],
+                    },
+                    Tlv {
+                        kind: 0x07,
+                        value: vec![0x02],
+                    },
                 ]));
             }
             let key = session_key.take().ok_or_else(|| {
-                PairSetupFailure::bad_request("Pair-Setup M5 received without a verified M3 exchange")
+                PairSetupFailure::bad_request(
+                    "Pair-Setup M5 received without a verified M3 exchange",
+                )
             })?;
             match pair_setup::handle_m5(&key, &encrypted_data[0].value) {
                 Ok(response) => Ok(response),
                 Err(error) => {
                     tracing::warn!(%error, "Pair-Setup M5 identity exchange rejected");
                     Ok(tlv8::encode(&[
-                        Tlv { kind: 0x06, value: vec![0x06] },
-                        Tlv { kind: 0x07, value: vec![0x02] },
+                        Tlv {
+                            kind: 0x06,
+                            value: vec![0x06],
+                        },
+                        Tlv {
+                            kind: 0x07,
+                            value: vec![0x02],
+                        },
                     ]))
                 }
             }
@@ -506,7 +520,9 @@ fn handle_pair_verify(
 ) -> Result<Vec<u8>, String> {
     let fields = tlv8::decode(body).map_err(|error| error.to_string())?;
     let mut states = fields.iter().filter(|field| field.kind == 0x06);
-    let state = states.next().ok_or_else(|| "Pair-Verify request is missing State".to_owned())?;
+    let state = states
+        .next()
+        .ok_or_else(|| "Pair-Verify request is missing State".to_owned())?;
     if states.next().is_some() || state.value.len() != 1 {
         return Err("Pair-Verify request has an invalid State field".into());
     }
@@ -521,7 +537,8 @@ fn handle_pair_verify(
             Ok(response)
         }
         3 => {
-            let current = session.take()
+            let current = session
+                .take()
                 .ok_or_else(|| "Pair-Verify M3 received without M1".to_owned())?;
             current.finish(body)
         }
@@ -531,8 +548,14 @@ fn handle_pair_verify(
 
 fn pair_verify_error_response() -> Vec<u8> {
     tlv8::encode(&[
-        Tlv { kind: 0x06, value: vec![4] },
-        Tlv { kind: 0x07, value: vec![2] },
+        Tlv {
+            kind: 0x06,
+            value: vec![4],
+        },
+        Tlv {
+            kind: 0x07,
+            value: vec![2],
+        },
     ])
 }
 
@@ -625,10 +648,7 @@ mod tests {
             headers: vec![("transport".into(), "RTP/AVP/UDP;unicast".into())],
             body: Vec::new(),
         };
-        assert_eq!(
-            request.header("Transport"),
-            Some("RTP/AVP/UDP;unicast")
-        );
+        assert_eq!(request.header("Transport"), Some("RTP/AVP/UDP;unicast"));
     }
 
     #[test]
