@@ -317,6 +317,7 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
     let mut pair_setup_srp: Option<SrpServer> = None;
     let mut pair_setup_session_key: Option<[u8; 64]> = None;
     let mut pair_verify_session: Option<PairVerifySession> = None;
+    let mut pair_verify_shared_secret: Option<[u8; 32]> = None;
     let mut fairplay_session = FairPlaySession::new();
     let mut event_channel: Option<EventChannel> = None;
     let mut timing_client: Option<TimingClient> = None;
@@ -434,10 +435,15 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
             ("POST", "/pair-verify", "RTSP/1.0") => {
                 let response_body =
                     match handle_pair_verify(&request.body, &mut pair_verify_session) {
-                        Ok(body) => body,
+                        Ok((body, Some(shared_secret))) => {
+                            pair_verify_shared_secret = Some(shared_secret);
+                            body
+                        }
+                        Ok((body, None)) => body,
                         Err(error) => {
                             tracing::warn!(%error, "Pair-Verify exchange rejected");
                             pair_verify_session = None;
+                            pair_verify_shared_secret = None;
                             pair_verify::error_response()
                         }
                     };
@@ -479,6 +485,7 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
                     &mut event_channel,
                     &mut timing_client,
                     &mut media_receiver,
+                    pair_verify_shared_secret.as_ref(),
                 ) {
                     Ok(body) => write_binary_plist_response(&mut stream, &request.cseq, &body)?,
                     Err((status, reason)) => {
@@ -723,6 +730,7 @@ fn handle_setup_request(
     event_channel: &mut Option<EventChannel>,
     timing_client: &mut Option<TimingClient>,
     media_receiver: &mut Option<MediaSession>,
+    pair_verify_shared_secret: Option<&[u8; 32]>,
 ) -> Result<Vec<u8>, (u16, String)> {
     let setup = setup::parse_setup_request(body).map_err(|reason| (400, reason))?;
     match setup {
@@ -804,6 +812,7 @@ fn handle_setup_request(
             tracing::info!(
                 data_port,
                 stream_connection_id = ?stream.connection_id,
+                pair_verify_complete = pair_verify_shared_secret.is_some(),
                 "AirPlay screen-mirroring TCP media port negotiated"
             );
             plist::encode_binary(&Value::Dictionary(response)).map_err(|error| {
@@ -992,7 +1001,7 @@ fn handle_pair_setup(
 fn handle_pair_verify(
     body: &[u8],
     session: &mut Option<PairVerifySession>,
-) -> Result<Vec<u8>, String> {
+) -> Result<(Vec<u8>, Option<[u8; 32]>), String> {
     let fields = tlv8::decode(body).map_err(|error| error.to_string())?;
     let mut states = fields.iter().filter(|field| field.kind == 0x06);
     let state = states
@@ -1009,13 +1018,15 @@ fn handle_pair_verify(
             }
             let (new_session, response) = PairVerifySession::start(body)?;
             *session = Some(new_session);
-            Ok(response)
+            Ok((response, None))
         }
         3 => {
             let current = session
                 .take()
                 .ok_or_else(|| "Pair-Verify M3 received without M1".to_owned())?;
-            current.finish(body)
+            current
+                .finish(body)
+                .map(|completion| (completion.response, Some(completion.shared_secret)))
         }
         other => Err(format!("unsupported Pair-Verify state {other}")),
     }
