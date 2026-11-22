@@ -1,8 +1,8 @@
 //! Windows Media Foundation runtime lifecycle for the AirPlay decoder.
 //!
-//! This is deliberately only the platform-runtime layer. It does not claim to
-//! decode encrypted AirPlay packets: FairPlay decryption, access-unit parsing,
-//! decoder MFT negotiation, and frame delivery are separate pipeline stages.
+//! This module owns the Media Foundation runtime and a synchronous H.264 MFT
+//! input/output adapter. AirPlay packet decryption, depacketization, access-unit
+//! reconstruction, and delivery to the GPUI renderer remain separate stages.
 
 use std::fmt;
 
@@ -172,7 +172,8 @@ pub struct DecodedNv12Frame {
 /// This object is thread-local because Windows COM interfaces are not Send/Sync.
 /// Create and use it on the dedicated media worker thread.
 #[cfg(windows)]
-pub struct H264Decoder {
+pub struct H264Decoder<'runtime> {
+    _runtime: &'runtime MediaFoundationRuntime,
     transform: windows_062::Win32::Media::MediaFoundation::IMFTransform,
     input_stream: u32,
     output_stream: u32,
@@ -181,10 +182,10 @@ pub struct H264Decoder {
 }
 
 #[cfg(windows)]
-impl H264Decoder {
+impl<'runtime> H264Decoder<'runtime> {
     /// Activate a local synchronous H.264 decoder and negotiate NV12 output.
     pub fn new(
-        _runtime: &MediaFoundationRuntime,
+        runtime: &'runtime MediaFoundationRuntime,
         width: u32,
         height: u32,
     ) -> Result<Self, MediaFoundationError> {
@@ -295,6 +296,7 @@ impl H264Decoder {
         );
 
         Ok(Self {
+            _runtime: runtime,
             transform,
             input_stream,
             output_stream,
