@@ -286,7 +286,11 @@ mod tests {
 
         let result = server.verify_client(&client_a, &client_m1).unwrap();
         assert_eq!(result.session_key, client_key);
-        assert_eq!(result.proof, hash(&[&client_a, &client_m1, &client_key]));
+        let client_a_minimal = BigUint::from_bytes_be(&client_a).to_bytes_be();
+        assert_eq!(
+            result.proof,
+            hash(&[&client_a_minimal, &client_m1, &client_key])
+        );
     }
 
     #[test]
