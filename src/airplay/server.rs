@@ -54,6 +54,17 @@ fn run_listener(listener: TcpListener, stop: Arc<AtomicBool>) {
     while !stop.load(Ordering::Acquire) {
         match listener.accept() {
             Ok((stream, peer)) => {
+                if peer.ip().is_loopback() {
+                    tracing::warn!(
+                        %peer,
+                        "AirPlay control connection came from this PC, not the iPhone"
+                    );
+                } else {
+                    tracing::info!(
+                        %peer,
+                        "AirPlay control connection came from a LAN device"
+                    );
+                }
                 tracing::info!(%peer, "AirPlay TCP client accepted; starting handler");
                 match thread::Builder::new()
                     .name("airplay-client".to_owned())
