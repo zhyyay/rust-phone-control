@@ -29,7 +29,7 @@ mod setup;
 mod srp;
 mod tlv8;
 #[allow(dead_code)]
-mod timing;
+mod timing;\n#[allow(dead_code)]\nmod video;
 
 #[cfg(windows)]
 use std::sync::{Mutex, OnceLock};
