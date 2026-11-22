@@ -283,6 +283,11 @@ fn read_request(stream: &mut TcpStream, pending: &mut Vec<u8>) -> std::io::Resul
                     "invalid AirPlay Content-Length",
                 )
             })?;
+        } else if name.eq_ignore_ascii_case("Transfer-Encoding") {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "AirPlay Transfer-Encoding is not supported",
+            ));
         } else if name.eq_ignore_ascii_case("CSeq") {
             cseq = value.to_owned();
         } else if name.eq_ignore_ascii_case("Connection") {
@@ -594,7 +599,9 @@ fn txt_airplay_dictionary() -> Dictionary {
 #[cfg(test)]
 mod tests {
     use super::plist;
-    use super::{Request, build_info_response, find_header_end, handle_pair_setup, server_info_plist};
+    use super::{
+        Request, build_info_response, find_header_end, handle_pair_setup, server_info_plist,
+    };
     use crate::airplay::tlv8::{self, Tlv};
     use ::plist::{Dictionary, Value};
 
