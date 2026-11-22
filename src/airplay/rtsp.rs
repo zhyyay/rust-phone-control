@@ -33,6 +33,13 @@ const MEDIA_PACKET_QUEUE_CAPACITY: usize = 128;
 const MAX_MIRROR_PAYLOAD_BYTES: usize = 16 * 1024 * 1024;
 const MEDIA_ACCEPT_POLL_INTERVAL: Duration = Duration::from_millis(20);
 
+/// Per-stream cryptographic context. The shared secret is retained only in
+/// memory and is never formatted into logs or debug output.
+struct MirrorStreamContext {
+    connection_id: Option<u64>,
+    pair_verify_shared_secret: Option<[u8; 32]>,
+}
+
 /// Owns the negotiated TCP screen-mirroring listener and its bounded worker.
 /// The worker reads each 128-byte packet header and its declared payload. It
 /// does not decrypt, parse codec configuration, decode, or render video.
@@ -44,7 +51,10 @@ struct MediaSession {
 }
 
 impl MediaSession {
-    fn start(peer_ip: std::net::IpAddr) -> io::Result<Self> {
+    fn start(
+        peer_ip: std::net::IpAddr,
+        stream_context: MirrorStreamContext,
+    ) -> io::Result<Self> {
         use std::sync::Arc;
         use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -57,7 +67,7 @@ impl MediaSession {
 
         let worker = thread::Builder::new()
             .name("airplay-media-process".to_owned())
-            .spawn(move || process_media_packets(packets))?;
+            .spawn(move || process_media_packets(packets, stream_context))?;
         let accept_worker = match thread::Builder::new()
             .name("airplay-mirror-tcp".to_owned())
             .spawn(move || accept_mirror_connections(listener, worker_running, peer_ip, sender))
@@ -239,7 +249,15 @@ fn read_exact_while_running<R: Read>(
     Ok(offset == buffer.len())
 }
 
-fn process_media_packets(packets: Receiver<ReceivedMediaPacket>) {
+fn process_media_packets(
+    packets: Receiver<ReceivedMediaPacket>,
+    stream_context: MirrorStreamContext,
+) {
+    tracing::info!(
+        stream_connection_id = ?stream_context.connection_id,
+        pair_verify_complete = stream_context.pair_verify_shared_secret.is_some(),
+        "AirPlay media worker initialized with negotiated stream context"
+    );
     let mut received = 0u64;
     let mut processor = super::video::MirrorStreamProcessor::new();
     while let Ok(packet) = packets.recv() {
@@ -794,7 +812,14 @@ fn handle_setup_request(
                 ));
             }
 
-            let receiver = MediaSession::start(peer_ip).map_err(|error| {
+            let receiver = MediaSession::start(
+                peer_ip,
+                MirrorStreamContext {
+                    connection_id: stream.connection_id,
+                    pair_verify_shared_secret: pair_verify_shared_secret.copied(),
+                },
+            )
+            .map_err(|error| {
                 (
                     503,
                     format!("could not start video media pipeline: {error}"),
