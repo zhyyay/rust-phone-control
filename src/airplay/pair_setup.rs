@@ -2,11 +2,8 @@
 //!
 //! M5 authenticates the controller's Ed25519 long-term public key. M6 returns
 //! the accessory identity, signed with its Ed25519 key and encrypted with the
-//! SRP-derived Pair-Setup session key.
-//!
-//! The accessory identity is currently generated once per process. Durable,
-//! OS-protected identity and pairing storage must be added before relying on
-//! pairings across application restarts.
+//! SRP-derived Pair-Setup session key. Identity and controller keys are stored
+//! in a DPAPI-protected file on Windows.
 
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
@@ -45,16 +42,96 @@ impl AccessoryIdentity {
         Self { identifier, signing_key }
     }
 
+    fn from_parts(identifier: Vec<u8>, secret_key: &[u8]) -> Result<Self, String> {
+        if identifier.is_empty() || identifier.len() > 64 || secret_key.len() != 32 {
+            return Err("invalid persisted AirPlay accessory identity".into());
+        }
+        let secret: [u8; 32] = secret_key
+            .try_into()
+            .map_err(|_| "invalid persisted accessory secret key")?;
+        Ok(Self {
+            identifier,
+            signing_key: SigningKey::from_bytes(&secret),
+        })
+    }
+
     fn public_key(&self) -> [u8; 32] {
         self.signing_key.verifying_key().to_bytes()
     }
 }
 
-static ACCESSORY_IDENTITY: OnceLock<AccessoryIdentity> = OnceLock::new();
-static PAIRED_CONTROLLERS: OnceLock<Mutex<HashMap<Vec<u8>, [u8; 32]>>> = OnceLock::new();
+struct PairingState {
+    accessory: AccessoryIdentity,
+    controllers: HashMap<Vec<u8>, [u8; 32]>,
+}
 
-fn identity() -> &'static AccessoryIdentity {
-    ACCESSORY_IDENTITY.get_or_init(AccessoryIdentity::generate)
+impl PairingState {
+    fn load_or_create() -> Result<Self, String> {
+        #[cfg(windows)]
+        {
+            use super::pairing_store;
+            if let Some(stored) = pairing_store::load()
+                .map_err(|error| format!("cannot load protected AirPlay pairing store: {error}"))?
+            {
+                let accessory = AccessoryIdentity::from_parts(
+                    stored.accessory_identifier,
+                    &stored.accessory_secret_key,
+                )?;
+                let controllers = stored.controllers.into_iter().map(|entry| {
+                    let public_key: [u8; 32] = entry.public_key
+                        .try_into()
+                        .map_err(|_| "invalid persisted controller public key")?;
+                    Ok((entry.identifier, public_key))
+                }).collect::<Result<HashMap<_, _>, String>>()?;
+                return Ok(Self { accessory, controllers });
+            }
+
+            let state = Self {
+                accessory: AccessoryIdentity::generate(),
+                controllers: HashMap::new(),
+            };
+            state.persist().map_err(|error| format!("cannot create protected AirPlay pairing store: {error}"))?;
+            return Ok(state);
+        }
+
+        #[cfg(not(windows))]
+        {
+            Ok(Self {
+                accessory: AccessoryIdentity::generate(),
+                controllers: HashMap::new(),
+            })
+        }
+    }
+
+    fn persist(&self) -> Result<(), String> {
+        #[cfg(windows)]
+        {
+            use super::pairing_store::{self, StoredController, StoredPairingState};
+            let stored = StoredPairingState {
+                version: 1,
+                accessory_identifier: self.accessory.identifier.clone(),
+                accessory_secret_key: self.accessory.signing_key.to_bytes().to_vec(),
+                controllers: self.controllers.iter().map(|(identifier, public_key)| {
+                    StoredController {
+                        identifier: identifier.clone(),
+                        public_key: public_key.to_vec(),
+                    }
+                }).collect(),
+            };
+            pairing_store::save(&stored)
+                .map_err(|error| format!("cannot persist protected AirPlay pairing store: {error}"))?;
+        }
+        Ok(())
+    }
+}
+
+static PAIRING_STATE: OnceLock<Result<Mutex<PairingState>, String>> = OnceLock::new();
+
+fn pairing_state() -> Result<&'static Mutex<PairingState>, String> {
+    match PAIRING_STATE.get_or_init(|| PairingState::load_or_create().map(Mutex::new)) {
+        Ok(state) => Ok(state),
+        Err(error) => Err(error.clone()),
+    }
 }
 
 /// Process and validate an M5 encrypted exchange, then return the M6 TLV body.
@@ -106,7 +183,11 @@ pub fn handle_m5(session_key: &[u8; 64], encrypted_data: &[u8]) -> Result<Vec<u8
         .verify(&controller_info, &signature)
         .map_err(|_| "Pair-Setup controller signature verification failed")?;
 
-    let accessory = identity();
+    let state_lock = pairing_state()?;
+    let mut state = state_lock
+        .lock()
+        .map_err(|_| "AirPlay pairing state lock poisoned")?;
+    let accessory = &state.accessory;
     let accessory_public_key = accessory.public_key();
     let accessory_x = derive_key(
         session_key,
@@ -130,11 +211,19 @@ pub fn handle_m5(session_key: &[u8; 64], encrypted_data: &[u8]) -> Result<Vec<u8
         .encrypt(Nonce::from_slice(NONCE_M6), inner.as_ref())
         .map_err(|_| "Pair-Setup M6 encryption failed")?;
 
-    let pairings = PAIRED_CONTROLLERS.get_or_init(|| Mutex::new(HashMap::new()));
-    pairings
-        .lock()
-        .map_err(|_| "Pair-Setup pairing registry lock poisoned")?
-        .insert(controller_id.to_vec(), controller_public_key);
+    // Persist a candidate snapshot first. The registry is rolled back on failure.
+    let previous = state.controllers.insert(controller_id.to_vec(), controller_public_key);
+    if let Err(error) = state.persist() {
+        match previous {
+            Some(public_key) => {
+                state.controllers.insert(controller_id.to_vec(), public_key);
+            }
+            None => {
+                state.controllers.remove(controller_id);
+            }
+        }
+        return Err(error);
+    }
 
     Ok(tlv8::encode(&[
         Tlv { kind: 0x06, value: vec![0x06] },
