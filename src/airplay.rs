@@ -13,6 +13,7 @@ mod pairing;
 #[cfg(windows)]
 mod pairing_store;
 mod pair_setup;
+mod pair_verify;
 mod rtsp;
 mod srp;
 mod tlv8;
