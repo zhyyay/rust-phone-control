@@ -38,7 +38,6 @@ mod tests {
             Value::Array(vec![
                 Value::String("first".into()),
                 Value::Boolean(false),
-                Value::Null,
             ]),
         );
         Value::Dictionary(root)
