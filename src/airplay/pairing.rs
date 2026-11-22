@@ -116,7 +116,7 @@ pub fn is_valid_setup_code(code: &str) -> bool {
 
     let digits: Vec<u8> = bytes.iter().copied().filter(|byte| *byte != b'-').collect();
     let repeated = digits.iter().all(|digit| *digit == digits[0]);
-    !repeated && digits != b"12345678" && digits != b"87654321"
+    !repeated && digits.as_slice() != b"12345678" && digits.as_slice() != b"87654321"
 }
 
 fn unique_field<'a>(
