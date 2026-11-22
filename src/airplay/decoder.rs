@@ -576,7 +576,9 @@ impl fmt::Display for MediaFoundationError {
                 *hr as u32
             ),
             Self::FrameSizeOverflow => f.write_str("decoded frame allocation size overflowed"),
-            Self::FrameConversion(error) => write!(f, "decoded NV12 frame conversion failed: {error}"),
+            Self::FrameConversion(error) => {
+                write!(f, "decoded NV12 frame conversion failed: {error}")
+            }
             Self::ProcessOutputFailed(hr) => write!(
                 f,
                 "H.264 decoder output failed (HRESULT 0x{:08X})",
