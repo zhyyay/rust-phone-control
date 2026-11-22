@@ -8,7 +8,7 @@ use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::time::Duration;
 
-use super::{config, pair_setup, pairing, plist, srp::SrpServer, tlv8::{self, Tlv}};
+use super::{config, pair_setup, pair_verify::PairVerifySession, pairing, plist, srp::SrpServer, tlv8::{self, Tlv}};
 use ::plist::{Dictionary, Value};
 
 const MAX_HEADER_BYTES: usize = 16 * 1024;
@@ -31,6 +31,7 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
     let mut pending = Vec::with_capacity(READ_CHUNK_BYTES);
     let mut pair_setup_srp: Option<SrpServer> = None;
     let mut pair_setup_session_key: Option<[u8; 64]> = None;
+    let mut pair_verify_session: Option<PairVerifySession> = None;
     tracing::info!("AirPlay RTSP session started");
 
     loop {
@@ -105,6 +106,27 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
                         write_response(&mut stream, &response, error.status)?;
                     }
                 }
+            }
+            ("POST", "/pair-verify", "RTSP/1.0") => {
+                let response_body = match handle_pair_verify(
+                    &request.body,
+                    &mut pair_verify_session,
+                ) {
+                    Ok(body) => body,
+                    Err(error) => {
+                        tracing::warn!(%error, "Pair-Verify exchange rejected");
+                        pair_verify_session = None;
+                        pair_verify_error_response()
+                    }
+                };
+                let header = format!(
+                    "RTSP/1.0 200 OK\r\nCSeq: {}\r\nServer: RustPhoneControl/0.1\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\n\r\n",
+                    request.cseq,
+                    response_body.len()
+                );
+                stream.write_all(header.as_bytes())?;
+                stream.write_all(&response_body)?;
+                stream.flush()?;
             }
             ("GET", "/info", "RTSP/1.0") | ("POST", "/info", "RTSP/1.0") => {
                 match build_info_response(&request.body) {
@@ -401,6 +423,43 @@ fn handle_pair_setup(
             "unsupported Pair-Setup state {other}"
         ))),
     }
+}
+
+/// Handle one Pair-Verify state transition on the current RTSP connection.
+fn handle_pair_verify(
+    body: &[u8],
+    session: &mut Option<PairVerifySession>,
+) -> Result<Vec<u8>, String> {
+    let fields = tlv8::decode(body).map_err(|error| error.to_string())?;
+    let mut states = fields.iter().filter(|field| field.kind == 0x06);
+    let state = states.next().ok_or_else(|| "Pair-Verify request is missing State".to_owned())?;
+    if states.next().is_some() || state.value.len() != 1 {
+        return Err("Pair-Verify request has an invalid State field".into());
+    }
+
+    match state.value[0] {
+        1 => {
+            if session.is_some() {
+                return Err("Pair-Verify M1 received while another exchange is active".into());
+            }
+            let (new_session, response) = PairVerifySession::start(body)?;
+            *session = Some(new_session);
+            Ok(response)
+        }
+        3 => {
+            let current = session.take()
+                .ok_or_else(|| "Pair-Verify M3 received without M1".to_owned())?;
+            current.finish(body)
+        }
+        other => Err(format!("unsupported Pair-Verify state {other}")),
+    }
+}
+
+fn pair_verify_error_response() -> Vec<u8> {
+    tlv8::encode(&[
+        Tlv { kind: 0x06, value: vec![4] },
+        Tlv { kind: 0x07, value: vec![2] },
+    ])
 }
 
 fn server_info_plist() -> String {
