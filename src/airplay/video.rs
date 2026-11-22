@@ -63,6 +63,7 @@ const MAX_ANNEX_B_ACCESS_UNIT_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EncryptedAccessUnitError {
+    MissingConfiguration,
     Crypto(super::mirror_crypto::MirrorCryptoError),
     Avc(AvcConfigError),
 }
@@ -70,6 +71,9 @@ pub enum EncryptedAccessUnitError {
 impl std::fmt::Display for EncryptedAccessUnitError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::MissingConfiguration => {
+                formatter.write_str("cannot decrypt video before receiving AVC configuration")
+            }
             Self::Crypto(error) => write!(formatter, "mirror payload decryption failed: {error}"),
             Self::Avc(error) => write!(formatter, "decrypted AVCC access unit is invalid: {error}"),
         }
@@ -303,6 +307,21 @@ impl MirrorStreamProcessor {
 
     pub fn configuration(&self) -> Option<&AvcConfiguration> {
         self.configuration.as_ref()
+    }
+
+    /// Decrypt one video payload using this stream's accepted AVC
+    /// configuration. The cipher is advanced only after configuration exists.
+    /// Call once per video packet, in receive order, with the stream's cipher.
+    pub fn decrypt_video_packet(
+        &self,
+        cipher: &mut super::mirror_crypto::MirrorStreamCipher,
+        encrypted_payload: &[u8],
+    ) -> Result<Vec<u8>, EncryptedAccessUnitError> {
+        let configuration = self
+            .configuration
+            .as_ref()
+            .ok_or(EncryptedAccessUnitError::MissingConfiguration)?;
+        decrypt_access_unit_to_annex_b(configuration, cipher, encrypted_payload)
     }
 
     pub fn process_packet(
@@ -857,6 +876,40 @@ mod tests {
         let mut decryptor = MirrorStreamCipher::new(&keys);
         let annex_b = decrypt_access_unit_to_annex_b(&configuration, &mut decryptor, &encrypted)
             .expect("decrypt and convert access unit");
+        assert_eq!(annex_b, [0, 0, 0, 1, 0x65, 0x88]);
+    }
+
+    #[test]
+    fn stream_processor_decrypts_video_only_after_codec_configuration() {
+        use super::super::media::ScreenMirrorPacketType;
+        use super::super::mirror_crypto::{MirrorStreamCipher, derive_mirror_stream_keys};
+
+        let keys = derive_mirror_stream_keys(&[0x31; 16], None, 42).unwrap();
+        let mut decryptor = MirrorStreamCipher::new(&keys);
+        let mut processor = MirrorStreamProcessor::new();
+
+        assert_eq!(
+            processor.decrypt_video_packet(&mut decryptor, &[0, 0, 0, 2, 0x65, 0x88]),
+            Err(EncryptedAccessUnitError::MissingConfiguration)
+        );
+
+        let avcc = [
+            0x01, 0x64, 0xc0, 0x28, 0xff, 0xe1, 0x00, 0x04, 0x67, 0x64, 0xc0, 0x28, 0x01, 0x00,
+            0x02, 0x68, 0xee,
+        ];
+        assert!(matches!(
+            processor.process_packet(ScreenMirrorPacketType::CodecConfiguration, &avcc),
+            MirrorPacketOutcome::CodecConfigurationUpdated { .. }
+        ));
+
+        let plaintext = [0, 0, 0, 2, 0x65, 0x88];
+        let mut encrypted = plaintext;
+        MirrorStreamCipher::new(&keys)
+            .decrypt_packet(&mut encrypted)
+            .expect("test encryption");
+        let annex_b = processor
+            .decrypt_video_packet(&mut decryptor, &encrypted)
+            .expect("configured stream decrypts");
         assert_eq!(annex_b, [0, 0, 0, 1, 0x65, 0x88]);
     }
 
