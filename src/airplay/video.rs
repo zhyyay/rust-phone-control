@@ -87,7 +87,9 @@ impl AvcConfiguration {
             if length == 0 {
                 return Err(AvcConfigError::EmptySps);
             }
-            let end = offset.checked_add(length).ok_or(AvcConfigError::SizeOverflow)?;
+            let end = offset
+                .checked_add(length)
+                .ok_or(AvcConfigError::SizeOverflow)?;
             if end > data.len() {
                 return Err(AvcConfigError::TruncatedSps);
             }
@@ -110,7 +112,9 @@ impl AvcConfiguration {
             if length == 0 {
                 return Err(AvcConfigError::EmptyPps);
             }
-            let end = offset.checked_add(length).ok_or(AvcConfigError::SizeOverflow)?;
+            let end = offset
+                .checked_add(length)
+                .ok_or(AvcConfigError::SizeOverflow)?;
             if end > data.len() {
                 return Err(AvcConfigError::TruncatedPps);
             }
@@ -147,7 +151,9 @@ impl AvcConfiguration {
                 if length == 0 {
                     return Err(AvcConfigError::EmptySps);
                 }
-                let end = offset.checked_add(length).ok_or(AvcConfigError::SizeOverflow)?;
+                let end = offset
+                    .checked_add(length)
+                    .ok_or(AvcConfigError::SizeOverflow)?;
                 if end > data.len() {
                     return Err(AvcConfigError::TruncatedSps);
                 }
@@ -201,7 +207,9 @@ impl AvcConfiguration {
             if length == 0 {
                 return Err(AvcConfigError::InvalidNalLength);
             }
-            let end = offset.checked_add(length).ok_or(AvcConfigError::SizeOverflow)?;
+            let end = offset
+                .checked_add(length)
+                .ok_or(AvcConfigError::SizeOverflow)?;
             if end > data.len() {
                 return Err(AvcConfigError::TruncatedNal);
             }
@@ -648,31 +656,41 @@ mod tests {
     fn parses_airplay_avcc_configuration_and_converts_access_unit() {
         // Captured-format avcC example: one SPS and one PPS.
         let config = [
-            0x01, 0x64, 0xc0, 0x28, 0xff, 0xe1, 0x00, 0x04, 0x67, 0x64, 0xc0, 0x28, 0x01,
-            0x00, 0x02, 0x68, 0xee,
+            0x01, 0x64, 0xc0, 0x28, 0xff, 0xe1, 0x00, 0x04, 0x67, 0x64, 0xc0, 0x28, 0x01, 0x00,
+            0x02, 0x68, 0xee,
         ];
         let parsed = AvcConfiguration::parse(&config).expect("valid avcC record");
         assert_eq!(parsed.profile, 0x64);
         assert_eq!(parsed.compatibility, 0xc0);
         assert_eq!(parsed.level, 0x28);
         assert_eq!(parsed.nal_length_size, 4);
-        assert_eq!(parsed.sequence_parameter_sets, vec![vec![0x67, 0x64, 0xc0, 0x28]]);
+        assert_eq!(
+            parsed.sequence_parameter_sets,
+            vec![vec![0x67, 0x64, 0xc0, 0x28]]
+        );
         assert_eq!(parsed.picture_parameter_sets, vec![vec![0x68, 0xee]]);
         assert_eq!(
             parsed.parameter_sets_annex_b(),
             vec![0, 0, 0, 1, 0x67, 0x64, 0xc0, 0x28, 0, 0, 0, 1, 0x68, 0xee]
         );
 
-        let avcc = [0x00, 0x00, 0x00, 0x02, 0x65, 0xaa, 0x00, 0x00, 0x00, 0x01, 0x41];
+        let avcc = [
+            0x00, 0x00, 0x00, 0x02, 0x65, 0xaa, 0x00, 0x00, 0x00, 0x01, 0x41,
+        ];
         assert_eq!(
-            parsed.access_unit_to_annex_b(&avcc).expect("valid AVCC unit"),
+            parsed
+                .access_unit_to_annex_b(&avcc)
+                .expect("valid AVCC unit"),
             vec![0, 0, 0, 1, 0x65, 0xaa, 0, 0, 0, 1, 0x41]
         );
     }
 
     #[test]
     fn rejects_malformed_avcc_configuration_and_access_units() {
-        assert_eq!(AvcConfiguration::parse(&[1, 2, 3]), Err(AvcConfigError::TooShort));
+        assert_eq!(
+            AvcConfiguration::parse(&[1, 2, 3]),
+            Err(AvcConfigError::TooShort)
+        );
         assert_eq!(
             AvcConfiguration::parse(&[2, 0, 0, 0, 0xff, 0xe1, 0, 0]),
             Err(AvcConfigError::UnsupportedVersion(2))
