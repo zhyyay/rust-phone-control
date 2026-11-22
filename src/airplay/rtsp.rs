@@ -884,6 +884,53 @@ mod tests {
     }
 
     #[test]
+    fn ntp_session_setup_returns_live_timing_port() {
+        use std::net::UdpSocket;
+        use std::time::Duration;
+
+        let sender = UdpSocket::bind("127.0.0.1:0").expect("bind fake timing sender");
+        sender
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .expect("set timing sender timeout");
+        let sender_port = sender.local_addr().expect("sender address").port();
+
+        let mut session = Dictionary::new();
+        session.insert("sessionUUID".into(), Value::String("ntp-test".into()));
+        session.insert("timingProtocol".into(), Value::String("NTP".into()));
+        session.insert("timingPort".into(), Value::Integer(sender_port.into()));
+        let body = plist::encode_binary(&Value::Dictionary(session)).expect("encode NTP setup");
+
+        let peer_ip = "127.0.0.1".parse().expect("loopback IP");
+        let mut event = None;
+        let mut timing = None;
+        let mut media = None;
+        let response = handle_setup_request(&body, peer_ip, &mut event, &mut timing, &mut media)
+            .expect("NTP session SETUP");
+        let value = plist::decode(&response).expect("decode NTP response");
+        let dictionary = value.as_dictionary().expect("NTP response dictionary");
+        let timing_port = dictionary
+            .get("timingPort")
+            .and_then(|value| match value {
+                Value::Integer(integer) => integer.as_unsigned(),
+                _ => None,
+            })
+            .expect("receiver timing port");
+        assert!(timing_port > 0);
+
+        let mut request = [0u8; 64];
+        let (length, peer) = sender.recv_from(&mut request).expect("receive NTP timing request");
+        assert_eq!(length, 32);
+        assert_eq!(&request[..2], &[0x80, 0xD2]);
+        assert_eq!(peer.port(), timing_port as u16);
+
+        let mut reply = [0u8; 32];
+        reply[0] = 0x80;
+        reply[1] = 0xD3;
+        reply[2..4].copy_from_slice(&request[2..4]);
+        sender.send_to(&reply, peer).expect("send NTP timing reply");
+    }
+
+    #[test]
     fn stream_setup_requires_session_setup_and_rejects_other_types() {
         let peer_ip = "127.0.0.1".parse().expect("loopback IP");
         let mut event = None;
