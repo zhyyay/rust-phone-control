@@ -482,6 +482,64 @@ impl<'runtime> H264Decoder<'runtime> {
     }
 }
 
+/// Maximum Annex-B access-unit size accepted by the decode pipeline.
+#[cfg(windows)]
+const MAX_DECODE_ACCESS_UNIT_BYTES: usize = 64 * 1024 * 1024;
+
+/// H.264 decode-to-frame pipeline for one mirror session.
+///
+/// Construct and use this value on the dedicated media worker thread. It
+/// accepts complete, already-decrypted Annex-B access units, decodes them via
+/// Media Foundation, converts output to BGRA, and publishes frames into the
+/// bounded latest-frame mailbox. It deliberately does not unwrap FairPlay
+/// keys or interpret encrypted AirPlay packets.
+#[cfg(windows)]
+pub struct H264FramePipeline<'runtime> {
+    decoder: H264Decoder<'runtime>,
+    frames: std::sync::Arc<crate::airplay::video::LatestFrameMailbox>,
+}
+
+#[cfg(windows)]
+impl<'runtime> H264FramePipeline<'runtime> {
+    /// Create the decoder pipeline for a negotiated H.264 stream.
+    pub fn new(
+        runtime: &'runtime MediaFoundationRuntime,
+        width: u32,
+        height: u32,
+        frames: std::sync::Arc<crate::airplay::video::LatestFrameMailbox>,
+    ) -> Result<Self, MediaFoundationError> {
+        let decoder = H264Decoder::new(runtime, width, height)?;
+        Ok(Self { decoder, frames })
+    }
+
+    /// Decode one complete, already-decrypted Annex-B access unit.
+    ///
+    /// Returns the number of output frames published. The mailbox retains
+    /// only the newest frame, so slow UI rendering cannot grow memory usage.
+    pub fn submit_access_unit(&mut self, access_unit: &[u8]) -> Result<usize, MediaFoundationError> {
+        if access_unit.len() > MAX_DECODE_ACCESS_UNIT_BYTES {
+            return Err(MediaFoundationError::InputTooLarge);
+        }
+
+        let decoded = self.decoder.submit_access_unit_and_drain_bgra(access_unit)?;
+        let mut published = 0usize;
+        for frame in decoded {
+            self.frames
+                .publish(frame)
+                .map_err(MediaFoundationError::FrameMailbox)?;
+            published = published.saturating_add(1);
+        }
+        Ok(published)
+    }
+
+    /// Discard any pending frame when this mirror session is ending.
+    pub fn clear_pending_frame(&self) -> Result<(), MediaFoundationError> {
+        self.frames
+            .clear()
+            .map_err(MediaFoundationError::FrameMailbox)
+    }
+}
+
 /// Errors from initializing the Windows media runtime and inspecting decoders.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MediaFoundationError {
@@ -503,6 +561,7 @@ pub enum MediaFoundationError {
     OutputInfoFailed(i32),
     FrameSizeOverflow,
     FrameConversion(crate::airplay::video::FrameConversionError),
+    FrameMailbox(crate::airplay::video::FrameMailboxError),
     ProcessOutputFailed(i32),
 }
 
@@ -577,6 +636,7 @@ impl fmt::Display for MediaFoundationError {
             ),
             Self::FrameSizeOverflow => f.write_str("decoded frame allocation size overflowed"),
             Self::FrameConversion(error) => write!(f, "decoded NV12 frame conversion failed: {error}"),
+            Self::FrameMailbox(error) => write!(f, "decoded-frame mailbox publish failed: {error}"),
             Self::ProcessOutputFailed(hr) => write!(
                 f,
                 "H.264 decoder output failed (HRESULT 0x{:08X})",
