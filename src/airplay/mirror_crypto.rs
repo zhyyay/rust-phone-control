@@ -212,7 +212,7 @@ mod tests {
             key: [0x11; AES_BLOCK_BYTES],
             iv: [0x22; AES_BLOCK_BYTES],
         };
-        let mut whole = vec![0u8; 48];
+        let mut whole = vec![0u8; 63];
         let mut reference = MirrorStreamCipher::new(&material);
         reference.decrypt_packet(&mut whole).expect("reference stream");
 
@@ -223,7 +223,7 @@ mod tests {
         split.decrypt_packet(&mut second).expect("second packet");
 
         assert_eq!(&whole[..17], first.as_slice());
-        assert_eq!(&whole[32..], second.as_slice());
+        assert_eq!(&whole[32..63], second.as_slice());
     }
 
     #[test]
