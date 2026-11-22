@@ -350,6 +350,8 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
     let mut pair_verify_session: Option<PairVerifySession> = None;
     let mut pair_verify_shared_secret: Option<[u8; 32]> = None;
     let mut fairplay_session = FairPlaySession::new();
+    let mut fairplay_ekey: Option<[u8; 72]> = None;
+    let mut fairplay_eiv: Option<[u8; 16]> = None;
     let mut event_channel: Option<EventChannel> = None;
     let mut timing_client: Option<TimingClient> = None;
     let mut media_receiver: Option<MediaSession> = None;
@@ -519,6 +521,8 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
                     &mut event_channel,
                     &mut timing_client,
                     &mut media_receiver,
+                    &mut fairplay_ekey,
+                    &mut fairplay_eiv,
                     pair_verify_shared_secret.as_ref(),
                 ) {
                     Ok(body) => write_binary_plist_response(&mut stream, &request.cseq, &body)?,
@@ -556,6 +560,8 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
                 write_response(&mut stream, &response, 200)?;
             }
             ("TEARDOWN", _, "RTSP/1.0") => {
+                fairplay_ekey = None;
+                fairplay_eiv = None;
                 media_receiver = None;
                 timing_client = None;
                 event_channel = None;
@@ -764,6 +770,8 @@ fn handle_setup_request(
     event_channel: &mut Option<EventChannel>,
     timing_client: &mut Option<TimingClient>,
     media_receiver: &mut Option<MediaSession>,
+    fairplay_ekey: &mut Option<[u8; 72]>,
+    fairplay_eiv: &mut Option<[u8; 16]>,
     pair_verify_shared_secret: Option<&[u8; 32]>,
 ) -> Result<Vec<u8>, (u16, String)> {
     let setup = setup::parse_setup_request(body).map_err(|reason| (400, reason))?;
@@ -791,6 +799,16 @@ fn handle_setup_request(
                 None => None,
             };
             let timing_port = new_timing_client.as_ref().map_or(0, TimingClient::port);
+
+            // Retain only validated key material for this RTSP session. The
+            // wrapped key is not a usable AES key until FairPlay is completed.
+            *fairplay_ekey = session.fairplay_ekey;
+            *fairplay_eiv = session.fairplay_eiv;
+            tracing::info!(
+                has_fairplay_ekey = fairplay_ekey.is_some(),
+                has_fairplay_eiv = fairplay_eiv.is_some(),
+                "AirPlay SETUP FairPlay key material parsed"
+            );
 
             let mut response = Dictionary::new();
             response.insert("eventPort".into(), Value::Integer(event_port.into()));
