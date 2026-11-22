@@ -151,7 +151,8 @@ impl MediaFoundationRuntime {
 /// Errors from initializing the Windows media runtime and inspecting decoders.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MediaFoundationError {
-    StartupFailed(i32),\n    EnumerationFailed(i32),
+    StartupFailed(i32),
+    EnumerationFailed(i32),
 }
 
 impl fmt::Display for MediaFoundationError {
@@ -159,6 +160,9 @@ impl fmt::Display for MediaFoundationError {
         match self {
             Self::StartupFailed(hr) => {
                 write!(f, "Media Foundation startup failed (HRESULT 0x{:08X})", *hr as u32)
+            }
+            Self::EnumerationFailed(hr) => {
+                write!(f, "Media Foundation decoder enumeration failed (HRESULT 0x{:08X})", *hr as u32)
             }
         }
     }
