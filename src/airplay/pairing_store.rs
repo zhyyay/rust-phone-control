@@ -75,7 +75,7 @@ pub fn load() -> io::Result<Option<StoredPairingState>> {
 
     let mut encrypted = Vec::with_capacity(length as usize);
     file.read_to_end(&mut encrypted)?;
-    let plaintext = super::dpapi::unprotect(&encrypted)?;
+    let plaintext = crate::platform::windows::dpapi::unprotect(&encrypted)?;
     let state: StoredPairingState = serde_json::from_slice(&plaintext)
         .map_err(|error| invalid_data(format!("cannot parse AirPlay pairing store: {error}")))?;
     state.validate()?;
@@ -93,7 +93,7 @@ pub fn save(state: &StoredPairingState) -> io::Result<()> {
 
     let plaintext = serde_json::to_vec(state)
         .map_err(|error| invalid_data(format!("cannot serialize AirPlay pairing store: {error}")))?;
-    let encrypted = super::dpapi::protect(&plaintext)?;
+    let encrypted = crate::platform::windows::dpapi::protect(&plaintext)?;
 
     let temp_path = temporary_path(&path);
     let mut file = OpenOptions::new()
