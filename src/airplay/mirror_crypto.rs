@@ -201,7 +201,7 @@ mod tests {
             iv: hex("f0f1f2f3f4f5f6f7f8f9fafbfcfdfeff"),
         };
         let mut cipher = MirrorStreamCipher::new(&material);
-        let mut payload = hex("6bc1bee22e409f96e93d7e117393172a");
+        let mut payload: [u8; AES_BLOCK_BYTES] =\n            hex("6bc1bee22e409f96e93d7e117393172a");
         cipher.decrypt_packet(&mut payload).expect("decrypt block");
         assert_eq!(payload, hex("874d6191b620e3261bef6864990db6ce"));
     }
