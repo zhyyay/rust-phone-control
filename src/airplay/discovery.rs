@@ -36,7 +36,7 @@ impl Advertisement {
                             );
                         }
                         DaemonEvent::Respond(interface) => {
-                            tracing::debug!(
+                            tracing::info!(
                                 interface = %interface,
                                 "mDNS query response sent"
                             );
