@@ -403,7 +403,7 @@ fn start_airplay_status() -> String {
     match crate::airplay::start() {
         Ok(()) => {
             tracing::info!("AirPlay start button completed successfully");
-            "Running · TCP 7000 · mDNS published".to_owned()
+            "Running · TCP 7000 · AirPlay + RAOP discovery announced".to_owned()
         }
         Err(error) => {
             let message = format!("{error:#}");
