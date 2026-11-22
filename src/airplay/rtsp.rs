@@ -43,7 +43,9 @@ impl MediaSession {
     fn start(peer_ip: std::net::IpAddr) -> io::Result<Self> {
         let (sender, packets) = mpsc::sync_channel(MEDIA_PACKET_QUEUE_CAPACITY);
         let receiver = UdpMediaReceiver::bind_with_sender(
-            "0.0.0.0:0".parse().expect("static IPv4 wildcard address is valid"),
+            "0.0.0.0:0"
+                .parse()
+                .expect("static IPv4 wildcard address is valid"),
             peer_ip,
             sender,
         )?;
@@ -588,8 +590,12 @@ fn handle_setup_request(
                 ));
             }
 
-            let receiver = MediaSession::start(peer_ip)
-                .map_err(|error| (503, format!("could not start video media pipeline: {error}")))?;
+            let receiver = MediaSession::start(peer_ip).map_err(|error| {
+                (
+                    503,
+                    format!("could not start video media pipeline: {error}"),
+                )
+            })?;
             let data_port = receiver.port();
 
             let mut stream_response = Dictionary::new();

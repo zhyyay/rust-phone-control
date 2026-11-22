@@ -357,9 +357,7 @@ impl UdpMediaReceiver {
 
         let worker = thread::Builder::new()
             .name("airplay-udp-media".to_owned())
-            .spawn(move || {
-                receive_media_loop(socket, worker_running, expected_peer_ip, sender)
-            })?;
+            .spawn(move || receive_media_loop(socket, worker_running, expected_peer_ip, sender))?;
 
         tracing::info!(%local_addr, "AirPlay UDP media receiver bound");
         Ok(Self {
@@ -532,13 +530,20 @@ mod receiver_tests {
         datagram[4..6].copy_from_slice(&0u16.to_le_bytes());
         datagram[8..16].copy_from_slice(&42u64.to_le_bytes());
         datagram[SCREEN_MIRROR_HEADER_SIZE..].copy_from_slice(&[0xAA, 0xBB, 0xCC]);
-        socket.send_to(&datagram, receiver_handle.local_addr()).expect("send datagram");
+        socket
+            .send_to(&datagram, receiver_handle.local_addr())
+            .expect("send datagram");
 
-        let packet = receiver.recv_timeout(Duration::from_secs(2)).expect("packet forwarded");
+        let packet = receiver
+            .recv_timeout(Duration::from_secs(2))
+            .expect("packet forwarded");
         assert_eq!(packet.packet_type, ScreenMirrorPacketType::Video);
         assert_eq!(packet.timestamp, 42);
         assert_eq!(packet.payload, vec![0xAA, 0xBB, 0xCC]);
-        assert_eq!(packet.peer_addr.ip(), "127.0.0.1".parse::<IpAddr>().unwrap());
+        assert_eq!(
+            packet.peer_addr.ip(),
+            "127.0.0.1".parse::<IpAddr>().unwrap()
+        );
     }
 
     #[test]
@@ -560,10 +565,14 @@ mod receiver_tests {
         datagram[4..6].copy_from_slice(&0u16.to_le_bytes());
         for value in [1u8, 2u8] {
             datagram[SCREEN_MIRROR_HEADER_SIZE] = value;
-            socket.send_to(&datagram, receiver_handle.local_addr()).expect("send datagram");
+            socket
+                .send_to(&datagram, receiver_handle.local_addr())
+                .expect("send datagram");
         }
 
-        let first = receiver.recv_timeout(Duration::from_secs(2)).expect("first packet forwarded");
+        let first = receiver
+            .recv_timeout(Duration::from_secs(2))
+            .expect("first packet forwarded");
         assert_eq!(first.payload, vec![1]);
         receiver_handle.stop();
         assert!(receiver.try_recv().is_err());

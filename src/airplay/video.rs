@@ -4,7 +4,10 @@
 //! It intentionally does not implement FairPlay decryption or video decoding.
 
 use std::collections::VecDeque;
-use std::sync::{Arc, Mutex, atomic::{AtomicU64, Ordering}};
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicU64, Ordering},
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VideoCodec {
@@ -302,7 +305,9 @@ impl LatestFrameMailbox {
     /// Take the newest frame. A frame is returned to at most one consumer.
     pub fn take_latest(&self) -> Result<Option<FrameSnapshot>, FrameMailboxError> {
         let mut slot = self.frame.lock().map_err(|_| FrameMailboxError::Poisoned)?;
-        Ok(slot.take().map(|(sequence, frame)| FrameSnapshot { sequence, frame }))
+        Ok(slot
+            .take()
+            .map(|(sequence, frame)| FrameSnapshot { sequence, frame }))
     }
 
     /// Discard any pending frame, for example when a mirror session stops.
@@ -546,8 +551,18 @@ mod tests {
     #[test]
     fn latest_frame_mailbox_replaces_stale_frames() {
         let mailbox = LatestFrameMailbox::new();
-        let first = BgraFrame { width: 1, height: 1, stride: 4, data: vec![1, 2, 3, 4] };
-        let second = BgraFrame { width: 1, height: 1, stride: 4, data: vec![5, 6, 7, 8] };
+        let first = BgraFrame {
+            width: 1,
+            height: 1,
+            stride: 4,
+            data: vec![1, 2, 3, 4],
+        };
+        let second = BgraFrame {
+            width: 1,
+            height: 1,
+            stride: 4,
+            data: vec![5, 6, 7, 8],
+        };
 
         assert_eq!(mailbox.publish(first).unwrap(), 1);
         assert_eq!(mailbox.publish(second).unwrap(), 2);
@@ -561,7 +576,14 @@ mod tests {
     #[test]
     fn latest_frame_mailbox_clear_discards_pending_frame() {
         let mailbox = LatestFrameMailbox::new();
-        mailbox.publish(BgraFrame { width: 1, height: 1, stride: 4, data: vec![0; 4] }).unwrap();
+        mailbox
+            .publish(BgraFrame {
+                width: 1,
+                height: 1,
+                stride: 4,
+                data: vec![0; 4],
+            })
+            .unwrap();
         assert!(mailbox.has_pending_frame().unwrap());
         mailbox.clear().unwrap();
         assert!(!mailbox.has_pending_frame().unwrap());
