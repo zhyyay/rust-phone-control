@@ -534,6 +534,44 @@ mod tests {
         assert_eq!(error.status, 400);
     }
 
+
+    #[test]
+    fn pair_setup_rejects_invalid_setup_code_format() {
+        let request = tlv8::encode(&[
+            Tlv { kind: 0x06, value: vec![0x01] },
+            Tlv { kind: 0x00, value: vec![0x00] },
+        ]);
+        let mut srp = None;
+        let mut session_key = None;
+        let error = handle_pair_setup(&request, &mut srp, &mut session_key, Some("12345678"))
+            .expect_err("invalid code format must fail");
+        assert_eq!(error.status, 503);
+        assert!(srp.is_none());
+    }
+
+    #[test]
+    fn pair_setup_returns_authentication_error_for_bad_m3_proof() {
+        let m1 = tlv8::encode(&[
+            Tlv { kind: 0x06, value: vec![0x01] },
+            Tlv { kind: 0x00, value: vec![0x00] },
+        ]);
+        let m3 = tlv8::encode(&[
+            Tlv { kind: 0x06, value: vec![0x03] },
+            Tlv { kind: 0x03, value: vec![0x01] },
+            Tlv { kind: 0x04, value: vec![0x00; 64] },
+        ]);
+        let mut srp = None;
+        let mut session_key = None;
+        handle_pair_setup(&m1, &mut srp, &mut session_key, Some("123-45-678"))
+            .expect("M1 should create SRP challenge");
+        let response = handle_pair_setup(&m3, &mut srp, &mut session_key, Some("123-45-678"))
+            .expect("bad proof is represented as an M4 TLV error");
+        let fields = tlv8::decode(&response).expect("decode M4 error");
+        assert!(fields.iter().any(|field| field.kind == 0x06 && field.value == [0x04]));
+        assert!(fields.iter().any(|field| field.kind == 0x07 && field.value == [0x02]));
+        assert!(session_key.is_none());
+    }
+
     #[test]
     fn unsupported_info_qualifier_is_rejected() {
         let mut request = Dictionary::new();
