@@ -9,9 +9,10 @@ use std::net::TcpStream;
 use std::time::Duration;
 
 use super::{
-    config, pair_setup,
+    config, event::EventChannel, media::UdpMediaReceiver, pair_setup,
     pair_verify::{self, PairVerifySession},
     pairing, plist,
+    setup::{self, SetupRequest},
     srp::SrpServer,
     tlv8::{self, Tlv},
 };
@@ -48,6 +49,8 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
     let mut pair_setup_srp: Option<SrpServer> = None;
     let mut pair_setup_session_key: Option<[u8; 64]> = None;
     let mut pair_verify_session: Option<PairVerifySession> = None;
+    let mut event_channel: Option<EventChannel> = None;
+    let mut media_receiver: Option<UdpMediaReceiver> = None;
     tracing::info!("AirPlay RTSP session started");
 
     loop {
@@ -162,6 +165,33 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
                             request.cseq
                         );
                         write_response(&mut stream, &response, 400)?;
+                    }
+                }
+            }
+            ("SETUP", _, "RTSP/1.0") => {
+                match handle_setup_request(
+                    &request.body,
+                    &mut event_channel,
+                    &mut media_receiver,
+                ) {
+                    Ok(body) => write_binary_plist_response(
+                        &mut stream,
+                        &request.cseq,
+                        &body,
+                    )?,
+                    Err((status, reason)) => {
+                        tracing::warn!(status, %reason, "AirPlay SETUP request rejected");
+                        let reason_phrase = match status {
+                            455 => "Method Not Valid in This State",
+                            501 => "Not Implemented",
+                            503 => "Service Unavailable",
+                            _ => "Bad Request",
+                        };
+                        let response = format!(
+                            "RTSP/1.0 {status} {reason_phrase}\r\nCSeq: {}\r\nServer: RustPhoneControl/0.1\r\nContent-Length: 0\r\n\r\n",
+                            request.cseq
+                        );
+                        write_response(&mut stream, &response, status)?;
                     }
                 }
             }
@@ -339,6 +369,95 @@ fn read_request(stream: &mut TcpStream, pending: &mut Vec<u8>) -> std::io::Resul
 
 fn find_header_end(bytes: &[u8]) -> Option<usize> {
     bytes.windows(4).position(|window| window == b"\r\n\r\n")
+}
+
+fn write_binary_plist_response(
+    stream: &mut TcpStream,
+    cseq: &str,
+    body: &[u8],
+) -> std::io::Result<()> {
+    let header = format!(
+        "RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\nServer: RustPhoneControl/0.1\r\nContent-Type: application/x-apple-binary-plist\r\nContent-Length: {}\r\n\r\n",
+        body.len()
+    );
+    stream.write_all(header.as_bytes())?;
+    stream.write_all(body)?;
+    stream.flush()?;
+    tracing::info!(cseq, body_bytes = body.len(), "AirPlay SETUP response sent");
+    Ok(())
+}
+
+fn handle_setup_request(
+    body: &[u8],
+    event_channel: &mut Option<EventChannel>,
+    media_receiver: &mut Option<UdpMediaReceiver>,
+) -> Result<Vec<u8>, (u16, String)> {
+    let setup = setup::parse_setup_request(body).map_err(|reason| (400, reason))?;
+    match setup {
+        SetupRequest::Session(session) => {
+            let channel = EventChannel::bind()
+                .map_err(|error| (503, format!("could not bind event channel: {error}")))?;
+            let event_port = channel.port();
+            if session.timing_protocol.as_deref() == Some("NTP") {
+                tracing::warn!(
+                    "Sender requested NTP timing; timing responder is not implemented, returning timingPort=0"
+                );
+            }
+            if session.timing_protocol.as_deref() == Some("PTP") {
+                tracing::info!("Sender selected PTP timing; no separate NTP timing socket is required");
+            }
+
+            let mut response = Dictionary::new();
+            response.insert("eventPort".into(), Value::Integer(event_port.into()));
+            // Zero means this receiver does not expose a separate NTP timing
+            // endpoint. PTP-capable senders can use their PTP timing path.
+            response.insert("timingPort".into(), Value::Integer(0.into()));
+            *event_channel = Some(channel);
+            plist::encode_binary(&Value::Dictionary(response))
+                .map_err(|error| (503, format!("could not encode session SETUP response: {error}")))
+        }
+        SetupRequest::Streams(streams) => {
+            if event_channel.is_none() {
+                return Err((455, "stream SETUP received before session SETUP".to_owned()));
+            }
+            if streams.len() != 1 {
+                return Err((501, "only one media stream per RTSP session is supported".to_owned()));
+            }
+            let stream = &streams[0];
+            if stream.stream_type != 110 {
+                return Err((
+                    501,
+                    format!("media stream type {} is not supported; only screen mirroring type 110 is accepted", stream.stream_type),
+                ));
+            }
+
+            let receiver = UdpMediaReceiver::bind(
+                "0.0.0.0:0"
+                    .parse()
+                    .expect("static IPv4 wildcard socket address is valid"),
+            )
+            .map_err(|error| (503, format!("could not bind video UDP receiver: {error}")))?;
+            let data_port = receiver.local_addr().port();
+
+            let mut stream_response = Dictionary::new();
+            stream_response.insert("type".into(), Value::Integer(stream.stream_type.into()));
+            stream_response.insert("dataPort".into(), Value::Integer(data_port.into()));
+
+            let mut response = Dictionary::new();
+            response.insert(
+                "streams".into(),
+                Value::Array(vec![Value::Dictionary(stream_response)]),
+            );
+            *media_receiver = Some(receiver);
+            tracing::info!(
+                data_port,
+                stream_connection_id = ?stream.connection_id,
+                "AirPlay screen-mirroring UDP media port negotiated"
+            );
+            plist::encode_binary(&Value::Dictionary(response))
+                .map_err(|error| (503, format!("could not encode stream SETUP response: {error}")))
+        }
+    }
 }
 
 fn write_response(stream: &mut TcpStream, response: &str, status: u16) -> std::io::Result<()> {
