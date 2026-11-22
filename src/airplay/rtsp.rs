@@ -8,7 +8,7 @@ use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::time::Duration;
 
-use super::{config, plist};
+use super::{config, pairing, plist, srp::SrpServer, tlv8::{self, Tlv}};
 use ::plist::{Dictionary, Value};
 
 const MAX_HEADER_BYTES: usize = 16 * 1024;
@@ -29,6 +29,8 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
     stream.set_write_timeout(Some(Duration::from_secs(5)))?;
 
     let mut pending = Vec::with_capacity(READ_CHUNK_BYTES);
+    let mut pair_setup_srp: Option<SrpServer> = None;
+    let mut pair_setup_session_key: Option<[u8; 64]> = None;
     tracing::info!("AirPlay RTSP session started");
 
     loop {
@@ -72,6 +74,37 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
                 );
                 write_response(&mut stream, &response, 200)?;
                 return Ok(());
+            }
+            ("POST", "/pair-setup", "RTSP/1.0") => {
+                let setup_code = std::env::var("AIRPLAY_SETUP_CODE").ok();
+                match handle_pair_setup(
+                    &request.body,
+                    &mut pair_setup_srp,
+                    &mut pair_setup_session_key,
+                    setup_code.as_deref(),
+                ) {
+                    Ok(body) => {
+                        let header = format!(
+                            "RTSP/1.0 200 OK\\r\\nCSeq: {}\\r\\nServer: RustPhoneControl/0.1\\r\\nContent-Type: application/octet-stream\\r\\nContent-Length: {}\\r\\n\\r\\n",
+                            request.cseq,
+                            body.len()
+                        );
+                        stream.write_all(header.as_bytes())?;
+                        stream.write_all(&body)?;
+                        stream.flush()?;
+                    }
+                    Err(error) => {
+                        tracing::warn!(status = error.status, reason = %error.reason, "Pair-Setup request rejected");
+                        let reason = if error.status == 503 { "Service Unavailable" } else { "Bad Request" };
+                        let response = format!(
+                            "RTSP/1.0 {} {}\\r\\nCSeq: {}\\r\\nServer: RustPhoneControl/0.1\\r\\nContent-Length: 0\\r\\n\\r\\n",
+                            error.status,
+                            reason,
+                            request.cseq
+                        );
+                        write_response(&mut stream, &response, error.status)?;
+                    }
+                }
             }
             ("GET", "/info", "RTSP/1.0") | ("POST", "/info", "RTSP/1.0") => {
                 match build_info_response(&request.body) {
@@ -250,6 +283,100 @@ fn write_response(
     Ok(())
 }
 
+#[derive(Debug)]
+struct PairSetupFailure {
+    status: u16,
+    reason: String,
+}
+
+impl PairSetupFailure {
+    fn bad_request(reason: impl Into<String>) -> Self {
+        Self { status: 400, reason: reason.into() }
+    }
+
+    fn unavailable(reason: impl Into<String>) -> Self {
+        Self { status: 503, reason: reason.into() }
+    }
+}
+
+/// Handle Pair-Setup M1/M3 on one persistent RTSP connection.
+/// The setup code is supplied by AIRPLAY_SETUP_CODE and is never logged.
+fn handle_pair_setup(
+    body: &[u8],
+    srp_state: &mut Option<SrpServer>,
+    session_key: &mut Option<[u8; 64]>,
+    setup_code: Option<&str>,
+) -> Result<Vec<u8>, PairSetupFailure> {
+    let fields = tlv8::decode(body)
+        .map_err(|error| PairSetupFailure::bad_request(error.to_string()))?;
+    let mut states = fields.iter().filter(|field| field.kind == 0x06);
+    let state = states.next().ok_or_else(|| PairSetupFailure::bad_request("missing Pair-Setup State"))?;
+    if states.next().is_some() || state.value.len() != 1 {
+        return Err(PairSetupFailure::bad_request("invalid Pair-Setup State field"));
+    }
+
+    match state.value[0] {
+        1 => {
+            pairing::parse_m1(body)
+                .map_err(|error| PairSetupFailure::bad_request(error.to_string()))?;
+            let code = setup_code.ok_or_else(|| {
+                PairSetupFailure::unavailable(
+                    "set AIRPLAY_SETUP_CODE to an XXX-XX-XXX pairing code before starting the receiver",
+                )
+            })?;
+            if !pairing::is_valid_setup_code(code) {
+                return Err(PairSetupFailure::unavailable(
+                    "AIRPLAY_SETUP_CODE must use the XXX-XX-XXX format",
+                ));
+            }
+
+            let server = SrpServer::new(code)
+                .map_err(|error| PairSetupFailure::unavailable(error.to_string()))?;
+            let response = tlv8::encode(&[
+                Tlv { kind: 0x06, value: vec![0x02] },
+                Tlv { kind: 0x02, value: server.salt().to_vec() },
+                Tlv {
+                    kind: 0x03,
+                    value: server.public_key()
+                        .map_err(|error| PairSetupFailure::unavailable(error.to_string()))?,
+                },
+            ]);
+            *srp_state = Some(server);
+            *session_key = None;
+            Ok(response)
+        }
+        3 => {
+            let message = pairing::parse_m3(body)
+                .map_err(|error| PairSetupFailure::bad_request(error.to_string()))?;
+            let server = srp_state.take().ok_or_else(|| {
+                PairSetupFailure::bad_request("Pair-Setup M3 received without an M1 exchange")
+            })?;
+
+            match server.verify_client(&message.public_key, &message.proof) {
+                Ok(result) => {
+                    let response = tlv8::encode(&[
+                        Tlv { kind: 0x06, value: vec![0x04] },
+                        Tlv { kind: 0x04, value: result.proof.to_vec() },
+                    ]);
+                    *session_key = Some(result.session_key);
+                    Ok(response)
+                }
+                Err(error) => {
+                    tracing::warn!(%error, "Pair-Setup SRP proof rejected");
+                    *session_key = None;
+                    Ok(tlv8::encode(&[
+                        Tlv { kind: 0x06, value: vec![0x04] },
+                        Tlv { kind: 0x07, value: vec![0x02] },
+                    ]))
+                }
+            }
+        }
+        other => Err(PairSetupFailure::bad_request(format!(
+            "unsupported Pair-Setup state {other}"
+        ))),
+    }
+}
+
 fn server_info_plist() -> String {
     format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\"><dict><key>deviceid</key><string>{}</string><key>features</key><integer>0</integer><key>model</key><string>{}</string><key>protovers</key><string>1.0</string><key>srcvers</key><string>{}</string></dict></plist>",
@@ -309,7 +436,8 @@ fn txt_airplay_dictionary() -> Dictionary {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_info_response, find_header_end, server_info_plist};
+    use super::{build_info_response, find_header_end, handle_pair_setup, server_info_plist};
+    use crate::airplay::tlv8::{self, Tlv};
     use super::plist;
     use ::plist::{Dictionary, Value};
 
