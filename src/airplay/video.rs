@@ -77,9 +77,6 @@ impl AvcConfiguration {
 
         let mut offset = 6usize;
         let sps_count = usize::from(data[5] & 0x1f);
-        if sps_count > 31 {
-            return Err(AvcConfigError::TooManyParameterSets);
-        }
         let mut sequence_parameter_sets = Vec::with_capacity(sps_count);
         for _ in 0..sps_count {
             if data.len().saturating_sub(offset) < 2 {
@@ -103,9 +100,6 @@ impl AvcConfiguration {
         }
         let pps_count = usize::from(data[offset]);
         offset += 1;
-        if pps_count > 255 {
-            return Err(AvcConfigError::TooManyParameterSets);
-        }
         let mut picture_parameter_sets = Vec::with_capacity(pps_count);
         for _ in 0..pps_count {
             if data.len().saturating_sub(offset) < 2 {
