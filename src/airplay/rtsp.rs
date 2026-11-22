@@ -1139,7 +1139,7 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").expect("TCP listener binds");
         let mut client = TcpStream::connect(listener.local_addr().expect("listener address"))
             .expect("TCP client connects");
-        let (mut server, peer_addr) = listener.accept().expect("accept TCP client");
+        let (server, peer_addr) = listener.accept().expect("accept TCP client");
         server
             .set_read_timeout(Some(Duration::from_millis(50)))
             .expect("set read timeout");
