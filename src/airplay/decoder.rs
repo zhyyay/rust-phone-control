@@ -574,15 +574,25 @@ impl<'runtime> H264Decoder<'runtime> {
             return Err(MediaFoundationError::NullBuffer);
         }
         // SAFETY: current_length is the valid data length reported by MF.
-        let data = unsafe { std::slice::from_raw_parts(source, current_length) }.to_vec();
+        let mut data = unsafe { std::slice::from_raw_parts(source, current_length) }.to_vec();
         unsafe { buffer.Unlock() }
             .map_err(|error| MediaFoundationError::BufferFailed(error.code().0))?;
 
         let output_type = unsafe { self.transform.GetOutputCurrentType(self.output_stream) }
             .map_err(|error| MediaFoundationError::OutputInfoFailed(error.code().0))?;
-        let stride = unsafe { output_type.GetUINT32(&MF_MT_DEFAULT_STRIDE) }
-            .map(|value| (value as i32).unsigned_abs() as usize)
-            .unwrap_or(self.width as usize);
+        let signed_stride = unsafe { output_type.GetUINT32(&MF_MT_DEFAULT_STRIDE) }
+            .map(|value| value as i32)
+            .unwrap_or(self.width as i32);
+        let stride = signed_stride.unsigned_abs() as usize;
+        if signed_stride < 0 {
+            crate::airplay::video::normalize_nv12_bottom_up(
+                &mut data,
+                self.width,
+                self.height,
+                stride,
+            )
+            .map_err(MediaFoundationError::FrameConversion)?;
+        }
 
         Ok(Some(DecodedNv12Frame {
             width: self.width,
