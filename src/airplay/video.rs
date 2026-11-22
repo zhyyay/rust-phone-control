@@ -1,7 +1,8 @@
 //! AirPlay screen-mirroring video transport helpers.
 //!
-//! This module only handles codec detection and bounded access-unit assembly.
-//! It intentionally does not implement FairPlay decryption or video decoding.
+//! This module handles codec configuration, encrypted access-unit conversion,
+//! bounded assembly, frame conversion, and the decoded-frame mailbox. FairPlay
+//! key unwrapping remains a separate, intentionally unimplemented stage.
 
 use std::collections::VecDeque;
 use std::sync::{
@@ -46,6 +47,7 @@ pub enum AvcConfigError {
     TrailingData,
     InvalidNalLength,
     TruncatedNal,
+    OutputTooLarge,
     SizeOverflow,
 }
 
@@ -56,6 +58,25 @@ impl std::fmt::Display for AvcConfigError {
 }
 
 impl std::error::Error for AvcConfigError {}
+
+const MAX_ANNEX_B_ACCESS_UNIT_BYTES: usize = 64 * 1024 * 1024;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EncryptedAccessUnitError {
+    Crypto(super::mirror_crypto::MirrorCryptoError),
+    Avc(AvcConfigError),
+}
+
+impl std::fmt::Display for EncryptedAccessUnitError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Crypto(error) => write!(formatter, "mirror payload decryption failed: {error}"),
+            Self::Avc(error) => write!(formatter, "decrypted AVCC access unit is invalid: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for EncryptedAccessUnitError {}
 
 impl AvcConfiguration {
     /// Parse an ISO/IEC 14496-15 AVCDecoderConfigurationRecord.
@@ -213,12 +234,37 @@ impl AvcConfiguration {
             if end > data.len() {
                 return Err(AvcConfigError::TruncatedNal);
             }
+            let next_length = output
+                .len()
+                .checked_add(4)
+                .and_then(|value| value.checked_add(length))
+                .ok_or(AvcConfigError::SizeOverflow)?;
+            if next_length > MAX_ANNEX_B_ACCESS_UNIT_BYTES {
+                return Err(AvcConfigError::OutputTooLarge);
+            }
             output.extend_from_slice(&[0, 0, 0, 1]);
             output.extend_from_slice(&data[offset..end]);
             offset = end;
         }
         Ok(output)
     }
+}
+
+/// Decrypt one encrypted type-110 video payload and convert its AVCC NAL
+/// units to Annex-B for the H.264 decoder. The cipher must belong to this
+/// stream and must be called exactly once for every video payload in order.
+pub fn decrypt_access_unit_to_annex_b(
+    configuration: &AvcConfiguration,
+    cipher: &mut super::mirror_crypto::MirrorStreamCipher,
+    encrypted_payload: &[u8],
+) -> Result<Vec<u8>, EncryptedAccessUnitError> {
+    let mut plaintext = encrypted_payload.to_vec();
+    cipher
+        .decrypt_packet(&mut plaintext)
+        .map_err(EncryptedAccessUnitError::Crypto)?;
+    configuration
+        .access_unit_to_annex_b(&plaintext)
+        .map_err(EncryptedAccessUnitError::Avc)
 }
 
 /// Result of processing one packet from the TCP mirror stream.
@@ -789,6 +835,35 @@ mod tests {
             parsed.access_unit_to_annex_b(&[0, 0, 0, 0]),
             Err(AvcConfigError::InvalidNalLength)
         );
+    }
+
+    #[test]
+    fn decrypts_encrypted_avcc_payload_and_converts_to_annex_b() {
+        use super::super::mirror_crypto::{
+            MirrorStreamCipher, derive_mirror_stream_keys,
+        };
+        use super::{AvcConfiguration, decrypt_access_unit_to_annex_b};
+
+        let avcc = [
+            0x01, 0x64, 0xc0, 0x28, 0xff, 0xe1, 0x00, 0x04, 0x67, 0x64, 0xc0, 0x28, 0x01, 0x00,
+            0x02, 0x68, 0xee,
+        ];
+        let configuration = AvcConfiguration::parse(&avcc).unwrap();
+        let keys = derive_mirror_stream_keys(&[0x31; 16], None, 42).unwrap();
+
+        let mut encrypted = vec![0x00, 0x00, 0x00, 0x02, 0x65, 0x88];
+        MirrorStreamCipher::new(&keys)
+            .decrypt_packet(&mut encrypted)
+            .expect("test payload encryption uses the symmetric CTR operation");
+
+        let mut decryptor = MirrorStreamCipher::new(&keys);
+        let annex_b = decrypt_access_unit_to_annex_b(
+            &configuration,
+            &mut decryptor,
+            &encrypted,
+        )
+        .expect("decrypt and convert access unit");
+        assert_eq!(annex_b, [0, 0, 0, 1, 0x65, 0x88]);
     }
 
     #[test]
