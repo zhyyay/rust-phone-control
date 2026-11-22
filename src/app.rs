@@ -5,13 +5,62 @@ use gpui_kit::component::{
 };
 use gpui_kit::*;
 
+#[cfg(windows)]
+use std::{sync::Arc, time::Duration};
+
 #[derive(Default)]
 pub struct PhoneControlApp {
     airplay_status: String,
+    #[cfg(windows)]
+    preview_image: Option<Arc<Image>>,
+    #[cfg(windows)]
+    preview_status: String,
+    #[cfg(windows)]
+    frame_poll_task: Option<Task<()>>,
 }
 
 impl Render for PhoneControlApp {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        #[cfg(windows)]
+        if self.frame_poll_task.is_none() {
+            self.frame_poll_task = Some(cx.spawn(async move |this, cx| {
+                loop {
+                    cx.background_executor()
+                        .timer(Duration::from_millis(33))
+                        .await;
+                    let updated = this.update(cx, |this, cx| {
+                        match crate::airplay::take_latest_video_frame() {
+                            Ok(Some(snapshot)) => match bgra_frame_to_bmp(&snapshot.frame) {
+                                Ok(bytes) => {
+                                    this.preview_status = format!(
+                                        "Frame {} × {} · sequence {}",
+                                        snapshot.frame.width,
+                                        snapshot.frame.height,
+                                        snapshot.sequence
+                                    );
+                                    this.preview_image = Some(Arc::new(Image::from_bytes(
+                                        ImageFormat::Bmp,
+                                        bytes,
+                                    )));
+                                    cx.notify();
+                                }
+                                Err(error) => {
+                                    tracing::warn!(%error, "Could not prepare decoded frame for GPUI");
+                                }
+                            },
+                            Ok(None) => {}
+                            Err(error) => {
+                                tracing::warn!(%error, "Could not read decoded AirPlay frame");
+                            }
+                        }
+                    });
+                    if updated.is_err() {
+                        break;
+                    }
+                }
+            }));
+        }
+
         div()
             .flex()
             .flex_col()
@@ -74,6 +123,11 @@ impl Render for PhoneControlApp {
                         format!("AirPlay status: {}", self.airplay_status)
                     })),
             )
+            #[cfg(windows)]
+            .child(preview_panel(
+                self.preview_image.clone(),
+                self.preview_status.clone(),
+            ))
             .child(
                 div()
                     .flex()
@@ -166,6 +220,85 @@ impl Render for PhoneControlApp {
             )
             .child(Label::new("AirPlay discovery and RTSP control · TCP mirror packets are accepted, but FairPlay response, video decryption, decoding, and live preview are not connected yet."))
     }
+}
+
+
+#[cfg(windows)]
+fn preview_panel(image: Option<Arc<Image>>, status: String) -> impl IntoElement {
+    let mut panel = div()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .p_2()
+        .rounded_lg()
+        .border_1()
+        .border_color(gpui_kit::rgb(0x555555))
+        .child(Label::new("AirPlay live preview"));
+
+    let surface = if let Some(image) = image {
+        div()
+            .w_full()
+            .h(px(360.))
+            .child(img(image).w_full().h_full().object_fit(ObjectFit::Contain))
+    } else {
+        div()
+            .w_full()
+            .h(px(180.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(Label::new(status))
+    };
+    panel = panel.child(surface);
+    panel
+}
+
+#[cfg(windows)]
+fn bgra_frame_to_bmp(frame: &crate::airplay::BgraFrame) -> Result<Vec<u8>, &'static str> {
+    let width = usize::try_from(frame.width).map_err(|_| "frame width overflow")?;
+    let height = usize::try_from(frame.height).map_err(|_| "frame height overflow")?;
+    if width == 0 || height == 0 || width > 8192 || height > 8192 {
+        return Err("frame dimensions are invalid");
+    }
+
+    let row_bytes = width.checked_mul(4).ok_or("frame row size overflow")?;
+    if frame.stride < row_bytes {
+        return Err("BGRA stride is smaller than the pixel row");
+    }
+    let source_bytes = frame
+        .stride
+        .checked_mul(height)
+        .ok_or("BGRA source size overflow")?;
+    if frame.data.len() < source_bytes {
+        return Err("BGRA frame buffer is truncated");
+    }
+    let pixel_bytes = row_bytes.checked_mul(height).ok_or("BMP image size overflow")?;
+    let file_bytes = 54usize.checked_add(pixel_bytes).ok_or("BMP file size overflow")?;
+    let file_bytes_u32 = u32::try_from(file_bytes).map_err(|_| "BMP file exceeds 4 GiB")?;
+    let width_i32 = i32::try_from(width).map_err(|_| "BMP width overflow")?;
+    let height_i32 = i32::try_from(height).map_err(|_| "BMP height overflow")?;
+
+    let mut bmp = Vec::with_capacity(file_bytes);
+    bmp.extend_from_slice(b"BM");
+    bmp.extend_from_slice(&file_bytes_u32.to_le_bytes());
+    bmp.extend_from_slice(&[0; 4]);
+    bmp.extend_from_slice(&54u32.to_le_bytes());
+    bmp.extend_from_slice(&40u32.to_le_bytes());
+    bmp.extend_from_slice(&width_i32.to_le_bytes());
+    bmp.extend_from_slice(&(-height_i32).to_le_bytes());
+    bmp.extend_from_slice(&1u16.to_le_bytes());
+    bmp.extend_from_slice(&32u16.to_le_bytes());
+    bmp.extend_from_slice(&0u32.to_le_bytes());
+    bmp.extend_from_slice(&(pixel_bytes as u32).to_le_bytes());
+    bmp.extend_from_slice(&2835i32.to_le_bytes());
+    bmp.extend_from_slice(&2835i32.to_le_bytes());
+    bmp.extend_from_slice(&[0; 8]);
+
+    for row in 0..height {
+        let start = row.checked_mul(frame.stride).ok_or("BGRA row offset overflow")?;
+        bmp.extend_from_slice(&frame.data[start..start + row_bytes]);
+    }
+    Ok(bmp)
 }
 
 fn move_button(id: &'static str, label: &'static str, dx: i32, dy: i32) -> impl IntoElement {
