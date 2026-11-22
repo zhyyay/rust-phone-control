@@ -40,7 +40,7 @@ use std::sync::{Mutex, OnceLock};
 #[cfg(windows)]
 struct ReceiverRuntime {
     server: server::ControlServer,
-    advertisement: discovery::Advertisement,
+    advertisement: discovery::Advertisement,\n    _media_foundation: Option<decoder::MediaFoundationRuntime>,
 }
 
 #[cfg(windows)]
