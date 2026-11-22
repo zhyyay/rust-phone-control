@@ -1363,9 +1363,17 @@ mod tests {
         let mut event = None;
         let mut timing = None;
         let mut media = None;
-        let response =
-            handle_setup_request(&body, peer_ip, &mut event, &mut timing, &mut media, &mut None, &mut None, None)
-                .expect("NTP session SETUP");
+        let response = handle_setup_request(
+            &body,
+            peer_ip,
+            &mut event,
+            &mut timing,
+            &mut media,
+            &mut None,
+            &mut None,
+            None,
+        )
+        .expect("NTP session SETUP");
         let value = plist::decode(&response).expect("decode NTP response");
         let dictionary = value.as_dictionary().expect("NTP response dictionary");
         let timing_port = dictionary
@@ -1408,17 +1416,35 @@ mod tests {
         let body = plist::encode_binary(&Value::Dictionary(root)).expect("encode stream setup");
 
         assert_eq!(
-            handle_setup_request(&body, peer_ip, &mut event, &mut timing, &mut media, &mut None, &mut None, None)
-                .unwrap_err()
-                .0,
+            handle_setup_request(
+                &body,
+                peer_ip,
+                &mut event,
+                &mut timing,
+                &mut media,
+                &mut None,
+                &mut None,
+                None
+            )
+            .unwrap_err()
+            .0,
             455
         );
 
         let mut session = Dictionary::new();
         session.insert("sessionUUID".into(), Value::String("test-session".into()));
         let body = plist::encode_binary(&Value::Dictionary(session)).expect("encode session setup");
-        handle_setup_request(&body, peer_ip, &mut event, &mut timing, &mut media, &mut None, &mut None, None)
-            .expect("session setup");
+        handle_setup_request(
+            &body,
+            peer_ip,
+            &mut event,
+            &mut timing,
+            &mut media,
+            &mut None,
+            &mut None,
+            None,
+        )
+        .expect("session setup");
 
         let mut unsupported_stream = Dictionary::new();
         unsupported_stream.insert("type".into(), Value::Integer(96.into()));
@@ -1430,9 +1456,18 @@ mod tests {
         let body =
             plist::encode_binary(&Value::Dictionary(root)).expect("encode audio stream setup");
         assert_eq!(
-            handle_setup_request(&body, peer_ip, &mut event, &mut timing, &mut media, &mut None, &mut None, None)
-                .unwrap_err()
-                .0,
+            handle_setup_request(
+                &body,
+                peer_ip,
+                &mut event,
+                &mut timing,
+                &mut media,
+                &mut None,
+                &mut None,
+                None
+            )
+            .unwrap_err()
+            .0,
             501
         );
     }
