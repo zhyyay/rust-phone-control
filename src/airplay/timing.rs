@@ -150,4 +150,30 @@ mod tests {
     fn ntp_timestamp_uses_1900_epoch() {
         assert!(ntp_timestamp() >> 32 > 2_208_988_800);
     }
+
+    #[test]
+    fn timing_client_sends_request_and_accepts_reply() {
+        use std::net::UdpSocket;
+        use std::time::Duration;
+
+        let sender = UdpSocket::bind("127.0.0.1:0").expect("bind fake sender");
+        sender
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .expect("set sender timeout");
+        let sender_addr = sender.local_addr().expect("sender address");
+        let client = super::TimingClient::start(sender_addr.ip(), sender_addr.port())
+            .expect("start timing client");
+
+        let mut request = [0u8; 64];
+        let (length, peer) = sender.recv_from(&mut request).expect("receive timing request");
+        assert_eq!(length, 32);
+        assert_eq!(&request[..2], &[0x80, 0xD2]);
+        assert_eq!(peer.port(), client.port());
+
+        let mut response = [0u8; 32];
+        response[0] = 0x80;
+        response[1] = 0xD3;
+        response[2..4].copy_from_slice(&request[2..4]);
+        sender.send_to(&response, peer).expect("send timing response");
+    }
 }
