@@ -570,11 +570,16 @@ mod receiver_tests {
                 .expect("send datagram");
         }
 
-        let first = receiver
-            .recv_timeout(Duration::from_secs(2))
-            .expect("first packet forwarded");
-        assert_eq!(first.payload, vec![1]);
+        // Keep the bounded queue full while the UDP worker processes both
+        // datagrams. Reading before stop would free a slot and make the test
+        // race with the second send.
+        thread::sleep(Duration::from_millis(100));
         receiver_handle.stop();
+
+        let first = receiver
+            .try_recv()
+            .expect("the first packet remains in the one-slot queue");
+        assert_eq!(first.payload, vec![1]);
         assert!(receiver.try_recv().is_err());
     }
 
