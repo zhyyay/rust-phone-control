@@ -2,7 +2,7 @@
 //!
 //! The handler supports persistent RTSP connections, bounded request bodies,
 //! OPTIONS, GET /server-info, and binary-plist /info responses.
-//! Pairing and media transport are intentionally not advertised or implemented.
+//! Pair-Setup SRP M1/M3 is partially implemented; media transport is not implemented.
 
 use std::io::{Read, Write};
 use std::net::TcpStream;
@@ -85,7 +85,7 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
                 ) {
                     Ok(body) => {
                         let header = format!(
-                            "RTSP/1.0 200 OK\\r\\nCSeq: {}\\r\\nServer: RustPhoneControl/0.1\\r\\nContent-Type: application/octet-stream\\r\\nContent-Length: {}\\r\\n\\r\\n",
+                            "RTSP/1.0 200 OK\r\nCSeq: {}\r\nServer: RustPhoneControl/0.1\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\n\r\n",
                             request.cseq,
                             body.len()
                         );
@@ -97,7 +97,7 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
                         tracing::warn!(status = error.status, reason = %error.reason, "Pair-Setup request rejected");
                         let reason = if error.status == 503 { "Service Unavailable" } else { "Bad Request" };
                         let response = format!(
-                            "RTSP/1.0 {} {}\\r\\nCSeq: {}\\r\\nServer: RustPhoneControl/0.1\\r\\nContent-Length: 0\\r\\n\\r\\n",
+                            "RTSP/1.0 {} {}\r\nCSeq: {}\r\nServer: RustPhoneControl/0.1\r\nContent-Length: 0\r\n\r\n",
                             error.status,
                             reason,
                             request.cseq
@@ -482,6 +482,56 @@ mod tests {
             assert!(matches!(dict.get(key), Some(Value::String(_))), "missing string key {key}");
         }
         assert_eq!(dict.get("features").and_then(Value::as_string), Some("0x0"));
+    }
+
+
+    #[test]
+    fn pair_setup_m1_returns_srp_challenge() {
+        let request = tlv8::encode(&[
+            Tlv { kind: 0x06, value: vec![0x01] },
+            Tlv { kind: 0x00, value: vec![0x00] },
+        ]);
+        let mut srp = None;
+        let mut session_key = None;
+        let response = handle_pair_setup(
+            &request,
+            &mut srp,
+            &mut session_key,
+            Some("123-45-678"),
+        ).expect("M1 response");
+        let fields = tlv8::decode(&response).expect("decode M2");
+        assert_eq!(fields.iter().find(|field| field.kind == 0x06).unwrap().value, [0x02]);
+        assert_eq!(fields.iter().find(|field| field.kind == 0x02).unwrap().value.len(), 16);
+        assert_eq!(fields.iter().find(|field| field.kind == 0x03).unwrap().value.len(), 384);
+        assert!(srp.is_some());
+    }
+
+    #[test]
+    fn pair_setup_requires_explicit_setup_code() {
+        let request = tlv8::encode(&[
+            Tlv { kind: 0x06, value: vec![0x01] },
+            Tlv { kind: 0x00, value: vec![0x00] },
+        ]);
+        let mut srp = None;
+        let mut session_key = None;
+        let error = handle_pair_setup(&request, &mut srp, &mut session_key, None)
+            .expect_err("missing code must not start pairing");
+        assert_eq!(error.status, 503);
+        assert!(srp.is_none());
+    }
+
+    #[test]
+    fn pair_setup_rejects_m3_without_m1() {
+        let request = tlv8::encode(&[
+            Tlv { kind: 0x06, value: vec![0x03] },
+            Tlv { kind: 0x03, value: vec![0x01] },
+            Tlv { kind: 0x04, value: vec![0x00; 64] },
+        ]);
+        let mut srp = None;
+        let mut session_key = None;
+        let error = handle_pair_setup(&request, &mut srp, &mut session_key, None)
+            .expect_err("M3 without M1 must fail");
+        assert_eq!(error.status, 400);
     }
 
     #[test]
