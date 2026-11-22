@@ -6,7 +6,7 @@
 
 use std::fmt;
 use std::io;
-use std::net::{SocketAddr, UdpSocket};
+use std::net::{IpAddr, SocketAddr, UdpSocket};
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -320,13 +320,14 @@ const RECEIVE_POLL_INTERVAL: Duration = Duration::from_millis(100);
 /// started by the AirPlay runtime until RTSP stream setup supplies that address.
 pub struct UdpMediaReceiver {
     local_addr: SocketAddr,
+    expected_peer_ip: IpAddr,
     running: Arc<AtomicBool>,
     worker: Option<JoinHandle<()>>,
 }
 
 impl UdpMediaReceiver {
     /// Bind the requested address and begin parsing screen-mirroring datagrams.
-    pub fn bind(bind_addr: SocketAddr) -> io::Result<Self> {
+    pub fn bind(bind_addr: SocketAddr, expected_peer_ip: IpAddr) -> io::Result<Self> {
         let socket = UdpSocket::bind(bind_addr)?;
         socket.set_read_timeout(Some(RECEIVE_POLL_INTERVAL))?;
         let local_addr = socket.local_addr()?;
@@ -335,11 +336,12 @@ impl UdpMediaReceiver {
 
         let worker = thread::Builder::new()
             .name("airplay-udp-media".to_owned())
-            .spawn(move || receive_media_loop(socket, worker_running))?;
+            .spawn(move || receive_media_loop(socket, worker_running, expected_peer_ip))?;
 
         tracing::info!(%local_addr, "AirPlay UDP media receiver bound");
         Ok(Self {
             local_addr,
+            expected_peer_ip,
             running,
             worker: Some(worker),
         })
@@ -368,12 +370,25 @@ impl Drop for UdpMediaReceiver {
     }
 }
 
-fn receive_media_loop(socket: UdpSocket, running: Arc<AtomicBool>) {
+fn receive_media_loop(
+    socket: UdpSocket,
+    running: Arc<AtomicBool>,
+    expected_peer_ip: IpAddr,
+) {
     let mut buffer = [0u8; MAX_UDP_DATAGRAM_SIZE];
 
     while running.load(Ordering::Acquire) {
         match socket.recv_from(&mut buffer) {
-            Ok((length, peer_addr)) => match parse_screen_mirror_packet(&buffer[..length]) {
+            Ok((length, peer_addr)) => {
+                if peer_addr.ip() != expected_peer_ip {
+                    tracing::debug!(
+                        %peer_addr,
+                        %expected_peer_ip,
+                        "Ignoring media datagram from an unexpected host"
+                    );
+                    continue;
+                }
+                match parse_screen_mirror_packet(&buffer[..length]) {
                 Ok(packet) => {
                     tracing::debug!(
                         %peer_addr,
@@ -387,7 +402,8 @@ fn receive_media_loop(socket: UdpSocket, running: Arc<AtomicBool>) {
                     tracing::warn!(%peer_addr, %error, datagram_bytes = length,
                         "Discarding invalid screen-mirroring datagram");
                 }
-            },
+                }
+            }
             Err(error)
                 if matches!(
                     error.kind(),
@@ -450,7 +466,11 @@ mod receiver_tests {
     #[test]
     fn udp_receiver_binds_and_stops_cleanly() {
         let bind_addr: SocketAddr = "127.0.0.1:0".parse().expect("valid loopback address");
-        let mut receiver = UdpMediaReceiver::bind(bind_addr).expect("receiver binds");
+        let mut receiver = UdpMediaReceiver::bind(
+            bind_addr,
+            "127.0.0.1".parse().expect("loopback IP"),
+        )
+        .expect("receiver binds");
         assert_ne!(receiver.local_addr().port(), 0);
         assert_eq!(receiver.local_addr().ip(), bind_addr.ip());
         receiver.stop();
