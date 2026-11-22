@@ -258,7 +258,7 @@ mod tests {
 
     #[test]
     fn finds_header_terminator() {
-        assert_eq!(find_header_end(b"OPTIONS * RTSP/1.0\r\nCSeq: 1\r\n\r\n"), Some(29));
+        assert_eq!(find_header_end(b"OPTIONS * RTSP/1.0\r\nCSeq: 1\r\n\r\n"), Some(27));
         assert_eq!(find_header_end(b"OPTIONS * RTSP/1.0\r\n"), None);
     }
 
