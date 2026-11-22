@@ -221,6 +221,78 @@ impl AvcConfiguration {
     }
 }
 
+
+/// Result of processing one packet from the TCP mirror stream.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MirrorPacketOutcome {
+    CodecConfigurationUpdated {
+        profile: u8,
+        level: u8,
+        nal_length_size: usize,
+        sps_count: usize,
+        pps_count: usize,
+    },
+    InvalidCodecConfiguration(AvcConfigError),
+    /// Video bytes are deliberately held back until the negotiated encryption
+    /// mode and FairPlay-derived AES key are available.
+    VideoWaitingForDecryption {
+        payload_bytes: usize,
+        has_configuration: bool,
+    },
+    Heartbeat,
+}
+
+/// Tracks codec configuration for one AirPlay mirror TCP session.
+///
+/// This stage validates and remembers avcC packets, but never assumes video
+/// payloads are plaintext. The stream can optionally encrypt video packets.
+#[derive(Debug, Default)]
+pub struct MirrorStreamProcessor {
+    configuration: Option<AvcConfiguration>,
+}
+
+impl MirrorStreamProcessor {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn configuration(&self) -> Option<&AvcConfiguration> {
+        self.configuration.as_ref()
+    }
+
+    pub fn process_packet(
+        &mut self,
+        packet_type: super::media::ScreenMirrorPacketType,
+        payload: &[u8],
+    ) -> MirrorPacketOutcome {
+        match packet_type {
+            super::media::ScreenMirrorPacketType::CodecConfiguration => {
+                match AvcConfiguration::parse(payload) {
+                    Ok(configuration) => {
+                        let outcome = MirrorPacketOutcome::CodecConfigurationUpdated {
+                            profile: configuration.profile,
+                            level: configuration.level,
+                            nal_length_size: configuration.nal_length_size,
+                            sps_count: configuration.sequence_parameter_sets.len(),
+                            pps_count: configuration.picture_parameter_sets.len(),
+                        };
+                        self.configuration = Some(configuration);
+                        outcome
+                    }
+                    Err(error) => MirrorPacketOutcome::InvalidCodecConfiguration(error),
+                }
+            }
+            super::media::ScreenMirrorPacketType::Video => {
+                MirrorPacketOutcome::VideoWaitingForDecryption {
+                    payload_bytes: payload.len(),
+                    has_configuration: self.configuration.is_some(),
+                }
+            }
+            super::media::ScreenMirrorPacketType::Heartbeat => MirrorPacketOutcome::Heartbeat,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AccessUnit {
     pub timestamp: u64,
@@ -926,6 +998,64 @@ mod tests {
             short.to_bgra().unwrap_err(),
             FrameConversionError::BufferTooSmall
         );
+    }
+
+
+    #[test]
+    fn mirror_stream_processor_tracks_avc_configuration_and_waits_for_decryption() {
+        use super::super::media::ScreenMirrorPacketType;
+        use super::{MirrorPacketOutcome, MirrorStreamProcessor};
+
+        let avcc = [
+            0x01, 0x64, 0xc0, 0x28, 0xff, 0xe1, 0x00, 0x04, 0x67, 0x64, 0xc0, 0x28, 0x01,
+            0x00, 0x02, 0x68, 0xee,
+        ];
+        let mut processor = MirrorStreamProcessor::new();
+        assert!(processor.configuration().is_none());
+
+        assert_eq!(
+            processor.process_packet(ScreenMirrorPacketType::CodecConfiguration, &avcc),
+            MirrorPacketOutcome::CodecConfigurationUpdated {
+                profile: 0x64,
+                level: 0x28,
+                nal_length_size: 4,
+                sps_count: 1,
+                pps_count: 1,
+            }
+        );
+        assert!(processor.configuration().is_some());
+
+        assert_eq!(
+            processor.process_packet(ScreenMirrorPacketType::Video, &[0x00, 0x00, 0x00, 0x02, 0x65, 0x88]),
+            MirrorPacketOutcome::VideoWaitingForDecryption {
+                payload_bytes: 6,
+                has_configuration: true,
+            }
+        );
+        assert_eq!(
+            processor.process_packet(ScreenMirrorPacketType::Heartbeat, &[]),
+            MirrorPacketOutcome::Heartbeat
+        );
+    }
+
+    #[test]
+    fn invalid_avc_configuration_does_not_replace_previous_configuration() {
+        use super::super::media::ScreenMirrorPacketType;
+        use super::{MirrorPacketOutcome, MirrorStreamProcessor};
+
+        let valid = [
+            0x01, 0x64, 0xc0, 0x28, 0xff, 0xe1, 0x00, 0x04, 0x67, 0x64, 0xc0, 0x28, 0x01,
+            0x00, 0x02, 0x68, 0xee,
+        ];
+        let mut processor = MirrorStreamProcessor::new();
+        processor.process_packet(ScreenMirrorPacketType::CodecConfiguration, &valid);
+        let previous = processor.configuration().cloned();
+
+        assert_eq!(
+            processor.process_packet(ScreenMirrorPacketType::CodecConfiguration, &[0x01]),
+            MirrorPacketOutcome::InvalidCodecConfiguration(super::AvcConfigError::TooShort)
+        );
+        assert_eq!(processor.configuration(), previous.as_ref());
     }
 
     #[test]
