@@ -905,8 +905,8 @@ fn txt_airplay_dictionary() -> Dictionary {
 mod tests {
     use super::plist;
     use super::{
-        Request, build_info_response, find_header_end, handle_pair_setup, handle_setup_request,
-        server_info_plist,
+        MediaSession, Request, build_info_response, find_header_end, handle_pair_setup,
+        handle_setup_request, server_info_plist,
     };
     use crate::airplay::tlv8::{self, Tlv};
     use ::plist::{Dictionary, Value};
@@ -937,7 +937,7 @@ mod tests {
     #[test]
     fn media_session_starts_and_stops_its_workers() {
         let peer_ip = "127.0.0.1".parse().expect("loopback IP");
-        let mut session = MediaSession::start(peer_ip).expect("start media session");
+        let mut session = super::MediaSession::start(peer_ip).expect("start media session");
         assert_ne!(session.port(), 0);
         session.stop();
         assert!(session.worker.is_none());
