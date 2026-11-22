@@ -282,17 +282,33 @@ fn process_media_packets(
                 nal_length_size,
                 sps_count,
                 pps_count,
-            } => tracing::info!(
-                %packet.peer_addr,
-                profile,
-                level,
-                nal_length_size,
-                sps_count,
-                pps_count,
-                timestamp = packet.timestamp,
-                received,
-                "AirPlay H.264 codec configuration accepted"
-            ),
+            } => {
+                tracing::info!(
+                    %packet.peer_addr,
+                    profile,
+                    level,
+                    nal_length_size,
+                    sps_count,
+                    pps_count,
+                    timestamp = packet.timestamp,
+                    received,
+                    "AirPlay H.264 codec configuration accepted"
+                );
+                if let Some(configuration) = processor.configuration() {
+                    match configuration.video_dimensions() {
+                        Ok(Some(dimensions)) => tracing::info!(
+                            width = dimensions.width,
+                            height = dimensions.height,
+                            "AirPlay H.264 SPS dimensions parsed"
+                        ),
+                        Ok(None) => tracing::warn!("AirPlay AVC configuration has no SPS"),
+                        Err(error) => tracing::warn!(
+                            %error,
+                            "Could not read dimensions from AirPlay H.264 SPS"
+                        ),
+                    }
+                }
+            },
             super::video::MirrorPacketOutcome::InvalidCodecConfiguration(error) => {
                 tracing::warn!(
                     %packet.peer_addr,
