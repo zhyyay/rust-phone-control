@@ -104,12 +104,19 @@ pub fn parse_m3(payload: &[u8]) -> Result<PairSetupM3, PairSetupError> {
 /// Pairing setup codes use the standard XXX-XX-XXX display format.
 pub fn is_valid_setup_code(code: &str) -> bool {
     let bytes = code.as_bytes();
-    bytes.len() == 10
-        && bytes[3] == b'-'
-        && bytes[6] == b'-'
-        && bytes.iter().enumerate().all(|(index, byte)| {
+    if bytes.len() != 10
+        || bytes[3] != b'-'
+        || bytes[6] != b'-'
+        || !bytes.iter().enumerate().all(|(index, byte)| {
             index == 3 || index == 6 || byte.is_ascii_digit()
         })
+    {
+        return false;
+    }
+
+    let digits: Vec<u8> = bytes.iter().copied().filter(|byte| *byte != b'-').collect();
+    let repeated = digits.iter().all(|digit| *digit == digits[0]);
+    !repeated && digits != b"12345678" && digits != b"87654321"
 }
 
 fn unique_field<'a>(
@@ -213,7 +220,7 @@ mod tests {
 
     #[test]
     fn validates_setup_code_display_format() {
-        assert!(is_valid_setup_code("123-45-678"));
+        assert!(is_valid_setup_code("518-08-582"));\n        assert!(!is_valid_setup_code("123-45-678"));\n        assert!(!is_valid_setup_code("111-11-111"));
         assert!(!is_valid_setup_code("12345678"));
         assert!(!is_valid_setup_code("abc-de-fgh"));
     }
