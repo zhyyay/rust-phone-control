@@ -216,3 +216,124 @@ mod tests {
         );
     }
 }
+
+
+use std::io;
+use std::net::{SocketAddr, UdpSocket};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
+use std::thread::{self, JoinHandle};
+use std::time::Duration;
+
+/// Maximum UDP datagram buffer. This is large enough for the maximum IPv4 UDP
+/// payload and avoids allocating based on untrusted packet contents.
+const MAX_UDP_DATAGRAM_SIZE: usize = 65_535;
+const RECEIVE_POLL_INTERVAL: Duration = Duration::from_millis(100);
+
+/// A stoppable UDP socket that validates incoming RTP packets.
+///
+/// The caller must provide the negotiated media address. This receiver is not
+/// started by the AirPlay runtime until RTSP stream setup supplies that address.
+pub struct UdpMediaReceiver {
+    local_addr: SocketAddr,
+    running: Arc<AtomicBool>,
+    worker: Option<JoinHandle<()>>,
+}
+
+impl UdpMediaReceiver {
+    /// Bind the requested address and begin parsing incoming RTP datagrams.
+    pub fn bind(bind_addr: SocketAddr) -> io::Result<Self> {
+        let socket = UdpSocket::bind(bind_addr)?;
+        socket.set_read_timeout(Some(RECEIVE_POLL_INTERVAL))?;
+        let local_addr = socket.local_addr()?;
+        let running = Arc::new(AtomicBool::new(true));
+        let worker_running = Arc::clone(&running);
+
+        let worker = thread::Builder::new()
+            .name("airplay-udp-media".to_owned())
+            .spawn(move || receive_rtp_loop(socket, worker_running))?;
+
+        tracing::info!(%local_addr, "AirPlay UDP media receiver bound");
+        Ok(Self {
+            local_addr,
+            running,
+            worker: Some(worker),
+        })
+    }
+
+    /// Return the actual local address, including an OS-assigned port for :0.
+    pub fn local_addr(&self) -> SocketAddr {
+        self.local_addr
+    }
+
+    /// Stop the receive loop and wait for its worker thread to exit.
+    pub fn stop(&mut self) {
+        self.running.store(false, Ordering::Release);
+        if let Some(worker) = self.worker.take() {
+            if worker.join().is_err() {
+                tracing::warn!("AirPlay UDP media receiver worker panicked");
+            }
+        }
+        tracing::debug!(local_addr = %self.local_addr, "AirPlay UDP media receiver stopped");
+    }
+}
+
+impl Drop for UdpMediaReceiver {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+fn receive_rtp_loop(socket: UdpSocket, running: Arc<AtomicBool>) {
+    let mut buffer = [0u8; MAX_UDP_DATAGRAM_SIZE];
+
+    while running.load(Ordering::Acquire) {
+        match socket.recv_from(&mut buffer) {
+            Ok((length, peer_addr)) => match parse_rtp_packet(&buffer[..length]) {
+                Ok(packet) => {
+                    tracing::debug!(
+                        %peer_addr,
+                        sequence_number = packet.sequence_number,
+                        timestamp = packet.timestamp,
+                        ssrc = packet.ssrc,
+                        payload_type = packet.payload_type,
+                        marker = packet.marker,
+                        payload_bytes = packet.payload.len(),
+                        "Received RTP media datagram"
+                    );
+                }
+                Err(error) => {
+                    tracing::warn!(%peer_addr, %error, datagram_bytes = length,
+                        "Discarding invalid RTP media datagram");
+                }
+            },
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+                ) => {}
+            Err(error) => {
+                tracing::error!(%error, "AirPlay UDP media socket failed");
+                break;
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod receiver_tests {
+    use super::*;
+    use std::net::SocketAddr;
+
+    #[test]
+    fn udp_receiver_binds_and_stops_cleanly() {
+        let bind_addr: SocketAddr = "127.0.0.1:0".parse().expect("valid loopback address");
+        let mut receiver = UdpMediaReceiver::bind(bind_addr).expect("receiver binds");
+        assert_ne!(receiver.local_addr().port(), 0);
+        assert_eq!(receiver.local_addr().ip(), bind_addr.ip());
+        receiver.stop();
+        assert!(receiver.worker.is_none());
+    }
+}
