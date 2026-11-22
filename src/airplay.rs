@@ -2,8 +2,9 @@
 //!
 //! The endpoint publishes mDNS, handles RTSP control and pairing exchanges,
 //! negotiates session/event/timing channels, and accepts the screen-mirroring
-//! TCP data stream. It parses media packet envelopes but does not yet decrypt video,
-//! reassemble frames, decode H.264/HEVC, or render frames in the GPUI window.
+//! TCP data stream. The RTSP media worker still cannot decrypt sender video
+//! until FairPlay key recovery is implemented; the GPUI preview consumes the
+//! latest-frame mailbox once a decoded frame is published.
 //! PTP synchronization and unsupported AirPlay feature bits remain disabled.
 
 mod config;
@@ -46,7 +47,7 @@ pub use video::{BgraFrame, FrameSnapshot};
 struct ReceiverRuntime {
     server: server::ControlServer,
     advertisement: discovery::Advertisement,
-    _media_foundation: Option<decoder::MediaFoundationRuntime>,
+    _media_foundation: Option<Arc<decoder::MediaFoundationRuntime>>,
     video_frames: Arc<video::LatestFrameMailbox>,
 }
 
@@ -92,16 +93,16 @@ pub fn start() -> anyhow::Result<()> {
                     tracing::warn!(%error, "Could not enumerate Media Foundation decoders")
                 }
             }
-            Some(runtime)
+            Some(Arc::new(runtime))
         }
         Err(error) => {
             tracing::warn!(%error, "Media Foundation unavailable; AirPlay control remains available");
             None
         }
     };
+    let video_frames = Arc::new(video::LatestFrameMailbox::new());
     let server = server::ControlServer::start()?;
     let advertisement = discovery::Advertisement::start()?;
-    let video_frames = Arc::new(video::LatestFrameMailbox::new());
     *runtime = Some(ReceiverRuntime {
         server,
         advertisement,
@@ -112,6 +113,24 @@ pub fn start() -> anyhow::Result<()> {
         "Built-in AirPlay discovery/control endpoint started; secure mirroring is not implemented yet"
     );
     Ok(())
+}
+
+/// Clone the resources needed by a newly negotiated mirror media worker.
+#[cfg(windows)]
+pub(super) fn media_pipeline_context() -> anyhow::Result<(
+    Option<Arc<decoder::MediaFoundationRuntime>>,
+    Arc<video::LatestFrameMailbox>,
+)> {
+    let runtime = receiver_slot()
+        .lock()
+        .map_err(|_| anyhow::anyhow!("AirPlay runtime lock is poisoned"))?;
+    let runtime = runtime
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("AirPlay receiver is not running"))?;
+    Ok((
+        runtime._media_foundation.clone(),
+        Arc::clone(&runtime.video_frames),
+    ))
 }
 
 /// Publish a decoded BGRA frame for the desktop presentation layer.
