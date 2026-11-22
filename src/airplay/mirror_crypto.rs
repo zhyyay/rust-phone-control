@@ -90,7 +90,12 @@ pub fn derive_mirror_stream_keys(
         ));
     }
 
-    let seed = match pair_verify_shared_secret {
+    // The paired path hashes the FairPlay key and Pair-Verify ECDH secret,
+    // then uses the first 16 bytes as the stream-key derivation input.
+    // The legacy path uses the unmodified 16-byte FairPlay key.
+    // These paths follow independently documented AirPlay receiver behavior;
+    // they still require validation against a captured iPhone session.
+    let seed: [u8; FAIRPLAY_KEY_BYTES] = match pair_verify_shared_secret {
         Some(shared_secret) => {
             if shared_secret.len() != X25519_SHARED_SECRET_BYTES {
                 return Err(MirrorCryptoError::InvalidSharedSecretLength(
@@ -100,9 +105,16 @@ pub fn derive_mirror_stream_keys(
             let mut digest = Sha512::new();
             digest.update(fairplay_video_key);
             digest.update(shared_secret);
-            digest.finalize().to_vec()
+            let digest = digest.finalize();
+            let mut seed = [0u8; FAIRPLAY_KEY_BYTES];
+            seed.copy_from_slice(&digest[..FAIRPLAY_KEY_BYTES]);
+            seed
         }
-        None => fairplay_video_key.to_vec(),
+        None => {
+            let mut seed = [0u8; FAIRPLAY_KEY_BYTES];
+            seed.copy_from_slice(fairplay_video_key);
+            seed
+        }
     };
 
     let stream_id = stream_connection_id.to_string();
@@ -111,12 +123,12 @@ pub fn derive_mirror_stream_keys(
 
     let mut key_digest = Sha512::new();
     key_digest.update(key_label.as_bytes());
-    key_digest.update(&seed);
+    key_digest.update(seed);
     let key_hash = key_digest.finalize();
 
     let mut iv_digest = Sha512::new();
     iv_digest.update(iv_label.as_bytes());
-    iv_digest.update(&seed);
+    iv_digest.update(seed);
     let iv_hash = iv_digest.finalize();
 
     let mut key = [0u8; AES_BLOCK_BYTES];
@@ -263,8 +275,8 @@ mod tests {
     #[test]
     fn derives_expected_pair_verify_stream_key_and_iv_vector() {
         let material = derive_mirror_stream_keys(&[0x5a; 16], Some(&[0xa5; 32]), 7).unwrap();
-        assert_eq!(material.key(), &hex("71ca71a8222c472ba1215b941a11aedb"));
-        assert_eq!(material.iv(), &hex("f427cf9796528a860b61f83a0105fcb2"));
+        assert_eq!(material.key(), &hex("3f8251c13e9102c0d002d64d323a4fe1"));
+        assert_eq!(material.iv(), &hex("3adc1a20eae4a5efc7eec9b89ee39e35"));
     }
 
     #[test]
