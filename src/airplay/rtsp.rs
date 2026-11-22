@@ -2,13 +2,13 @@
 //!
 //! The handler supports persistent RTSP connections, bounded request bodies,
 //! OPTIONS, GET /server-info, and binary-plist /info responses.
-//! Pair-Setup SRP M1/M3 is partially implemented; media transport is not implemented.
+//! Pair-Setup M1/M3 SRP and encrypted M5/M6 identity exchange are implemented; media transport is not implemented.
 
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::time::Duration;
 
-use super::{config, pairing, plist, srp::SrpServer, tlv8::{self, Tlv}};
+use super::{config, pair_setup, pairing, plist, srp::SrpServer, tlv8::{self, Tlv}};
 use ::plist::{Dictionary, Value};
 
 const MAX_HEADER_BYTES: usize = 16 * 1024;
@@ -299,8 +299,8 @@ impl PairSetupFailure {
     }
 }
 
-/// Handle Pair-Setup M1/M3 on one persistent RTSP connection.
-/// The setup code is supplied by AIRPLAY_SETUP_CODE and is never logged.
+/// Handle Pair-Setup M1/M3/M5 on one persistent RTSP connection.
+/// The setup code is supplied by the application and is never logged.
 fn handle_pair_setup(
     body: &[u8],
     srp_state: &mut Option<SrpServer>,
@@ -344,6 +344,32 @@ fn handle_pair_setup(
             *srp_state = Some(server);
             *session_key = None;
             Ok(response)
+        }
+        5 => {
+            let encrypted_data = fields
+                .iter()
+                .filter(|field| field.kind == 0x05)
+                .collect::<Vec<_>>();
+            if encrypted_data.len() != 1 {
+                *session_key = None;
+                return Ok(tlv8::encode(&[
+                    Tlv { kind: 0x06, value: vec![0x06] },
+                    Tlv { kind: 0x07, value: vec![0x02] },
+                ]));
+            }
+            let key = session_key.take().ok_or_else(|| {
+                PairSetupFailure::bad_request("Pair-Setup M5 received without a verified M3 exchange")
+            })?;
+            match pair_setup::handle_m5(&key, &encrypted_data[0].value) {
+                Ok(response) => Ok(response),
+                Err(error) => {
+                    tracing::warn!(%error, "Pair-Setup M5 identity exchange rejected");
+                    Ok(tlv8::encode(&[
+                        Tlv { kind: 0x06, value: vec![0x06] },
+                        Tlv { kind: 0x07, value: vec![0x02] },
+                    ]))
+                }
+            }
         }
         3 => {
             let message = pairing::parse_m3(body)
