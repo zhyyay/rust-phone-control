@@ -1,8 +1,9 @@
 //! Bounded RTSP/HTTP control parser for the AirPlay endpoint.
 //!
 //! The handler supports persistent RTSP connections, bounded request bodies,
-//! OPTIONS, /info, Pair-Setup, Pair-Verify, session and stream SETUP, RECORD,
-//! feedback, and TEARDOWN. Media decryption and video decoding are not implemented.
+//! OPTIONS, /info, Pair-Setup, Pair-Verify, FairPlay framing, session and stream
+//! SETUP, RECORD, feedback, and TEARDOWN. FairPlay cryptographic responses,
+//! media decryption, and video decoding are not implemented.
 
 use std::io::{Read, Write};
 use std::net::TcpStream;
@@ -83,7 +84,7 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
         ) {
             ("OPTIONS", _, "RTSP/1.0") => {
                 let response = format!(
-                    "RTSP/1.0 200 OK\r\nCSeq: {}\r\nServer: RustPhoneControl/0.1\r\nPublic: OPTIONS, GET, POST, SETUP, RECORD, TEARDOWN\r\nContent-Length: 0\r\n\r\n",
+                    "RTSP/1.0 200 OK\r\nCSeq: {}\r\nServer: RustPhoneControl/0.1\r\nPublic: OPTIONS, GET, POST, SETUP, RECORD, TEARDOWN, fp-setup\r\nContent-Length: 0\r\n\r\n",
                     request.cseq
                 );
                 write_response(&mut stream, &response, 200)?;
