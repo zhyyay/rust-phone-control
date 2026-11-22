@@ -8,6 +8,7 @@
 
 mod config;
 mod discovery;
+mod plist;
 mod rtsp;
 mod server;
 
