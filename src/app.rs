@@ -37,7 +37,18 @@ impl Render for PhoneControlApp {
                     .border_1()
                     .border_color(cx.theme().border)
                     .child(Label::new("AirPlay screen mirror"))
-                    .child(Label::new(airplay_pairing_code_label()))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(Label::new(airplay_pairing_code_label()))
+                            .child(
+                                Button::new("airplay-copy-code")
+                                    .label("Copy code")
+                                    .on_click(|_, _, cx| copy_airplay_pairing_code(cx)),
+                            ),
+                    )
                     .child(
                         Button::new("airplay-start")
                             .primary()
@@ -207,6 +218,14 @@ fn type_sample_ble() {
 }
 #[cfg(not(windows))]
 fn type_sample_ble() {}
+
+#[cfg(windows)]
+fn copy_airplay_pairing_code(cx: &mut App) {
+    cx.write_to_clipboard(ClipboardItem::new_string(crate::airplay::setup_code()));
+}
+
+#[cfg(not(windows))]
+fn copy_airplay_pairing_code(_: &mut App) {}
 
 #[cfg(windows)]
 fn airplay_pairing_code_label() -> String {
