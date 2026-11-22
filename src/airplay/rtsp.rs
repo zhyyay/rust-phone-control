@@ -442,8 +442,10 @@ fn handle_setup_request(
                     )
                 }
                 Some("PTP") => {
-                    tracing::info!("Sender selected PTP timing; separate NTP timing client is not started");
-                    None
+                    return Err((
+                        501,
+                        "PTP clock synchronization is not implemented by this receiver".to_owned(),
+                    ));
                 }
                 Some(other) => return Err((400, format!("unsupported timing protocol {other}"))),
                 None => None,
