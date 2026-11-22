@@ -9,7 +9,7 @@ use std::net::TcpStream;
 use std::time::Duration;
 
 use super::{
-    config, event::EventChannel, media::UdpMediaReceiver, pair_setup,
+    config, event::EventChannel, fairplay::FairPlaySession, media::UdpMediaReceiver, pair_setup,
     pair_verify::{self, PairVerifySession},
     pairing, plist,
     setup::{self, SetupRequest},
@@ -51,6 +51,7 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
     let mut pair_setup_srp: Option<SrpServer> = None;
     let mut pair_setup_session_key: Option<[u8; 64]> = None;
     let mut pair_verify_session: Option<PairVerifySession> = None;
+    let mut fairplay_session = FairPlaySession::new();
     let mut event_channel: Option<EventChannel> = None;
     let mut timing_client: Option<TimingClient> = None;
     let mut media_receiver: Option<UdpMediaReceiver> = None;
@@ -127,6 +128,40 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
                             error.status, reason, request.cseq
                         );
                         write_response(&mut stream, &response, error.status)?;
+                    }
+                }
+            }
+            ("POST", "/fp-setup", "RTSP/1.0") => {
+                match super::fairplay::parse_message(&request.body) {
+                    Ok(message) => match fairplay_session.accept(message) {
+                        Ok(state) => {
+                            tracing::info!(
+                                ?state,
+                                mode = ?fairplay_session.mode(),
+                                "AirPlay FairPlay setup message accepted"
+                            );
+                            let response = format!(
+                                "RTSP/1.0 501 Not Implemented\\r\\nCSeq: {}\\r\\nServer: RustPhoneControl/0.1\\r\\nContent-Length: 0\\r\\n\\r\\n",
+                                request.cseq
+                            );
+                            write_response(&mut stream, &response, 501)?;
+                        }
+                        Err(reason) => {
+                            tracing::warn!(%reason, "AirPlay FairPlay setup message rejected by session state");
+                            let response = format!(
+                                "RTSP/1.0 400 Bad Request\\r\\nCSeq: {}\\r\\nServer: RustPhoneControl/0.1\\r\\nContent-Length: 0\\r\\n\\r\\n",
+                                request.cseq
+                            );
+                            write_response(&mut stream, &response, 400)?;
+                        }
+                    },
+                    Err(error) => {
+                        tracing::warn!(%error, "AirPlay FairPlay setup framing rejected");
+                        let response = format!(
+                            "RTSP/1.0 400 Bad Request\\r\\nCSeq: {}\\r\\nServer: RustPhoneControl/0.1\\r\\nContent-Length: 0\\r\\n\\r\\n",
+                            request.cseq
+                        );
+                        write_response(&mut stream, &response, 400)?;
                     }
                 }
             }
