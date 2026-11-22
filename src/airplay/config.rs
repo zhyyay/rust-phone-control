@@ -1,12 +1,17 @@
 //! Shared configuration for the built-in AirPlay control endpoint.
 
 pub const SERVICE_TYPE: &str = "_airplay._tcp.local.";
+pub const RAOP_SERVICE_TYPE: &str = "_raop._tcp.local.";
 pub const SERVICE_NAME: &str = "Rust Phone Control";
 pub const HOST_NAME: &str = "rust-phone-control.local.";
 pub const TCP_PORT: u16 = 7000;
 pub const MODEL: &str = "RustPhoneControl1,1";
 pub const SOURCE_VERSION: &str = "1.0";
-pub const FEATURES: &str = "0x0";
+// Bit 7 advertises the screen-mirroring entry point. FairPlay and audio
+// capabilities are deliberately not advertised until their implementations
+// are complete.
+pub const FEATURES: &str = "0x80";
+pub const STATUS_FLAGS: &str = "0x4";
 
 /// Returns the MAC address of the active Wi-Fi adapter for AirPlay's
 /// `deviceid` TXT property. No machine-specific address is hard-coded.
