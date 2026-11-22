@@ -169,17 +169,30 @@ pub fn discovery_identity() -> Result<(String, String), String> {
     let state = lock
         .lock()
         .map_err(|_| "AirPlay pairing state lock poisoned")?;
-    let public_key = state.accessory.public_key().iter()
+    let public_key = state
+        .accessory
+        .public_key()
+        .iter()
         .map(|byte| format!("{byte:02X}"))
         .collect::<String>();
-    let raw = state.accessory.identifier.strip_prefix(b"rpc-")
+    let raw = state
+        .accessory
+        .identifier
+        .strip_prefix(b"rpc-")
         .ok_or("invalid persisted AirPlay accessory identifier prefix")?;
     if raw.len() != 32 || !raw.iter().all(u8::is_ascii_hexdigit) {
         return Err("invalid persisted AirPlay accessory identifier format".into());
     }
     let raw = std::str::from_utf8(raw)
         .map_err(|_| "persisted AirPlay accessory identifier is not ASCII")?;
-    let pairing_id = format!("{}-{}-{}-{}-{}", &raw[0..8], &raw[8..12], &raw[12..16], &raw[16..20], &raw[20..32]);
+    let pairing_id = format!(
+        "{}-{}-{}-{}-{}",
+        &raw[0..8],
+        &raw[8..12],
+        &raw[12..16],
+        &raw[16..20],
+        &raw[20..32]
+    );
     Ok((public_key, pairing_id))
 }
 
