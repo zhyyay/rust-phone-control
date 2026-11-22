@@ -1,4 +1,10 @@
 //! DNS-SD / mDNS publication for the local AirPlay endpoint.
+//!
+//! iOS screen-mirroring discovery commonly browses both the AirPlay service
+//! and the legacy RAOP service. Publish both records with the same stable
+//! device identity and control endpoint. The RAOP record is a discovery hint;
+//! this project does not advertise audio codecs or encryption modes it cannot
+//! currently serve.
 
 use anyhow::{Context, Result};
 use mdns_sd::{DaemonEvent, ServiceDaemon, ServiceInfo};
@@ -8,7 +14,7 @@ use super::config;
 
 pub struct Advertisement {
     daemon: ServiceDaemon,
-    fullname: String,
+    fullnames: Vec<String>,
     monitor_thread: Option<JoinHandle<()>>,
 }
 
@@ -51,39 +57,74 @@ impl Advertisement {
             .context("spawn mDNS event monitor thread")?;
 
         let device_id = config::device_id();
-        // Feature flags are intentionally zero: this endpoint does not claim
-        // mirroring, FairPlay, or pairing support until those are implemented.
-        let properties = [
+        let airplay_properties = [
             ("deviceid", device_id.as_str()),
             ("features", config::FEATURES),
             ("model", config::MODEL),
             ("srcvers", config::SOURCE_VERSION),
-            ("flags", "0x0"),
+            ("flags", config::STATUS_FLAGS),
         ];
-        let service = ServiceInfo::new(
+        let airplay_service = ServiceInfo::new(
             config::SERVICE_TYPE,
             config::SERVICE_NAME,
             config::HOST_NAME,
             (),
             config::TCP_PORT,
-            &properties[..],
+            &airplay_properties[..],
         )
         .context("build AirPlay mDNS service record")?
         .enable_addr_auto();
-        let fullname = service.get_fullname().to_owned();
+
+        let raop_instance = format!(
+            "{}@{}",
+            device_id.replace(':', ""),
+            config::SERVICE_NAME
+        );
+        // RAOP is advertised because iOS versions commonly use it as part of
+        // the Screen Mirroring discovery path. Keep the TXT record minimal:
+        // no codec or encryption support is claimed by this receiver yet.
+        let raop_properties = [
+            ("txtvers", "1"),
+            ("am", config::MODEL),
+            ("vs", config::SOURCE_VERSION),
+            ("sf", config::STATUS_FLAGS),
+        ];
+        let raop_service = ServiceInfo::new(
+            config::RAOP_SERVICE_TYPE,
+            &raop_instance,
+            config::HOST_NAME,
+            (),
+            config::TCP_PORT,
+            &raop_properties[..],
+        )
+        .context("build RAOP discovery service record")?
+        .enable_addr_auto();
+
+        let airplay_fullname = airplay_service.get_fullname().to_owned();
+        let raop_fullname = raop_service.get_fullname().to_owned();
+
         daemon
-            .register(service)
+            .register(airplay_service)
             .context("queue AirPlay mDNS service registration")?;
+        if let Err(error) = daemon.register(raop_service) {
+            let _ = daemon.unregister(&airplay_fullname);
+            let _ = daemon.shutdown();
+            let _ = monitor_thread.join();
+            return Err(error).context("queue RAOP mDNS service registration");
+        }
 
         tracing::info!(
-            service = %fullname,
+            airplay_service = %airplay_fullname,
+            raop_service = %raop_fullname,
             port = config::TCP_PORT,
             device_id = %device_id,
-            "AirPlay mDNS service registration queued; waiting for daemon announcement"
+            features = config::FEATURES,
+            "AirPlay and RAOP mDNS service registrations queued"
         );
+
         Ok(Self {
             daemon,
-            fullname,
+            fullnames: vec![airplay_fullname, raop_fullname],
             monitor_thread: Some(monitor_thread),
         })
     }
@@ -91,8 +132,14 @@ impl Advertisement {
 
 impl Drop for Advertisement {
     fn drop(&mut self) {
-        if let Err(error) = self.daemon.unregister(&self.fullname) {
-            tracing::warn!(error = %error, "Could not unregister AirPlay mDNS service");
+        for fullname in &self.fullnames {
+            if let Err(error) = self.daemon.unregister(fullname) {
+                tracing::warn!(
+                    service = %fullname,
+                    error = %error,
+                    "Could not unregister AirPlay discovery service"
+                );
+            }
         }
         if let Err(error) = self.daemon.shutdown() {
             tracing::warn!(error = %error, "Could not shut down mDNS daemon");
