@@ -2,91 +2,66 @@
 
 ## Requirements
 
-- Rust stable; Rust 1.92 or newer is recommended by the current GPUI Kit dependency graph.
-- Windows: MSVC toolchain and Visual Studio C++ Build Tools.
-- For wireless input: a Bluetooth LE adapter that supports the Peripheral role / GATT server.
-- For wireless video: Windows PC and iPhone on the same trusted Wi-Fi network.
+- Rust stable (Rust 1.92 or newer is recommended by the current GPUI Kit dependency graph).
+- Windows development: MSVC toolchain and Visual Studio C++ Build Tools.
+- BLE input: a Bluetooth LE adapter capable of the Peripheral role / GATT server.
+- AirPlay experiments: Windows PC and iPhone on the same trusted Wi-Fi network.
 
 ## Build and test
 
+Run from the repository root:
+
 ```powershell
 cargo fmt --all -- --check
-cargo test --all-targets
 cargo check --all-targets
+cargo test --all-targets
 cargo run --bin phone-desktop
 ```
 
-## Windows BLE HID implementation
+## Windows BLE HID
 
-The Windows BLE implementation is in `src/input/ble/service.rs`.
+The Windows BLE implementation lives in src/input/ble/.
 
-Published services and characteristics:
-- HID Service (0x1812): HID Information, Report Map, HID Control Point, mouse Input Report
-  (report ID 1), and keyboard Input Report (report ID 2).
-- Battery Service (0x180F): readable Battery Level (100% placeholder).
-- Device Information Service (0x180A) is not published by this app: Windows reserves DIS for the system and returns `BluetoothError.DisabledByPolicy` when an app tries to create it.
-- Report Reference descriptors identify each input report and its report ID.
-- HID, Battery, and Device Information characteristic reads/writes require an encrypted link.
+The current Report Host implementation publishes HID and Battery GATT services, including mouse and keyboard input reports. It intentionally does not claim Boot Protocol support. The desktop application can start/stop advertising and send relative mouse movement, click, scroll, and sample keyboard input.
 
-This implementation targets a **Report Host**. Protocol Mode and Boot Protocol characteristics
-are intentionally not published because Boot Keyboard / Boot Mouse characteristics are not
-implemented. The Report Host profile permits Protocol Mode to be absent. HID Control Point
-Suspend and Exit Suspend commands suppress notifications while suspended and clear the last
-reported input state.
-
-Run the Windows BLE diagnostic:
+Run the standalone diagnostic:
 
 ```powershell
 cargo run --bin ble-probe
 ```
 
-The probe checks the default adapter's BLE Peripheral-role capability and whether Windows can
-create a HID GATT service provider. The executable then attempts to publish HID, Battery, and
-Device Information services and start advertising. A successful provider creation or advertising
-status is not proof of successful iPhone discovery, bonding, or HID operation.
+The probe checks adapter capability, starts the GATT HID peripheral, and can send a short test sequence after user input. A successful advertising status alone does not prove iPhone discovery, bonding, subscription, or end-to-end input delivery.
 
-After advertising starts, try pairing from iPhone:
-`Settings → Accessibility → Touch → AssistiveTouch → Devices → Bluetooth Devices`.
-The exact labels may vary by iOS language/version. This is AssistiveTouch pointer control, not
-native touchscreen injection. Relative mouse motion needs calibration; absolute-coordinate
-automation is not promised by this backend.
+On iPhone, AssistiveTouch device pairing is generally under Settings → Accessibility → Touch → AssistiveTouch → Devices → Bluetooth Devices. Labels can vary by iOS version and language. This provides pointer-style accessibility input, not native touchscreen injection.
 
-**Not yet validated:** target-adapter advertising, iPhone discovery and bonding, AssistiveTouch
-compatibility, notification subscription, and end-to-end input delivery. These require testing on
-the actual Windows laptop and iPhone.
+## AirPlay control-plane prototype
 
-## iCTRL discovery
+AirPlay code is organized under src/airplay/:
 
-The optional read-only discovery client probes `/status`, `/schema`, and `/skill`:
+- config.rs: advertised identity and service configuration.
+- discovery.rs: mDNS/DNS-SD advertisement lifecycle.
+- server.rs: TCP listener and connection lifecycle.
+- rtsp.rs: bounded RTSP/HTTP parsing and control routing.
+- plist.rs and tlv8.rs: protocol serialization helpers.
+- srp.rs and pair_setup.rs: Pair-Setup handshake.
+- pair_verify.rs: Pair-Verify exchange.
+- pairing_store.rs: Windows DPAPI-protected identity and controller persistence.
+
+Pair-Setup and Pair-Verify code paths have unit tests, but this is not a complete or validated AirPlay receiver. FairPlay, encrypted media transport, stream setup, video reception, decoding, and GPUI frame rendering are not implemented. The SRP big-integer implementation uses variable-time modular exponentiation and is not production-ready.
+
+## Optional iCTRL discovery
+
+The separate read-only iCTRL client probes /status, /schema, and /skill:
 
 ```powershell
 cargo run --bin ictrl-probe -- http://PHONE-IP:8200
 ```
 
-The runner defaults to port 8200. Remote Access is off by default. Do not expose this service to
-the public internet. Pairing and authenticated RPC must follow the official encrypted protocol;
-do not invent a handshake or send plaintext control requests.
+It does not perform pairing or authenticated control. Do not expose an iCTRL service to the public internet; any future authenticated protocol must follow its official cryptographic specification.
 
-## Implementation boundaries
+## Engineering rules
 
-Implemented:
-- GPUI Kit desktop shell, logging, and read-only iCTRL discovery.
-- Platform-independent mouse/keyboard input event types and report encoders.
-- Initial Windows WinRT BLE HID Report Host and Battery GATT services and advertising implementation.
-- HID suspend/resume handling and current input-report readback.
-
-Not implemented or not yet validated:
-- Boot Protocol support.
-- Persistent pairing/bond management and reconnect lifecycle.
-- Verified iPhone pairing and real device input delivery.
-- AirPlay receiver, H.264 decoding/rendering, and live screenshot capture.
-- OCR, screen-coordinate mapping, and automation task runner.
-- Multi-device concurrent control; the first version is single-active-device.
-
-## Planned phases
-
-1. **Phase 1-A:** validate Windows BLE advertising, iPhone AssistiveTouch pairing, and end-to-end
-   mouse/keyboard input.
-2. **Phase 1-B:** AirPlay receiver process, H.264 frame transport, Windows decode, and GPUI display.
-3. **Phase 1-C:** Unified device/session UI, reconnect handling, and emergency release of all keys.
-4. **Phase 2:** Screenshot API, coordinate transforms, OCR, and Rust automation executor.
+- Keep Windows-specific APIs behind cfg(windows) and in src/platform/windows/ where practical.
+- Keep protocol parsing, cryptography, persistence, transport, and UI responsibilities separated.
+- Check every new dependency's license before adding it; do not introduce GPL code.
+- Never claim screen mirroring works until a complete iPhone-to-GPUI media path is implemented and tested on the target devices.
