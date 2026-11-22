@@ -27,6 +27,12 @@ use windows_062::Win32::{
 const MF_VERSION: u32 = 0x0002_0070;
 #[cfg(windows)]
 const MFSTARTUP_FULL: u32 = 0;
+#[cfg(windows)]
+const MF_E_NOTACCEPTING_HR: i32 = 0xC00D_36B0u32 as i32;
+#[cfg(windows)]
+const MF_E_TRANSFORM_STREAM_CHANGE_HR: i32 = 0xC00D_6D61u32 as i32;
+#[cfg(windows)]
+const MF_E_TRANSFORM_NEED_MORE_INPUT_HR: i32 = 0xC00D_6D72u32 as i32;
 
 #[cfg(windows)]
 #[link(name = "mfplat")]
@@ -347,6 +353,55 @@ impl<'runtime> H264Decoder<'runtime> {
         })
     }
 
+    /// Re-negotiate the decoder output after MFT_E_TRANSFORM_STREAM_CHANGE.
+    ///
+    /// The H.264 decoder can expose a new output type when the bitstream's
+    /// sequence parameters change. Keep NV12 as the presentation format and
+    /// refresh dimensions from the newly selected media type when available.
+    fn refresh_output_type(&mut self) -> Result<(), MediaFoundationError> {
+        let mut selected_output = None;
+        for index in 0..64u32 {
+            let candidate = match unsafe {
+                self.transform.GetOutputAvailableType(self.output_stream, index)
+            } {
+                Ok(media_type) => media_type,
+                Err(_) => break,
+            };
+            if unsafe { candidate.GetGUID(&MF_MT_SUBTYPE) }
+                .is_ok_and(|subtype| subtype == MFVideoFormat_NV12)
+            {
+                selected_output = Some(candidate);
+                break;
+            }
+        }
+
+        let output_type = selected_output.ok_or(MediaFoundationError::Nv12OutputUnavailable)?;
+        let dimensions = unsafe { output_type.GetUINT64(&MF_MT_FRAME_SIZE) }.ok();
+        unsafe { self.transform.SetOutputType(self.output_stream, &output_type, 0) }
+            .map_err(|error| MediaFoundationError::OutputTypeFailed(error.code().0))?;
+
+        if let Some(frame_size) = dimensions {
+            let width = (frame_size >> 32) as u32;
+            let height = frame_size as u32;
+            if width == 0
+                || height == 0
+                || width > crate::airplay::video::MAX_FRAME_DIMENSION
+                || height > crate::airplay::video::MAX_FRAME_DIMENSION
+            {
+                return Err(MediaFoundationError::InvalidDimensions);
+            }
+            self.width = width;
+            self.height = height;
+        }
+
+        tracing::info!(
+            width = self.width,
+            height = self.height,
+            "H.264 decoder output type refreshed after stream change"
+        );
+        Ok(())
+    }
+
     /// Submit one complete Annex-B H.264 access unit.
     pub fn submit_access_unit(&mut self, access_unit: &[u8]) -> Result<(), MediaFoundationError> {
         if access_unit.is_empty() {
@@ -393,11 +448,30 @@ impl<'runtime> H264Decoder<'runtime> {
         access_unit: &[u8],
     ) -> Result<Vec<DecodedNv12Frame>, MediaFoundationError> {
         const MAX_FRAMES_PER_DRAIN: usize = 16;
+        const MAX_INPUT_RETRIES: usize = 4;
 
-        let mut frames = self.drain_available_frames(MAX_FRAMES_PER_DRAIN)?;
-        self.submit_access_unit(access_unit)?;
-        frames.extend(self.drain_available_frames(MAX_FRAMES_PER_DRAIN)?);
-        Ok(frames)
+        let mut frames = Vec::new();
+        for attempt in 0..MAX_INPUT_RETRIES {
+            frames.extend(self.drain_available_frames(MAX_FRAMES_PER_DRAIN)?);
+            match self.submit_access_unit(access_unit) {
+                Ok(()) => {
+                    frames.extend(self.drain_available_frames(MAX_FRAMES_PER_DRAIN)?);
+                    return Ok(frames);
+                }
+                Err(MediaFoundationError::ProcessInputFailed(hr))
+                    if hr == MF_E_NOTACCEPTING_HR && attempt + 1 < MAX_INPUT_RETRIES =>
+                {
+                    // The transform still has output queued. Drain another
+                    // bounded batch before retrying the same not-yet-accepted
+                    // access unit.
+                }
+                Err(error) => return Err(error),
+            }
+        }
+
+        Err(MediaFoundationError::ProcessInputFailed(
+            MF_E_NOTACCEPTING_HR,
+        ))
     }
 
     /// Submit one Annex-B access unit, drain decoded frames, and convert
@@ -474,8 +548,12 @@ impl<'runtime> H264Decoder<'runtime> {
         drop(events);
 
         if let Err(error) = result {
-            if error.code().0 == 0xC00D6D72u32 as i32 {
-                return Ok(None); // MF_E_TRANSFORM_NEED_MORE_INPUT
+            if error.code().0 == MF_E_TRANSFORM_NEED_MORE_INPUT_HR {
+                return Ok(None);
+            }
+            if error.code().0 == MF_E_TRANSFORM_STREAM_CHANGE_HR {
+                self.refresh_output_type()?;
+                return Ok(None);
             }
             return Err(MediaFoundationError::ProcessOutputFailed(error.code().0));
         }
