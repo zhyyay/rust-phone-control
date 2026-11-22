@@ -5,15 +5,17 @@
 //! SETUP, RECORD, feedback, and TEARDOWN. FairPlay cryptographic responses,
 //! media decryption, and video decoding are not implemented.
 
-use std::io::{Read, Write};
+use std::io::{self, Read, Write};
 use std::net::TcpStream;
+use std::sync::mpsc::{self, Receiver};
+use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use super::{
     config,
     event::EventChannel,
     fairplay::FairPlaySession,
-    media::UdpMediaReceiver,
+    media::{ReceivedMediaPacket, UdpMediaReceiver},
     pair_setup,
     pair_verify::{self, PairVerifySession},
     pairing, plist,
@@ -27,6 +29,70 @@ use ::plist::{Dictionary, Value};
 const MAX_HEADER_BYTES: usize = 16 * 1024;
 const MAX_BODY_BYTES: usize = 64 * 1024;
 const READ_CHUNK_BYTES: usize = 2048;
+const MEDIA_PACKET_QUEUE_CAPACITY: usize = 128;
+
+/// Owns the negotiated UDP socket and its bounded packet-processing worker.
+/// The worker currently validates and accounts for packets only; it does not
+/// decrypt, reassemble, or decode their payloads.
+struct MediaSession {
+    receiver: UdpMediaReceiver,
+    worker: Option<JoinHandle<()>>,
+}
+
+impl MediaSession {
+    fn start(peer_ip: std::net::IpAddr) -> io::Result<Self> {
+        let (sender, packets) = mpsc::sync_channel(MEDIA_PACKET_QUEUE_CAPACITY);
+        let receiver = UdpMediaReceiver::bind_with_sender(
+            "0.0.0.0:0".parse().expect("static IPv4 wildcard address is valid"),
+            peer_ip,
+            sender,
+        )?;
+        let worker = thread::Builder::new()
+            .name("airplay-media-process".to_owned())
+            .spawn(move || process_media_packets(packets))?;
+        Ok(Self {
+            receiver,
+            worker: Some(worker),
+        })
+    }
+
+    fn port(&self) -> u16 {
+        self.receiver.local_addr().port()
+    }
+
+    fn stop(&mut self) {
+        // Stop the producer first. Its sender is dropped when the UDP worker
+        // exits, allowing the consumer to drain and then leave its recv loop.
+        self.receiver.stop();
+        if let Some(worker) = self.worker.take() {
+            if worker.join().is_err() {
+                tracing::warn!("AirPlay media processing worker panicked");
+            }
+        }
+    }
+}
+
+impl Drop for MediaSession {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+fn process_media_packets(packets: Receiver<ReceivedMediaPacket>) {
+    let mut received = 0u64;
+    while let Ok(packet) = packets.recv() {
+        received = received.saturating_add(1);
+        tracing::debug!(
+            %packet.peer_addr,
+            packet_type = ?packet.packet_type,
+            timestamp = packet.timestamp,
+            payload_bytes = packet.payload.len(),
+            received,
+            "AirPlay media packet delivered to session processing worker"
+        );
+    }
+    tracing::info!(received, "AirPlay media processing worker stopped");
+}
 
 struct Request {
     method: String,
@@ -59,7 +125,7 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
     let mut fairplay_session = FairPlaySession::new();
     let mut event_channel: Option<EventChannel> = None;
     let mut timing_client: Option<TimingClient> = None;
-    let mut media_receiver: Option<UdpMediaReceiver> = None;
+    let mut media_receiver: Option<MediaSession> = None;
     tracing::info!("AirPlay RTSP session started");
 
     loop {
@@ -461,7 +527,7 @@ fn handle_setup_request(
     peer_ip: std::net::IpAddr,
     event_channel: &mut Option<EventChannel>,
     timing_client: &mut Option<TimingClient>,
-    media_receiver: &mut Option<UdpMediaReceiver>,
+    media_receiver: &mut Option<MediaSession>,
 ) -> Result<Vec<u8>, (u16, String)> {
     let setup = setup::parse_setup_request(body).map_err(|reason| (400, reason))?;
     match setup {
@@ -522,14 +588,9 @@ fn handle_setup_request(
                 ));
             }
 
-            let receiver = UdpMediaReceiver::bind(
-                "0.0.0.0:0"
-                    .parse()
-                    .expect("static IPv4 wildcard socket address is valid"),
-                peer_ip,
-            )
-            .map_err(|error| (503, format!("could not bind video UDP receiver: {error}")))?;
-            let data_port = receiver.local_addr().port();
+            let receiver = MediaSession::start(peer_ip)
+                .map_err(|error| (503, format!("could not start video media pipeline: {error}")))?;
+            let data_port = receiver.port();
 
             let mut stream_response = Dictionary::new();
             stream_response.insert("type".into(), Value::Integer(stream.stream_type.into()));
