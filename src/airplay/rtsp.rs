@@ -1167,8 +1167,9 @@ fn pair_verify_error_response() -> Vec<u8> {
 
 fn server_info_plist() -> String {
     format!(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\"><dict><key>deviceid</key><string>{}</string><key>features</key><integer>0</integer><key>model</key><string>{}</string><key>protovers</key><string>1.0</string><key>srcvers</key><string>{}</string></dict></plist>",
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\"><dict><key>deviceid</key><string>{}</string><key>features</key><integer>{}</integer><key>model</key><string>{}</string><key>protovers</key><string>1.0</string><key>srcvers</key><string>{}</string></dict></plist>",
         config::device_id(),
+        u32::from_str_radix(config::FEATURES.trim_start_matches("0x"), 16).unwrap_or(0),
         config::MODEL,
         config::SOURCE_VERSION
     )
@@ -1221,7 +1222,7 @@ fn txt_airplay_dictionary() -> Dictionary {
         "srcvers".into(),
         Value::String(config::SOURCE_VERSION.into()),
     );
-    dictionary.insert("flags".into(), Value::String("0x0".into()));
+    dictionary.insert("flags".into(), Value::String(config::STATUS_FLAGS.into()));
     dictionary
 }
 
@@ -1534,9 +1535,9 @@ mod tests {
     }
 
     #[test]
-    fn server_info_contains_declared_model_and_zero_features() {
+    fn server_info_contains_declared_model_and_advertised_features() {
         let body = server_info_plist();
-        assert!(body.contains("<key>features</key><integer>0</integer>"));
+        assert!(body.contains("<key>features</key><integer>128</integer>"));
         assert!(body.contains("<key>model</key><string>RustPhoneControl1,1</string>"));
     }
 
@@ -1567,7 +1568,8 @@ mod tests {
                 "missing string key {key}"
             );
         }
-        assert_eq!(dict.get("features").and_then(Value::as_string), Some("0x0"));
+        assert_eq!(dict.get("features").and_then(Value::as_string), Some(config::FEATURES));
+        assert_eq!(dict.get("flags").and_then(Value::as_string), Some(config::STATUS_FLAGS));
     }
 
     #[test]
