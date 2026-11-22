@@ -9,6 +9,8 @@
 mod config;
 mod discovery;
 #[allow(dead_code)]
+mod fairplay;
+#[allow(dead_code)]
 mod event;
 // Media reception is owned by the RTSP session and starts only after SETUP
 // negotiates the screen-mirroring data port.
