@@ -6,7 +6,7 @@
 //! media decryption, and video decoding are not implemented.
 
 use std::io::{self, Read, Write};
-use std::net::TcpStream;
+use std::net::{TcpListener, TcpStream};
 use std::sync::mpsc::{self, Receiver};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -15,7 +15,7 @@ use super::{
     config,
     event::EventChannel,
     fairplay::FairPlaySession,
-    media::{ReceivedMediaPacket, UdpMediaReceiver},
+    media::{ReceivedMediaPacket, parse_screen_mirror_packet, SCREEN_MIRROR_HEADER_SIZE},
     pair_setup,
     pair_verify::{self, PairVerifySession},
     pairing, plist,
@@ -30,42 +30,68 @@ const MAX_HEADER_BYTES: usize = 16 * 1024;
 const MAX_BODY_BYTES: usize = 64 * 1024;
 const READ_CHUNK_BYTES: usize = 2048;
 const MEDIA_PACKET_QUEUE_CAPACITY: usize = 128;
+const MAX_MIRROR_PAYLOAD_BYTES: usize = 16 * 1024 * 1024;
+const MEDIA_ACCEPT_POLL_INTERVAL: Duration = Duration::from_millis(20);
 
-/// Owns the negotiated UDP socket and its bounded packet-processing worker.
-/// The worker currently validates and accounts for packets only; it does not
-/// decrypt, reassemble, or decode their payloads.
+/// Owns the negotiated TCP screen-mirroring listener and its bounded worker.
+/// The worker reads each 128-byte packet header and its declared payload. It
+/// does not decrypt, parse codec configuration, decode, or render video.
 struct MediaSession {
-    receiver: UdpMediaReceiver,
+    local_addr: std::net::SocketAddr,
+    running: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    accept_worker: Option<JoinHandle<()>>,
     worker: Option<JoinHandle<()>>,
 }
 
 impl MediaSession {
     fn start(peer_ip: std::net::IpAddr) -> io::Result<Self> {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+
+        let listener = TcpListener::bind("0.0.0.0:0")?;
+        listener.set_nonblocking(true)?;
+        let local_addr = listener.local_addr()?;
+        let running = Arc::new(AtomicBool::new(true));
+        let worker_running = Arc::clone(&running);
         let (sender, packets) = mpsc::sync_channel(MEDIA_PACKET_QUEUE_CAPACITY);
-        let receiver = UdpMediaReceiver::bind_with_sender(
-            "0.0.0.0:0"
-                .parse()
-                .expect("static IPv4 wildcard address is valid"),
-            peer_ip,
-            sender,
-        )?;
+
         let worker = thread::Builder::new()
             .name("airplay-media-process".to_owned())
             .spawn(move || process_media_packets(packets))?;
+        let accept_worker = match thread::Builder::new()
+            .name("airplay-mirror-tcp".to_owned())
+            .spawn(move || accept_mirror_connections(listener, worker_running, peer_ip, sender))
+        {
+            Ok(worker) => worker,
+            Err(error) => {
+                running.store(false, Ordering::Release);
+                let _ = worker.join();
+                return Err(error);
+            }
+        };
+
+        tracing::info!(%local_addr, "AirPlay screen-mirroring TCP listener bound");
         Ok(Self {
-            receiver,
+            local_addr,
+            running,
+            accept_worker: Some(accept_worker),
             worker: Some(worker),
         })
     }
 
     fn port(&self) -> u16 {
-        self.receiver.local_addr().port()
+        self.local_addr.port()
     }
 
     fn stop(&mut self) {
-        // Stop the producer first. Its sender is dropped when the UDP worker
-        // exits, allowing the consumer to drain and then leave its recv loop.
-        self.receiver.stop();
+        use std::sync::atomic::Ordering;
+
+        self.running.store(false, Ordering::Release);
+        if let Some(worker) = self.accept_worker.take() {
+            if worker.join().is_err() {
+                tracing::warn!("AirPlay mirror TCP accept worker panicked");
+            }
+        }
         if let Some(worker) = self.worker.take() {
             if worker.join().is_err() {
                 tracing::warn!("AirPlay media processing worker panicked");
@@ -78,6 +104,137 @@ impl Drop for MediaSession {
     fn drop(&mut self) {
         self.stop();
     }
+}
+
+fn accept_mirror_connections(
+    listener: TcpListener,
+    running: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    expected_peer_ip: std::net::IpAddr,
+    sender: mpsc::SyncSender<ReceivedMediaPacket>,
+) {
+    use std::sync::atomic::Ordering;
+
+    while running.load(Ordering::Acquire) {
+        match listener.accept() {
+            Ok((stream, peer_addr)) => {
+                if peer_addr.ip() != expected_peer_ip {
+                    tracing::warn!(%peer_addr, %expected_peer_ip, "Rejecting unexpected AirPlay mirror TCP peer");
+                    continue;
+                }
+                if let Err(error) = stream.set_read_timeout(Some(Duration::from_millis(100))) {
+                    tracing::warn!(%error, "Could not set AirPlay mirror TCP read timeout");
+                    continue;
+                }
+                tracing::info!(%peer_addr, "AirPlay mirror TCP client connected");
+                read_mirror_stream(stream, peer_addr, &sender, &running);
+                tracing::info!(%peer_addr, "AirPlay mirror TCP client disconnected");
+            }
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                thread::sleep(MEDIA_ACCEPT_POLL_INTERVAL);
+            }
+            Err(error) => {
+                tracing::error!(%error, "AirPlay mirror TCP listener failed");
+                break;
+            }
+        }
+    }
+}
+
+fn read_mirror_stream(
+    mut stream: TcpStream,
+    peer_addr: std::net::SocketAddr,
+    sender: &mpsc::SyncSender<ReceivedMediaPacket>,
+    running: &std::sync::Arc<std::sync::atomic::AtomicBool>,
+) {
+    use std::sync::atomic::Ordering;
+
+    let mut received = 0u64;
+    while running.load(Ordering::Acquire) {
+        let mut header = [0u8; SCREEN_MIRROR_HEADER_SIZE];
+        match read_exact_while_running(&mut stream, &mut header, running) {
+            Ok(true) => {}
+            Ok(false) => break,
+            Err(error) => {
+                if error.kind() != io::ErrorKind::UnexpectedEof {
+                    tracing::debug!(%peer_addr, %error, "AirPlay mirror TCP header read ended");
+                }
+                break;
+            }
+        }
+
+        let payload_size =
+            u32::from_le_bytes([header[0], header[1], header[2], header[3]]) as usize;
+        if payload_size > MAX_MIRROR_PAYLOAD_BYTES {
+            tracing::warn!(%peer_addr, payload_size, "Rejecting oversized AirPlay mirror payload");
+            break;
+        }
+
+        let mut packet_bytes = Vec::with_capacity(SCREEN_MIRROR_HEADER_SIZE + payload_size);
+        packet_bytes.extend_from_slice(&header);
+        packet_bytes.resize(SCREEN_MIRROR_HEADER_SIZE + payload_size, 0);
+        if payload_size > 0
+            && !matches!(
+                read_exact_while_running(
+                    &mut stream,
+                    &mut packet_bytes[SCREEN_MIRROR_HEADER_SIZE..],
+                    running
+                ),
+                Ok(true)
+            )
+        {
+            break;
+        }
+
+        let parsed = match parse_screen_mirror_packet(&packet_bytes) {
+            Ok(packet) => packet,
+            Err(error) => {
+                tracing::warn!(%peer_addr, %error, "Discarding invalid AirPlay mirror TCP packet");
+                break;
+            }
+        };
+        let owned = ReceivedMediaPacket {
+            peer_addr,
+            packet_type: parsed.packet_type,
+            timestamp: parsed.timestamp,
+            payload: parsed.payload.to_vec(),
+        };
+        match sender.try_send(owned) {
+            Ok(()) => received = received.saturating_add(1),
+            Err(mpsc::TrySendError::Full(_)) => {
+                tracing::warn!(%peer_addr, "AirPlay media processing queue is full; dropping TCP packet");
+            }
+            Err(mpsc::TrySendError::Disconnected(_)) => break,
+        }
+    }
+    tracing::debug!(%peer_addr, received, "AirPlay mirror TCP stream reader stopped");
+}
+
+fn read_exact_while_running<R: Read>(
+    reader: &mut R,
+    buffer: &mut [u8],
+    running: &std::sync::Arc<std::sync::atomic::AtomicBool>,
+) -> io::Result<bool> {
+    use std::sync::atomic::Ordering;
+
+    let mut offset = 0;
+    while offset < buffer.len() && running.load(Ordering::Acquire) {
+        match reader.read(&mut buffer[offset..]) {
+            Ok(0) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "mirror stream closed",
+                ));
+            }
+            Ok(read) => offset += read,
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::Interrupted | io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+                ) => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(offset == buffer.len())
 }
 
 fn process_media_packets(packets: Receiver<ReceivedMediaPacket>) {
@@ -611,7 +768,7 @@ fn handle_setup_request(
             tracing::info!(
                 data_port,
                 stream_connection_id = ?stream.connection_id,
-                "AirPlay screen-mirroring UDP media port negotiated"
+                "AirPlay screen-mirroring TCP media port negotiated"
             );
             plist::encode_binary(&Value::Dictionary(response)).map_err(|error| {
                 (
