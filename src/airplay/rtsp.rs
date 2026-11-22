@@ -10,7 +10,11 @@ use std::net::TcpStream;
 use std::time::Duration;
 
 use super::{
-    config, event::EventChannel, fairplay::FairPlaySession, media::UdpMediaReceiver, pair_setup,
+    config,
+    event::EventChannel,
+    fairplay::FairPlaySession,
+    media::UdpMediaReceiver,
+    pair_setup,
     pair_verify::{self, PairVerifySession},
     pairing, plist,
     setup::{self, SetupRequest},
@@ -215,11 +219,7 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
                     &mut timing_client,
                     &mut media_receiver,
                 ) {
-                    Ok(body) => write_binary_plist_response(
-                        &mut stream,
-                        &request.cseq,
-                        &body,
-                    )?,
+                    Ok(body) => write_binary_plist_response(&mut stream, &request.cseq, &body)?,
                     Err((status, reason)) => {
                         tracing::warn!(status, %reason, "AirPlay SETUP request rejected");
                         let reason_phrase = match status {
@@ -241,7 +241,9 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
                     "RTSP/1.0 200 OK\r\nCSeq: {}\r\nServer: RustPhoneControl/0.1\r\nContent-Length: 0\r\n\r\n",
                     request.cseq
                 );
-                tracing::info!("AirPlay RECORD request accepted; media decryption/decoding is not active");
+                tracing::info!(
+                    "AirPlay RECORD request accepted; media decryption/decoding is not active"
+                );
                 write_response(&mut stream, &response, 200)?;
             }
             ("POST", "/feedback", "RTSP/1.0") => {
@@ -472,11 +474,9 @@ fn handle_setup_request(
                     let sender_port = session.timing_port.ok_or_else(|| {
                         (400, "NTP SETUP is missing the sender timingPort".to_owned())
                     })?;
-                    Some(
-                        TimingClient::start(peer_ip, sender_port).map_err(|error| {
-                            (503, format!("could not start NTP timing client: {error}"))
-                        })?,
-                    )
+                    Some(TimingClient::start(peer_ip, sender_port).map_err(|error| {
+                        (503, format!("could not start NTP timing client: {error}"))
+                    })?)
                 }
                 Some("PTP") => {
                     return Err((
@@ -494,8 +494,12 @@ fn handle_setup_request(
             response.insert("timingPort".into(), Value::Integer(timing_port.into()));
             *event_channel = Some(channel);
             *timing_client = new_timing_client;
-            plist::encode_binary(&Value::Dictionary(response))
-                .map_err(|error| (503, format!("could not encode session SETUP response: {error}")))
+            plist::encode_binary(&Value::Dictionary(response)).map_err(|error| {
+                (
+                    503,
+                    format!("could not encode session SETUP response: {error}"),
+                )
+            })
         }
         SetupRequest::Streams(streams) => {
             if event_channel.is_none() {
@@ -542,8 +546,12 @@ fn handle_setup_request(
                 stream_connection_id = ?stream.connection_id,
                 "AirPlay screen-mirroring UDP media port negotiated"
             );
-            plist::encode_binary(&Value::Dictionary(response))
-                .map_err(|error| (503, format!("could not encode stream SETUP response: {error}")))
+            plist::encode_binary(&Value::Dictionary(response)).map_err(|error| {
+                (
+                    503,
+                    format!("could not encode stream SETUP response: {error}"),
+                )
+            })
         }
     }
 }
@@ -830,8 +838,8 @@ fn txt_airplay_dictionary() -> Dictionary {
 mod tests {
     use super::plist;
     use super::{
-        Request, build_info_response, find_header_end, handle_pair_setup,
-        handle_setup_request, server_info_plist,
+        Request, build_info_response, find_header_end, handle_pair_setup, handle_setup_request,
+        server_info_plist,
     };
     use crate::airplay::tlv8::{self, Tlv};
     use ::plist::{Dictionary, Value};
@@ -871,14 +879,9 @@ mod tests {
         let mut event = None;
         let mut timing = None;
         let mut media = None;
-        let response = handle_setup_request(
-            &session_body,
-            peer_ip,
-            &mut event,
-            &mut timing,
-            &mut media,
-        )
-        .expect("session SETUP");
+        let response =
+            handle_setup_request(&session_body, peer_ip, &mut event, &mut timing, &mut media)
+                .expect("session SETUP");
         let value = plist::decode(&response).expect("decode session response");
         let dictionary = value.as_dictionary().expect("session response dictionary");
         let event_port = dictionary
@@ -902,18 +905,16 @@ mod tests {
         stream.insert("type".into(), Value::Integer(110.into()));
         stream.insert("streamConnectionID".into(), Value::Integer(42.into()));
         let mut root = Dictionary::new();
-        root.insert("streams".into(), Value::Array(vec![Value::Dictionary(stream)]));
+        root.insert(
+            "streams".into(),
+            Value::Array(vec![Value::Dictionary(stream)]),
+        );
         let stream_body =
             plist::encode_binary(&Value::Dictionary(root)).expect("encode stream setup");
 
-        let response = handle_setup_request(
-            &stream_body,
-            peer_ip,
-            &mut event,
-            &mut timing,
-            &mut media,
-        )
-        .expect("screen stream SETUP");
+        let response =
+            handle_setup_request(&stream_body, peer_ip, &mut event, &mut timing, &mut media)
+                .expect("screen stream SETUP");
         let value = plist::decode(&response).expect("decode stream response");
         let dictionary = value.as_dictionary().expect("stream response dictionary");
         let streams = dictionary
@@ -997,7 +998,10 @@ mod tests {
         let mut stream = Dictionary::new();
         stream.insert("type".into(), Value::Integer(96.into()));
         let mut root = Dictionary::new();
-        root.insert("streams".into(), Value::Array(vec![Value::Dictionary(stream)]));
+        root.insert(
+            "streams".into(),
+            Value::Array(vec![Value::Dictionary(stream)]),
+        );
         let body = plist::encode_binary(&Value::Dictionary(root)).expect("encode stream setup");
 
         assert_eq!(
@@ -1009,8 +1013,7 @@ mod tests {
 
         let mut session = Dictionary::new();
         session.insert("sessionUUID".into(), Value::String("test-session".into()));
-        let body =
-            plist::encode_binary(&Value::Dictionary(session)).expect("encode session setup");
+        let body = plist::encode_binary(&Value::Dictionary(session)).expect("encode session setup");
         handle_setup_request(&body, peer_ip, &mut event, &mut timing, &mut media)
             .expect("session setup");
 

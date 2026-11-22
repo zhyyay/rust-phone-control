@@ -75,11 +75,7 @@ fn accept_events(listener: TcpListener, running: Arc<AtomicBool>) {
     }
 }
 
-fn handle_event_stream(
-    mut stream: TcpStream,
-    running: &AtomicBool,
-    peer: SocketAddr,
-) {
+fn handle_event_stream(mut stream: TcpStream, running: &AtomicBool, peer: SocketAddr) {
     if let Err(error) = stream.set_nonblocking(false) {
         tracing::warn!(%peer, %error, "Could not make AirPlay event socket blocking");
         return;

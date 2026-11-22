@@ -54,12 +54,8 @@ impl fmt::Display for RtpParseError {
                 write!(f, "unsupported RTP version {version}")
             }
             Self::TruncatedCsrcList => f.write_str("RTP CSRC list is truncated"),
-            Self::TruncatedExtensionHeader => {
-                f.write_str("RTP extension header is truncated")
-            }
-            Self::TruncatedExtensionData => {
-                f.write_str("RTP extension data is truncated")
-            }
+            Self::TruncatedExtensionHeader => f.write_str("RTP extension header is truncated"),
+            Self::TruncatedExtensionData => f.write_str("RTP extension data is truncated"),
             Self::InvalidPadding => f.write_str("RTP padding length is invalid"),
         }
     }
@@ -159,8 +155,7 @@ mod tests {
     #[test]
     fn parses_minimal_rtp_packet() {
         let bytes = [
-            0x80, 0xE0, 0x12, 0x34, 0x01, 0x02, 0x03, 0x04, 0xA0, 0xB0, 0xC0, 0xD0,
-            0xDE, 0xAD,
+            0x80, 0xE0, 0x12, 0x34, 0x01, 0x02, 0x03, 0x04, 0xA0, 0xB0, 0xC0, 0xD0, 0xDE, 0xAD,
         ];
         let parsed = parse_rtp_packet(&bytes).expect("valid RTP packet");
         assert!(parsed.marker);
@@ -176,10 +171,8 @@ mod tests {
     #[test]
     fn parses_csrc_and_header_extension() {
         let bytes = [
-            0x91, 0x60, 0, 7, 0, 0, 0, 9, 0, 0, 0, 11,
-            0x11, 0x11, 0x22, 0x22,
-            0xBE, 0xDE, 0, 1, 0xAA, 0xBB, 0xCC, 0xDD,
-            0xFE,
+            0x91, 0x60, 0, 7, 0, 0, 0, 9, 0, 0, 0, 11, 0x11, 0x11, 0x22, 0x22, 0xBE, 0xDE, 0, 1,
+            0xAA, 0xBB, 0xCC, 0xDD, 0xFE,
         ];
         let parsed = parse_rtp_packet(&bytes).expect("valid extended RTP packet");
         assert_eq!(parsed.csrcs, vec![0x1111_2222]);
@@ -191,9 +184,7 @@ mod tests {
 
     #[test]
     fn excludes_valid_padding_from_payload() {
-        let bytes = [
-            0xA0, 0x60, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0x10, 0x20, 0, 2,
-        ];
+        let bytes = [0xA0, 0x60, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0x10, 0x20, 0, 2];
         let parsed = parse_rtp_packet(&bytes).expect("valid padded RTP packet");
         assert_eq!(parsed.payload, &[0x10, 0x20]);
         assert_eq!(parsed.padding_len, 2);
@@ -201,7 +192,10 @@ mod tests {
 
     #[test]
     fn rejects_truncated_and_invalid_packets() {
-        assert_eq!(parse_rtp_packet(&[0; 11]), Err(RtpParseError::TruncatedHeader));
+        assert_eq!(
+            parse_rtp_packet(&[0; 11]),
+            Err(RtpParseError::TruncatedHeader)
+        );
 
         let mut wrong_version = [0u8; 12];
         wrong_version[0] = 0x40;
@@ -225,8 +219,6 @@ mod tests {
         );
     }
 }
-
-
 
 /// Fixed AirPlay screen-mirroring packet header size.
 pub const SCREEN_MIRROR_HEADER_SIZE: usize = 128;
@@ -297,8 +289,8 @@ pub fn parse_screen_mirror_packet(
     }
 
     let timestamp = u64::from_le_bytes([
-        packet[8], packet[9], packet[10], packet[11],
-        packet[12], packet[13], packet[14], packet[15],
+        packet[8], packet[9], packet[10], packet[11], packet[12], packet[13], packet[14],
+        packet[15],
     ]);
 
     Ok(ScreenMirrorPacket {
@@ -368,11 +360,7 @@ impl Drop for UdpMediaReceiver {
     }
 }
 
-fn receive_media_loop(
-    socket: UdpSocket,
-    running: Arc<AtomicBool>,
-    expected_peer_ip: IpAddr,
-) {
+fn receive_media_loop(socket: UdpSocket, running: Arc<AtomicBool>, expected_peer_ip: IpAddr) {
     let mut buffer = [0u8; MAX_UDP_DATAGRAM_SIZE];
 
     while running.load(Ordering::Acquire) {
@@ -468,11 +456,9 @@ mod receiver_tests {
     #[test]
     fn udp_receiver_binds_and_stops_cleanly() {
         let bind_addr: SocketAddr = "127.0.0.1:0".parse().expect("valid loopback address");
-        let mut receiver = UdpMediaReceiver::bind(
-            bind_addr,
-            "127.0.0.1".parse().expect("loopback IP"),
-        )
-        .expect("receiver binds");
+        let mut receiver =
+            UdpMediaReceiver::bind(bind_addr, "127.0.0.1".parse().expect("loopback IP"))
+                .expect("receiver binds");
         assert_ne!(receiver.local_addr().port(), 0);
         assert_eq!(receiver.local_addr().ip(), bind_addr.ip());
         receiver.stop();

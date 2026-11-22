@@ -12,9 +12,9 @@ mod config;
 mod decoder;
 mod discovery;
 #[allow(dead_code)]
-mod fairplay;
-#[allow(dead_code)]
 mod event;
+#[allow(dead_code)]
+mod fairplay;
 #[allow(dead_code)]
 mod media;
 mod pair_setup;
@@ -28,9 +28,9 @@ mod server;
 #[allow(dead_code)]
 mod setup;
 mod srp;
-mod tlv8;
 #[allow(dead_code)]
 mod timing;
+mod tlv8;
 #[allow(dead_code)]
 mod video;
 
@@ -82,7 +82,9 @@ pub fn start() -> anyhow::Result<()> {
                     hevc_decoders = inventory.hevc,
                     "Media Foundation video decoder inventory"
                 ),
-                Err(error) => tracing::warn!(%error, "Could not enumerate Media Foundation decoders"),
+                Err(error) => {
+                    tracing::warn!(%error, "Could not enumerate Media Foundation decoders")
+                }
             }
             Some(runtime)
         }

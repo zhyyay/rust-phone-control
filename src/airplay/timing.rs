@@ -165,7 +165,9 @@ mod tests {
             .expect("start timing client");
 
         let mut request = [0u8; 64];
-        let (length, peer) = sender.recv_from(&mut request).expect("receive timing request");
+        let (length, peer) = sender
+            .recv_from(&mut request)
+            .expect("receive timing request");
         assert_eq!(length, 32);
         assert_eq!(&request[..2], &[0x80, 0xD2]);
         assert_eq!(peer.port(), client.port());
@@ -174,6 +176,8 @@ mod tests {
         response[0] = 0x80;
         response[1] = 0xD3;
         response[2..4].copy_from_slice(&request[2..4]);
-        sender.send_to(&response, peer).expect("send timing response");
+        sender
+            .send_to(&response, peer)
+            .expect("send timing response");
     }
 }

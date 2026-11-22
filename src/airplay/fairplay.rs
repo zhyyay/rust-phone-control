@@ -37,10 +37,16 @@ impl std::fmt::Display for FairPlayParseError {
                 write!(formatter, "unsupported FairPlay message phase {phase}")
             }
             Self::InvalidInitialLength(length) => {
-                write!(formatter, "FairPlay initial message must be 16 bytes, got {length}")
+                write!(
+                    formatter,
+                    "FairPlay initial message must be 16 bytes, got {length}"
+                )
             }
             Self::InvalidKeyMessageLength(length) => {
-                write!(formatter, "FairPlay key message must be 164 bytes, got {length}")
+                write!(
+                    formatter,
+                    "FairPlay key message must be 164 bytes, got {length}"
+                )
             }
         }
     }

@@ -104,7 +104,6 @@ pub fn detect_annex_b_codec(data: &[u8]) -> VideoCodec {
     VideoCodec::Unknown
 }
 
-
 /// A NAL unit found in an Annex-B byte stream. The slice excludes its start code.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NalUnit<'a> {
@@ -246,7 +245,6 @@ impl CodecParameterSets {
     }
 }
 
-
 /// Maximum accepted decoded-frame dimension. Prevents hostile media metadata
 /// from causing unbounded allocations in the presentation pipeline.
 pub const MAX_FRAME_DIMENSION: u32 = 8192;
@@ -303,7 +301,8 @@ impl<'a> Nv12Frame<'a> {
     /// may include row padding; the output is tightly packed BGRA.
     pub fn to_bgra(self) -> Result<BgraFrame, FrameConversionError> {
         let width = usize::try_from(self.width).map_err(|_| FrameConversionError::SizeOverflow)?;
-        let height = usize::try_from(self.height).map_err(|_| FrameConversionError::SizeOverflow)?;
+        let height =
+            usize::try_from(self.height).map_err(|_| FrameConversionError::SizeOverflow)?;
 
         if width == 0 || height == 0 {
             return Err(FrameConversionError::ZeroDimension);
@@ -318,19 +317,26 @@ impl<'a> Nv12Frame<'a> {
             return Err(FrameConversionError::InvalidStride);
         }
 
-        let y_bytes = self.y_stride.checked_mul(height)
+        let y_bytes = self
+            .y_stride
+            .checked_mul(height)
             .ok_or(FrameConversionError::SizeOverflow)?;
-        let uv_bytes = self.uv_stride.checked_mul(height / 2)
+        let uv_bytes = self
+            .uv_stride
+            .checked_mul(height / 2)
             .ok_or(FrameConversionError::SizeOverflow)?;
-        let required = y_bytes.checked_add(uv_bytes)
+        let required = y_bytes
+            .checked_add(uv_bytes)
             .ok_or(FrameConversionError::SizeOverflow)?;
         if self.data.len() < required {
             return Err(FrameConversionError::BufferTooSmall);
         }
 
-        let output_stride = width.checked_mul(4)
+        let output_stride = width
+            .checked_mul(4)
             .ok_or(FrameConversionError::SizeOverflow)?;
-        let output_len = output_stride.checked_mul(height)
+        let output_len = output_stride
+            .checked_mul(height)
             .ok_or(FrameConversionError::SizeOverflow)?;
         let mut output = vec![0u8; output_len];
         let uv_base = y_bytes;
@@ -438,16 +444,24 @@ mod tests {
 
     #[test]
     fn classifies_h264_parameter_sets_and_idr() {
-        assert_eq!(classify_nal(VideoCodec::H264, &[0x67]), NalUnitKind::H264Sps);
-        assert_eq!(classify_nal(VideoCodec::H264, &[0x68]), NalUnitKind::H264Pps);
-        assert_eq!(classify_nal(VideoCodec::H264, &[0x65]), NalUnitKind::H264Idr);
+        assert_eq!(
+            classify_nal(VideoCodec::H264, &[0x67]),
+            NalUnitKind::H264Sps
+        );
+        assert_eq!(
+            classify_nal(VideoCodec::H264, &[0x68]),
+            NalUnitKind::H264Pps
+        );
+        assert_eq!(
+            classify_nal(VideoCodec::H264, &[0x65]),
+            NalUnitKind::H264Idr
+        );
     }
 
     #[test]
     fn collects_h264_parameter_sets() {
         let data = [
-            0, 0, 0, 1, 0x67, 0x42, 0x00, 0x1e,
-            0, 0, 1, 0x68, 0xce, 0x06,
+            0, 0, 0, 1, 0x67, 0x42, 0x00, 0x1e, 0, 0, 1, 0x68, 0xce, 0x06,
         ];
         let mut sets = CodecParameterSets::default();
         assert_eq!(sets.update_from_annex_b(VideoCodec::H264, &data), 2);
@@ -457,15 +471,12 @@ mod tests {
     #[test]
     fn hevc_requires_vps_sps_and_pps() {
         let data = [
-            0, 0, 1, 0x40, 0x01, 0xaa,
-            0, 0, 1, 0x42, 0x01, 0xbb,
-            0, 0, 1, 0x44, 0x01, 0xcc,
+            0, 0, 1, 0x40, 0x01, 0xaa, 0, 0, 1, 0x42, 0x01, 0xbb, 0, 0, 1, 0x44, 0x01, 0xcc,
         ];
         let mut sets = CodecParameterSets::default();
         assert_eq!(sets.update_from_annex_b(VideoCodec::Hevc, &data), 3);
         assert!(sets.is_ready(VideoCodec::Hevc));
     }
-
 
     #[test]
     fn converts_neutral_nv12_black_and_white_to_bgra() {
@@ -479,7 +490,9 @@ mod tests {
             y_stride: 2,
             uv_stride: 2,
             data: &data,
-        }.to_bgra().unwrap();
+        }
+        .to_bgra()
+        .unwrap();
 
         assert_eq!(frame.stride, 8);
         assert_eq!(frame.data.len(), 16);
@@ -489,18 +502,16 @@ mod tests {
 
     #[test]
     fn handles_padded_nv12_strides() {
-        let data = [
-            16, 16, 99, 99,
-            16, 16, 99, 99,
-            128, 128, 99, 99,
-        ];
+        let data = [16, 16, 99, 99, 16, 16, 99, 99, 128, 128, 99, 99];
         let frame = Nv12Frame {
             width: 2,
             height: 2,
             y_stride: 4,
             uv_stride: 4,
             data: &data,
-        }.to_bgra().unwrap();
+        }
+        .to_bgra()
+        .unwrap();
         assert_eq!(frame.data.len(), 16);
         assert_eq!(&frame.data[0..4], &[0, 0, 0, 255]);
     }
@@ -509,14 +520,28 @@ mod tests {
     fn rejects_invalid_nv12_layouts() {
         let data = [0u8; 16];
         let odd = Nv12Frame {
-            width: 3, height: 2, y_stride: 3, uv_stride: 4, data: &data,
+            width: 3,
+            height: 2,
+            y_stride: 3,
+            uv_stride: 4,
+            data: &data,
         };
-        assert_eq!(odd.to_bgra().unwrap_err(), FrameConversionError::OddNv12Dimension);
+        assert_eq!(
+            odd.to_bgra().unwrap_err(),
+            FrameConversionError::OddNv12Dimension
+        );
 
         let short = Nv12Frame {
-            width: 2, height: 2, y_stride: 2, uv_stride: 2, data: &[0; 5],
+            width: 2,
+            height: 2,
+            y_stride: 2,
+            uv_stride: 2,
+            data: &[0; 5],
         };
-        assert_eq!(short.to_bgra().unwrap_err(), FrameConversionError::BufferTooSmall);
+        assert_eq!(
+            short.to_bgra().unwrap_err(),
+            FrameConversionError::BufferTooSmall
+        );
     }
 
     #[test]
@@ -529,7 +554,9 @@ mod tests {
             uv_stride: (MAX_FRAME_DIMENSION + 2) as usize,
             data: &data,
         };
-        assert_eq!(frame.to_bgra().unwrap_err(), FrameConversionError::DimensionTooLarge);
+        assert_eq!(
+            frame.to_bgra().unwrap_err(),
+            FrameConversionError::DimensionTooLarge
+        );
     }
-
 }

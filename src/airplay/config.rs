@@ -96,15 +96,8 @@ fn windows_wifi_mac_address() -> Option<String> {
     let head = storage.as_mut_ptr().cast::<AdapterAddresses>();
     // SAFETY: storage is suitably aligned and large enough for the size
     // returned by the first API call. Windows initializes the linked list.
-    let status = unsafe {
-        GetAdaptersAddresses(
-            AF_UNSPEC,
-            GAA_FLAGS,
-            null_mut(),
-            head,
-            &mut required_size,
-        )
-    };
+    let status =
+        unsafe { GetAdaptersAddresses(AF_UNSPEC, GAA_FLAGS, null_mut(), head, &mut required_size) };
     if status != 0 {
         return None;
     }
