@@ -1,8 +1,8 @@
 //! Bounded RTSP/HTTP control parser for the AirPlay endpoint.
 //!
 //! The handler supports persistent RTSP connections, bounded request bodies,
-//! OPTIONS, GET /server-info, and binary-plist /info responses.
-//! Pair-Setup and Pair-Verify control exchanges are implemented; encrypted media transport is not implemented.
+//! OPTIONS, /info, Pair-Setup, Pair-Verify, session and stream SETUP, RECORD,
+//! feedback, and TEARDOWN. Media decryption and video decoding are not implemented.
 
 use std::io::{Read, Write};
 use std::net::TcpStream;
@@ -818,7 +818,6 @@ mod tests {
     #[test]
     fn session_and_video_stream_setup_negotiate_ephemeral_ports() {
         let mut session = Dictionary::new();
-        session.insert("timingProtocol".into(), Value::String("PTP".into()));
         session.insert("sessionUUID".into(), Value::String("test-session".into()));
         session.insert("isScreenMirroringSession".into(), Value::Boolean(true));
         let session_body =
@@ -902,7 +901,7 @@ mod tests {
         );
 
         let mut session = Dictionary::new();
-        session.insert("timingProtocol".into(), Value::String("PTP".into()));
+        session.insert("sessionUUID".into(), Value::String("test-session".into()));
         let body = plist::encode_binary(&Value::Dictionary(session)).expect("encode session setup");
         handle_setup_request(&body, peer_ip, &mut event, &mut timing, &mut media)
             .expect("session setup");
