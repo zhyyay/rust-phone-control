@@ -1,7 +1,7 @@
 //! Bounded RTSP/HTTP control parser for the AirPlay endpoint.
 //!
-//! The handler supports persistent RTSP connections, request bodies, OPTIONS,
-//! GET /server-info, and a conservative XML-plist GET /info response.
+//! The handler supports persistent RTSP connections, bounded request bodies,
+//! OPTIONS, GET /server-info, and a conservative XML-plist GET /info response.
 //! Pairing and media transport are intentionally not advertised or implemented.
 
 use std::io::{Read, Write};
@@ -49,7 +49,11 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
             || request.protocol == "HTTP/1.1"
             || request.protocol == "HTTP/1.0";
 
-        match (request.method.as_str(), request.path.as_str(), request.protocol.as_str()) {
+        match (
+            request.method.as_str(),
+            request.path.as_str(),
+            request.protocol.as_str(),
+        ) {
             ("OPTIONS", _, "RTSP/1.0") => {
                 let response = format!(
                     "RTSP/1.0 200 OK\r\nCSeq: {}\r\nServer: RustPhoneControl/0.1\r\nPublic: OPTIONS, GET\r\nContent-Length: 0\r\n\r\n",
@@ -69,9 +73,8 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
                 return Ok(());
             }
             ("GET", "/info", "RTSP/1.0") => {
-                // This is a deliberately minimal discovery response. AirPlay
-                // senders commonly expect a binary plist and richer capability
-                // data here; no unsupported video/pairing features are claimed.
+                // Conservative placeholder: real AirPlay senders commonly
+                // require binary plist and capability data not implemented here.
                 let body = info_plist();
                 let response = format!(
                     "RTSP/1.0 200 OK\r\nCSeq: {}\r\nServer: RustPhoneControl/0.1\r\nContent-Type: text/x-apple-plist+xml\r\nContent-Length: {}\r\n\r\n{}",
@@ -107,8 +110,7 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
     }
 }
 
-/// Reads one complete request while retaining any bytes belonging to the next
-/// request. Both headers and bodies are bounded to avoid unbounded allocation.
+/// Read one complete request and retain bytes belonging to a subsequent request.
 fn read_request(
     stream: &mut TcpStream,
     pending: &mut Vec<u8>,
@@ -119,7 +121,7 @@ fn read_request(
         if let Some(index) = find_header_end(pending) {
             break index + 4;
         }
-        if pending.len() > MAX_HEADER_BYTES {
+        if pending.len() >= MAX_HEADER_BYTES {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 "AirPlay request headers exceeded size limit",
@@ -153,6 +155,7 @@ fn read_request(
     let method = parts.next().unwrap_or_default().to_owned();
     let path = parts.next().unwrap_or_default().to_owned();
     let protocol = parts.next().unwrap_or_default().to_owned();
+
     if method.is_empty() || path.is_empty() || protocol.is_empty() {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
@@ -160,38 +163,10 @@ fn read_request(
         ));
     }
 
-<<<<<<< HEAD
-    match (method, path, protocol) {
-        ("OPTIONS", _, "RTSP/1.0") => {
-            let response = format!(
-                "RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\nServer: RustPhoneControl/0.1\r\nPublic: OPTIONS\r\nContent-Length: 0\r\n\r\n"
-            );
-            stream.write_all(response.as_bytes())
-        }
-        ("GET", "/server-info", "HTTP/1.1") | ("GET", "/server-info", "RTSP/1.0") => {
-            let body = server_info_plist();
-            let response = format!(
-                "HTTP/1.1 200 OK\r\nContent-Type: text/x-apple-plist+xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                body.len(),
-                body
-            );
-            stream.write_all(response.as_bytes())
-        }
-        _ => {
-            tracing::debug!(
-                method,
-                path,
-                protocol,
-                "AirPlay control method is not implemented"
-            );
-            let response = format!(
-                "{protocol} 501 Not Implemented\r\nCSeq: {cseq}\r\nServer: RustPhoneControl/0.1\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-            );
-            stream.write_all(response.as_bytes())
-=======
     let mut content_length = 0usize;
     let mut cseq = "0".to_owned();
     let mut connection_close = false;
+
     for line in lines {
         if let Some((name, value)) = line.split_once(':') {
             let value = value.trim();
@@ -207,7 +182,6 @@ fn read_request(
             } else if name.eq_ignore_ascii_case("Connection") {
                 connection_close = value.eq_ignore_ascii_case("close");
             }
->>>>>>> f6d0ee1911c8cc6b6e8b5f22739e4e5ac144ccdb
         }
     }
 
@@ -221,6 +195,7 @@ fn read_request(
     let request_end = header_end.checked_add(content_length).ok_or_else(|| {
         std::io::Error::new(std::io::ErrorKind::InvalidData, "AirPlay request size overflow")
     })?;
+
     while pending.len() < request_end {
         let count = stream.read(&mut chunk)?;
         if count == 0 {
@@ -273,12 +248,6 @@ fn server_info_plist() -> String {
     )
 }
 
-<<<<<<< HEAD
-fn write_http_error(stream: &mut TcpStream, status: u16, reason: &str) -> std::io::Result<()> {
-    let response =
-        format!("HTTP/1.1 {status} {reason}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
-    stream.write_all(response.as_bytes())
-=======
 fn info_plist() -> String {
     format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\"><dict><key>deviceID</key><string>{}</string><key>features</key><integer>0</integer><key>model</key><string>{}</string><key>protocolVersion</key><string>1.0</string><key>sourceVersion</key><string>{}</string><key>statusFlags</key><integer>0</integer></dict></plist>",
@@ -286,7 +255,6 @@ fn info_plist() -> String {
         config::MODEL,
         config::SOURCE_VERSION
     )
->>>>>>> f6d0ee1911c8cc6b6e8b5f22739e4e5ac144ccdb
 }
 
 #[cfg(test)]
@@ -295,7 +263,10 @@ mod tests {
 
     #[test]
     fn finds_header_terminator() {
-        assert_eq!(find_header_end(b"OPTIONS * RTSP/1.0\r\nCSeq: 1\r\n\r\n"), Some(27));
+        assert_eq!(
+            find_header_end(b"OPTIONS * RTSP/1.0\r\nCSeq: 1\r\n\r\n"),
+            Some(27)
+        );
         assert_eq!(find_header_end(b"OPTIONS * RTSP/1.0\r\n"), None);
     }
 
