@@ -23,6 +23,7 @@ pub struct FairPlayMessage {
 pub enum FairPlayParseError {
     TooShort,
     InvalidMagic,
+    UnsupportedMajorVersion(u8),
     UnsupportedPhase(u8),
     InvalidInitialLength(usize),
     InvalidKeyMessageLength(usize),
@@ -33,6 +34,9 @@ impl std::fmt::Display for FairPlayParseError {
         match self {
             Self::TooShort => write!(formatter, "FairPlay message is too short"),
             Self::InvalidMagic => write!(formatter, "FairPlay message does not start with FPLY"),
+            Self::UnsupportedMajorVersion(version) => {
+                write!(formatter, "unsupported FairPlay major version {version}")
+            }
             Self::UnsupportedPhase(phase) => {
                 write!(formatter, "unsupported FairPlay message phase {phase}")
             }
@@ -62,7 +66,12 @@ pub fn parse_message(body: &[u8]) -> Result<FairPlayMessage, FairPlayParseError>
         return Err(FairPlayParseError::InvalidMagic);
     }
 
-    let phase = body[12];
+    // Packed FPLY header: signature[0..4], major[4], minor[5], phase[6].
+    if body[4] != 3 {
+        return Err(FairPlayParseError::UnsupportedMajorVersion(body[4]));
+    }
+
+    let phase = body[6];
     match phase {
         1 => {
             if body.len() != 16 {
@@ -140,7 +149,9 @@ mod tests {
     fn initial_message(mode: u8) -> Vec<u8> {
         let mut body = vec![0u8; 16];
         body[..4].copy_from_slice(b"FPLY");
-        body[12] = 1;
+        body[4] = 3;
+        body[5] = 1;
+        body[6] = 1;
         body[14] = mode;
         body
     }
@@ -148,7 +159,9 @@ mod tests {
     fn key_message() -> Vec<u8> {
         let mut body = vec![0u8; 164];
         body[..4].copy_from_slice(b"FPLY");
-        body[12] = 3;
+        body[4] = 3;
+        body[5] = 1;
+        body[6] = 3;
         body
     }
 
@@ -183,10 +196,17 @@ mod tests {
         );
 
         let mut body = initial_message(3);
-        body[12] = 2;
+        body[6] = 2;
         assert_eq!(
             parse_message(&body).unwrap_err(),
             FairPlayParseError::UnsupportedPhase(2)
+        );
+
+        let mut body = initial_message(3);
+        body[4] = 2;
+        assert_eq!(
+            parse_message(&body).unwrap_err(),
+            FairPlayParseError::UnsupportedMajorVersion(2)
         );
 
         assert_eq!(
