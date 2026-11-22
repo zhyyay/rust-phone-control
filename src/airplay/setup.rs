@@ -31,7 +31,8 @@ pub(super) struct StreamSetup {
 
 /// Decode and validate an AirPlay 2 SETUP property list.
 pub(super) fn parse_setup_request(bytes: &[u8]) -> Result<SetupRequest, String> {
-    let value = super::plist::decode(bytes).map_err(|error| format!("invalid SETUP plist: {error}"))?;
+    let value = super::plist::decode(bytes)
+        .map_err(|error| format!("invalid SETUP plist: {error}"))?;
     let dictionary = value
         .as_dictionary()
         .ok_or_else(|| "SETUP plist root must be a dictionary".to_owned())?;
@@ -41,19 +42,24 @@ pub(super) fn parse_setup_request(bytes: &[u8]) -> Result<SetupRequest, String> 
             .as_array()
             .ok_or_else(|| "SETUP streams field must be an array".to_owned())?;
         if streams.is_empty() || streams.len() > 16 {
-            return Err("SETUP streams array must contain between 1 and 16 entries".to_owned());
+            return Err(
+                "SETUP streams array must contain between 1 and 16 entries".to_owned(),
+            );
         }
 
         let mut parsed = Vec::with_capacity(streams.len());
         for (index, value) in streams.iter().enumerate() {
-            let stream = value.as_dictionary().ok_or_else(|| {
-                format!("SETUP streams[{index}] must be a dictionary")
+            let stream = value
+                .as_dictionary()
+                .ok_or_else(|| format!("SETUP streams[{index}] must be a dictionary"))?;
+            let stream_type = unsigned_integer(stream.get("type")).ok_or_else(|| {
+                format!("SETUP streams[{index}].type must be an unsigned integer")
             })?;
-            let stream_type = unsigned_integer(stream.get("type"))
-                .ok_or_else(|| format!("SETUP streams[{index}].type must be an unsigned integer"))?;
             let connection_id = match stream.get("streamConnectionID") {
                 Some(value) => Some(unsigned_integer(Some(value)).ok_or_else(|| {
-                    format!("SETUP streams[{index}].streamConnectionID must be an unsigned integer")
+                    format!(
+                        "SETUP streams[{index}].streamConnectionID must be an unsigned integer"
+                    )
                 })?),
                 None => None,
             };
@@ -98,7 +104,9 @@ pub(super) fn parse_setup_request(bytes: &[u8]) -> Result<SetupRequest, String> 
     };
 
     if timing_port.is_none() && session_uuid.is_none() && !screen_mirroring {
-        return Err("SETUP plist contains neither session metadata nor stream descriptors".to_owned());
+        return Err(
+            "SETUP plist contains neither session metadata nor stream descriptors".to_owned(),
+        );
     }
 
     Ok(SetupRequest::Session(SessionSetup {
@@ -152,7 +160,7 @@ mod tests {
         stream.insert("type".into(), Value::Integer(110.into()));
         stream.insert(
             "streamConnectionID".into(),
-            Value::Integer(3873339193950750702u64.into()),
+            Value::Integer(3_873_339_193_950_757_022u64.into()),
         );
         let mut root = Dictionary::new();
         root.insert(
@@ -166,7 +174,7 @@ mod tests {
             parsed,
             SetupRequest::Streams(vec![super::StreamSetup {
                 stream_type: 110,
-                connection_id: Some(3873339193950750702),
+                connection_id: Some(3_873_339_193_950_757_022),
             }])
         );
     }
