@@ -2,9 +2,9 @@
 //!
 //! Modules are intentionally separated by responsibility. The current code
 //! provides mDNS publication, a TCP listener, OPTIONS, /server-info, and basic binary-plist /info handling.
-//! It includes a standalone TLV8 codec for pairing-message framing, but does not yet implement AirPlay pairing, FairPlay, encrypted media, or
-//! video decoding, and advertises zero feature bits rather than claiming those
-//! unsupported capabilities.
+//! Pair-Setup currently handles the SRP M1-M4 exchange only. Pair-Setup M5/M6,
+//! Pair-Verify, FairPlay, encrypted media, and video decoding are not implemented.
+//! The endpoint advertises zero feature bits rather than claiming unsupported capabilities.
 
 mod config;
 mod discovery;
