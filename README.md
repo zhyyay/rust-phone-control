@@ -19,13 +19,15 @@ The external AirBridge launcher has been removed. The built-in AirPlay code is s
 - `src/airplay/config.rs`: service identity, model and port configuration.
 - `src/airplay/discovery.rs`: mDNS/DNS-SD service registration and shutdown.
 - `src/airplay/server.rs`: TCP listener and connection lifecycle.
-- `src/airplay/rtsp.rs`: bounded request parsing, RTSP OPTIONS and HTTP `/server-info`.
+- `src/airplay/rtsp.rs`: bounded request parsing, RTSP OPTIONS, HTTP `/server-info`, and binary-plist `/info` responses.
 - `src/airplay.rs`: receiver lifecycle orchestration.
 
 The mDNS dependency `mdns-sd` is dual-licensed Apache-2.0 OR MIT and supports Windows.
 The current endpoint deliberately advertises `features=0x0`: it does not claim to support
-pairing, FairPlay, encrypted media, or mirroring. Requests other than OPTIONS and /server-info
-return 501 Not Implemented. This is a control-plane foundation, **not a working screen mirror**.
+pairing, FairPlay, encrypted media, or mirroring. `/info` handles the `txtAirPlay` qualifier by
+returning the conservative mDNS TXT properties as a binary plist, and returns a baseline
+`initialVolume` for an unqualified request. Other control methods remain unimplemented and return
+501. This is a control-plane foundation, **not a working screen mirror**.
 
 Still required before iPhone mirroring can work:
 
