@@ -51,10 +51,7 @@ struct MediaSession {
 }
 
 impl MediaSession {
-    fn start(
-        peer_ip: std::net::IpAddr,
-        stream_context: MirrorStreamContext,
-    ) -> io::Result<Self> {
+    fn start(peer_ip: std::net::IpAddr, stream_context: MirrorStreamContext) -> io::Result<Self> {
         use std::sync::Arc;
         use std::sync::atomic::{AtomicBool, Ordering};
 
