@@ -260,6 +260,20 @@ mod tests {
     }
 
     #[test]
+    fn derives_expected_pair_verify_stream_key_and_iv_vector() {
+        let material =
+            derive_mirror_stream_keys(&[0x5a; 16], Some(&[0xa5; 32]), 7).unwrap();
+        assert_eq!(
+            material.key(),
+            &hex("71ca71a8222c472ba1215b941a11aedb")
+        );
+        assert_eq!(
+            material.iv(),
+            &hex("f427cf9796528a860b61f83a0105fcb2")
+        );
+    }
+
+    #[test]
     fn rejects_invalid_secret_lengths() {
         assert_eq!(
             derive_mirror_stream_keys(&[0; 15], None, 1).unwrap_err(),
