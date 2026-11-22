@@ -9,14 +9,11 @@
 mod config;
 mod discovery;
 mod pairing;
-<<<<<<< HEAD
 mod plist;
-=======
 #[cfg(windows)]
 mod pairing_store;
 mod pair_setup;
 mod pair_verify;
->>>>>>> 4691b0f2385b11453b5b4fd89c40bef289acbfcb
 mod rtsp;
 mod server;
 mod srp;
