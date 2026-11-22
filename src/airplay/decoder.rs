@@ -20,7 +20,7 @@ use windows_062::Win32::{
         MFTEnumEx, MFVideoFormat_H264, MFVideoFormat_HEVC, MFVideoFormat_NV12,
         MFVideoInterlace_Progressive,
     },
-    System::Com::CoTaskMemFree,
+    System::Com::{CoInitializeEx, CoTaskMemFree, CoUninitialize, COINIT_MULTITHREADED},
 };
 
 #[cfg(windows)]
@@ -33,6 +33,31 @@ const MFSTARTUP_FULL: u32 = 0;
 unsafe extern "system" {
     fn MFStartup(version: u32, flags: u32) -> i32;
     fn MFShutdown() -> i32;
+}
+
+
+/// COM apartment initialized on the same thread that owns the MFT interfaces.
+#[cfg(windows)]
+struct ComApartment;
+
+#[cfg(windows)]
+impl ComApartment {
+    fn initialize() -> Result<Self, MediaFoundationError> {
+        // SAFETY: this initializes COM for the current worker thread. The
+        // matching CoUninitialize is called by Drop on this same thread.
+        unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }
+            .map_err(|error| MediaFoundationError::ComInitializationFailed(error.code().0))?;
+        Ok(Self)
+    }
+}
+
+#[cfg(windows)]
+impl Drop for ComApartment {
+    fn drop(&mut self) {
+        // SAFETY: this guard is only constructed after a successful
+        // CoInitializeEx call and is not Send, so it drops on its owner thread.
+        unsafe { CoUninitialize() };
+    }
 }
 
 /// A successfully initialized Media Foundation runtime.
@@ -141,6 +166,7 @@ impl MediaFoundationRuntime {
     /// Inspect the system's registered synchronous/local H.264 and HEVC
     /// decoder transforms. This does not activate or configure a decoder.
     pub fn decoder_inventory(&self) -> Result<DecoderInventory, MediaFoundationError> {
+        let _com_apartment = ComApartment::initialize()?;
         Ok(DecoderInventory {
             h264: count_video_decoders(MFVideoFormat_H264)?,
             hevc: count_video_decoders(MFVideoFormat_HEVC)?,
@@ -191,6 +217,7 @@ pub struct H264Decoder<'runtime> {
     output_stream: u32,
     width: u32,
     height: u32,
+    _com_apartment: ComApartment,
 }
 
 #[cfg(windows)]
@@ -201,6 +228,7 @@ impl<'runtime> H264Decoder<'runtime> {
         width: u32,
         height: u32,
     ) -> Result<Self, MediaFoundationError> {
+        let com_apartment = ComApartment::initialize()?;
         if width == 0
             || height == 0
             || width > crate::airplay::video::MAX_FRAME_DIMENSION
@@ -311,6 +339,7 @@ impl<'runtime> H264Decoder<'runtime> {
             output_stream,
             width,
             height,
+            _com_apartment: com_apartment,
         })
     }
 
@@ -580,6 +609,7 @@ impl<'runtime> H264FramePipeline<'runtime> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MediaFoundationError {
     StartupFailed(i32),
+    ComInitializationFailed(i32),
     EnumerationFailed(i32),
     InvalidDimensions,
     MissingSps,
@@ -614,6 +644,11 @@ impl fmt::Display for MediaFoundationError {
                     *hr as u32
                 )
             }
+            Self::ComInitializationFailed(hr) => write!(
+                f,
+                "COM MTA initialization failed (HRESULT 0x{:08X})",
+                *hr as u32
+            ),
             Self::EnumerationFailed(hr) => {
                 write!(
                     f,
