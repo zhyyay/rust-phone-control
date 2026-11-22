@@ -82,24 +82,26 @@ pub fn start() -> anyhow::Result<()> {
 
     let _pairing_code = setup_code();
     let media_foundation = match decoder::MediaFoundationRuntime::startup() {
-        Ok(runtime) => {
-            match runtime.decoder_inventory() {
-                Ok(inventory) => tracing::info!(
-                    h264_decoders = inventory.h264,
-                    hevc_decoders = inventory.hevc,
-                    "Media Foundation video decoder inventory"
-                ),
-                Err(error) => {
-                    tracing::warn!(%error, "Could not enumerate Media Foundation decoders")
-                }
-            }
-            Some(Arc::new(runtime))
-        }
+        Ok(runtime) => Some(Arc::new(runtime)),
         Err(error) => {
             tracing::warn!(%error, "Media Foundation unavailable; AirPlay control remains available");
             None
         }
     };
+    if let Some(runtime) = media_foundation.as_ref() {
+        let inventory_runtime = Arc::clone(runtime);
+        match std::thread::spawn(move || inventory_runtime.decoder_inventory()).join() {
+            Ok(Ok(inventory)) => tracing::info!(
+                h264_decoders = inventory.h264,
+                hevc_decoders = inventory.hevc,
+                "Media Foundation video decoder inventory"
+            ),
+            Ok(Err(error)) => {
+                tracing::warn!(%error, "Could not enumerate Media Foundation decoders")
+            }
+            Err(_) => tracing::warn!("Media Foundation inventory worker panicked"),
+        }
+    }
     let video_frames = Arc::new(video::LatestFrameMailbox::new());
     let server = server::ControlServer::start()?;
     let advertisement = discovery::Advertisement::start()?;
