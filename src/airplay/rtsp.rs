@@ -1168,8 +1168,8 @@ fn txt_airplay_dictionary() -> Dictionary {
 mod tests {
     use super::plist;
     use super::{
-        Request, SCREEN_MIRROR_HEADER_SIZE, TcpStream, build_info_response,
-        find_header_end, handle_pair_setup, handle_setup_request, server_info_plist,
+        Request, SCREEN_MIRROR_HEADER_SIZE, TcpStream, build_info_response, find_header_end,
+        handle_pair_setup, handle_setup_request, server_info_plist,
     };
     use crate::airplay::tlv8::{self, Tlv};
     use ::plist::{Dictionary, Value};

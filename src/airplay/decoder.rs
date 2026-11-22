@@ -516,12 +516,17 @@ impl<'runtime> H264FramePipeline<'runtime> {
     ///
     /// Returns the number of output frames published. The mailbox retains
     /// only the newest frame, so slow UI rendering cannot grow memory usage.
-    pub fn submit_access_unit(&mut self, access_unit: &[u8]) -> Result<usize, MediaFoundationError> {
+    pub fn submit_access_unit(
+        &mut self,
+        access_unit: &[u8],
+    ) -> Result<usize, MediaFoundationError> {
         if access_unit.len() > MAX_DECODE_ACCESS_UNIT_BYTES {
             return Err(MediaFoundationError::InputTooLarge);
         }
 
-        let decoded = self.decoder.submit_access_unit_and_drain_bgra(access_unit)?;
+        let decoded = self
+            .decoder
+            .submit_access_unit_and_drain_bgra(access_unit)?;
         let mut published = 0usize;
         for frame in decoded {
             self.frames
