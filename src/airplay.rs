@@ -1,17 +1,17 @@
-//! Built-in AirPlay control-plane prototype.
+//! Built-in AirPlay receiver protocol implementation (in progress).
 //!
-//! Modules are intentionally separated by responsibility. The current code
-//! provides mDNS publication, a TCP listener, OPTIONS, /server-info, and basic binary-plist /info handling.
-//! Pair-Setup implements SRP and encrypted identity exchange. Pair-Verify implements the authenticated ephemeral key exchange.
-//! FairPlay, encrypted media transport, and video decoding are not implemented.
-//! The endpoint advertises zero feature bits rather than claiming unsupported capabilities.
+//! The endpoint publishes mDNS, handles RTSP control and pairing exchanges,
+//! negotiates session/event/timing channels, and binds the screen-mirroring UDP
+//! data port. It parses media packet envelopes but does not yet decrypt video,
+//! reassemble frames, decode H.264/HEVC, or render frames in the GPUI window.
+//! PTP synchronization and unsupported AirPlay feature bits remain disabled.
 
 mod config;
 mod discovery;
 #[allow(dead_code)]
 mod event;
-// UDP media reception is implemented independently and will be started only
-// after RTSP stream setup negotiates the receiver address.
+// Media reception is owned by the RTSP session and starts only after SETUP
+// negotiates the screen-mirroring data port.
 #[allow(dead_code)]
 mod media;
 mod pair_setup;
