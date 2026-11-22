@@ -7,11 +7,19 @@
 use std::fmt;
 
 #[cfg(windows)]
+use std::mem::ManuallyDrop;
+
+#[cfg(windows)]
 use windows_062::Win32::{
     Media::MediaFoundation::{
         MFTEnumEx, MFT_REGISTER_TYPE_INFO, MFT_CATEGORY_VIDEO_DECODER,
         MFT_ENUM_FLAG_LOCALMFT, MFT_ENUM_FLAG_SORTANDFILTER, MFT_ENUM_FLAG_SYNCMFT,
-        MFMediaType_Video, MFVideoFormat_H264, MFVideoFormat_HEVC,
+        MFT_OUTPUT_DATA_BUFFER, MFT_OUTPUT_STREAM_PROVIDES_SAMPLES,
+        MFCreateMediaType, MFCreateMemoryBuffer, MFCreateSample,
+        MFMediaType_Video, MF_MT_DEFAULT_STRIDE, MF_MT_FRAME_RATE, MF_MT_FRAME_SIZE,
+        MF_MT_INTERLACE_MODE, MF_MT_MAJOR_TYPE, MF_MT_PIXEL_ASPECT_RATIO, MF_MT_SUBTYPE,
+        MFVideoFormat_H264, MFVideoFormat_HEVC, MFVideoFormat_NV12,
+        MFVideoInterlace_Progressive,
     },
     System::Com::CoTaskMemFree,
 };
@@ -148,11 +156,291 @@ impl MediaFoundationRuntime {
     }
 }
 
+
+/// A decoded NV12 frame copied out of a Media Foundation output sample.
+#[cfg(windows)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DecodedNv12Frame {
+    pub width: u32,
+    pub height: u32,
+    pub stride: usize,
+    pub data: Vec<u8>,
+}
+
+/// A synchronous Windows H.264 decoder MFT.
+///
+/// This object is thread-local because Windows COM interfaces are not Send/Sync.
+/// Create and use it on the dedicated media worker thread.
+#[cfg(windows)]
+pub struct H264Decoder {
+    transform: windows_062::Win32::Media::MediaFoundation::IMFTransform,
+    input_stream: u32,
+    output_stream: u32,
+    width: u32,
+    height: u32,
+}
+
+#[cfg(windows)]
+impl H264Decoder {
+    /// Activate a local synchronous H.264 decoder and negotiate NV12 output.
+    pub fn new(
+        _runtime: &MediaFoundationRuntime,
+        width: u32,
+        height: u32,
+    ) -> Result<Self, MediaFoundationError> {
+        if width == 0
+            || height == 0
+            || width > crate::airplay::video::MAX_FRAME_DIMENSION
+            || height > crate::airplay::video::MAX_FRAME_DIMENSION
+        {
+            return Err(MediaFoundationError::InvalidDimensions);
+        }
+
+        let input = MFT_REGISTER_TYPE_INFO {
+            guidMajorType: MFMediaType_Video,
+            guidSubtype: MFVideoFormat_H264,
+        };
+        let mut raw: *mut Option<windows_062::Win32::Media::MediaFoundation::IMFActivate> =
+            std::ptr::null_mut();
+        let mut count = 0u32;
+        let flags = MFT_ENUM_FLAG_SYNCMFT
+            | MFT_ENUM_FLAG_LOCALMFT
+            | MFT_ENUM_FLAG_SORTANDFILTER;
+
+        // SAFETY: input is a valid registration descriptor; raw/count are
+        // writable outputs. ActivationArray owns the returned references.
+        unsafe {
+            MFTEnumEx(
+                MFT_CATEGORY_VIDEO_DECODER,
+                flags,
+                Some(&input),
+                None,
+                &mut raw,
+                &mut count,
+            )
+        }
+        .map_err(|error| MediaFoundationError::EnumerationFailed(error.code().0))?;
+
+        let activations = ActivationArray { ptr: raw, count };
+        let activation = activations
+            .ptr
+            .as_ref()
+            .and_then(|_| unsafe { (*activations.ptr).as_ref() })
+            .ok_or(MediaFoundationError::NoH264Decoder)?
+            .clone();
+
+        // SAFETY: activation is a live IMFActivate returned by MFTEnumEx.
+        let transform = unsafe {
+            activation.ActivateObject::<
+                windows_062::Win32::Media::MediaFoundation::IMFTransform,
+            >()
+        }
+        .map_err(|error| MediaFoundationError::ActivationFailed(error.code().0))?;
+        drop(activations);
+
+        let input_type = unsafe { MFCreateMediaType() }
+            .map_err(|error| MediaFoundationError::MediaTypeFailed(error.code().0))?;
+        let frame_size = (u64::from(width) << 32) | u64::from(height);
+        let frame_rate = (30u64 << 32) | 1;
+        // SAFETY: all keys are standard Media Foundation media-type attributes.
+        unsafe {
+            input_type.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video)
+                .and_then(|_| input_type.SetGUID(&MF_MT_SUBTYPE, &MFVideoFormat_H264))
+                .and_then(|_| input_type.SetUINT64(&MF_MT_FRAME_SIZE, frame_size))
+                .and_then(|_| input_type.SetUINT64(&MF_MT_FRAME_RATE, frame_rate))
+                .and_then(|_| input_type.SetUINT64(&MF_MT_PIXEL_ASPECT_RATIO, (1u64 << 32) | 1))
+                .and_then(|_| input_type.SetUINT32(&MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive.0))
+        }
+        .map_err(|error| MediaFoundationError::MediaTypeFailed(error.code().0))?;
+
+        let mut input_stream = 0u32;
+        let mut output_stream = 0u32;
+        let mut input_ids = [0u32; 1];
+        let mut output_ids = [0u32; 1];
+        // GetStreamIDs may return E_NOTIMPL; stream zero is the documented fallback.
+        if unsafe { transform.GetStreamIDs(&mut input_ids, &mut output_ids) }.is_ok() {
+            input_stream = input_ids[0];
+            output_stream = output_ids[0];
+        }
+
+        // SAFETY: stream ID and media type belong to this transform.
+        unsafe { transform.SetInputType(input_stream, &input_type, 0) }
+            .map_err(|error| MediaFoundationError::InputTypeFailed(error.code().0))?;
+
+        let mut selected_output = None;
+        for index in 0..64u32 {
+            let candidate = match unsafe {
+                transform.GetOutputAvailableType(output_stream, index)
+            } {
+                Ok(media_type) => media_type,
+                Err(_) => break,
+            };
+            if unsafe { candidate.GetGUID(&MF_MT_SUBTYPE) }
+                .is_ok_and(|subtype| subtype == MFVideoFormat_NV12)
+            {
+                selected_output = Some(candidate);
+                break;
+            }
+        }
+        let output_type = selected_output.ok_or(MediaFoundationError::Nv12OutputUnavailable)?;
+        // SAFETY: this is one of the output types advertised by the transform.
+        unsafe { transform.SetOutputType(output_stream, &output_type, 0) }
+            .map_err(|error| MediaFoundationError::OutputTypeFailed(error.code().0))?;
+
+        tracing::info!(
+            width,
+            height,
+            input_stream,
+            output_stream,
+            "Windows H.264 decoder MFT activated with NV12 output"
+        );
+
+        Ok(Self {
+            transform,
+            input_stream,
+            output_stream,
+            width,
+            height,
+        })
+    }
+
+    /// Submit one complete Annex-B H.264 access unit.
+    pub fn submit_access_unit(&mut self, access_unit: &[u8]) -> Result<(), MediaFoundationError> {
+        if access_unit.is_empty() {
+            return Err(MediaFoundationError::EmptyInput);
+        }
+        let length = u32::try_from(access_unit.len())
+            .map_err(|_| MediaFoundationError::InputTooLarge)?;
+        let buffer = unsafe { MFCreateMemoryBuffer(length) }
+            .map_err(|error| MediaFoundationError::BufferFailed(error.code().0))?;
+        let mut destination = std::ptr::null_mut();
+        // SAFETY: Lock exposes writable storage until the matching Unlock.
+        unsafe { buffer.Lock(&mut destination, None, None) }
+            .map_err(|error| MediaFoundationError::BufferFailed(error.code().0))?;
+        if destination.is_null() {
+            let _ = unsafe { buffer.Unlock() };
+            return Err(MediaFoundationError::NullBuffer);
+        }
+        // SAFETY: the allocated buffer has at least length bytes.
+        unsafe {
+            std::ptr::copy_nonoverlapping(access_unit.as_ptr(), destination, access_unit.len());
+        }
+        unsafe { buffer.Unlock() }
+            .map_err(|error| MediaFoundationError::BufferFailed(error.code().0))?;
+        unsafe { buffer.SetCurrentLength(length) }
+            .map_err(|error| MediaFoundationError::BufferFailed(error.code().0))?;
+
+        let sample = unsafe { MFCreateSample() }
+            .map_err(|error| MediaFoundationError::SampleFailed(error.code().0))?;
+        unsafe { sample.AddBuffer(&buffer) }
+            .map_err(|error| MediaFoundationError::SampleFailed(error.code().0))?;
+        unsafe { self.transform.ProcessInput(self.input_stream, &sample, 0) }
+            .map_err(|error| MediaFoundationError::ProcessInputFailed(error.code().0))?;
+        Ok(())
+    }
+
+    /// Retrieve one decoded NV12 frame, or None when more input is required.
+    pub fn try_get_frame(&mut self) -> Result<Option<DecodedNv12Frame>, MediaFoundationError> {
+        let stream_info = unsafe { self.transform.GetOutputStreamInfo(self.output_stream) }
+            .map_err(|error| MediaFoundationError::OutputInfoFailed(error.code().0))?;
+        let caller_allocates =
+            stream_info.dwFlags & MFT_OUTPUT_STREAM_PROVIDES_SAMPLES.0 == 0;
+
+        let supplied_sample = if caller_allocates {
+            let frame_bytes = self.width
+                .checked_mul(self.height)
+                .and_then(|pixels| pixels.checked_mul(3))
+                .map(|bytes| bytes / 2)
+                .ok_or(MediaFoundationError::FrameSizeOverflow)?;
+            let buffer = unsafe { MFCreateMemoryBuffer(stream_info.cbSize.max(frame_bytes)) }
+                .map_err(|error| MediaFoundationError::BufferFailed(error.code().0))?;
+            let sample = unsafe { MFCreateSample() }
+                .map_err(|error| MediaFoundationError::SampleFailed(error.code().0))?;
+            unsafe { sample.AddBuffer(&buffer) }
+                .map_err(|error| MediaFoundationError::SampleFailed(error.code().0))?;
+            Some(sample)
+        } else {
+            None
+        };
+
+        let mut output = MFT_OUTPUT_DATA_BUFFER {
+            dwStreamID: self.output_stream,
+            pSample: ManuallyDrop::new(supplied_sample),
+            dwStatus: 0,
+            pEvents: ManuallyDrop::new(None),
+        };
+        let mut status = 0u32;
+        let result = unsafe {
+            self.transform.ProcessOutput(0, std::slice::from_mut(&mut output), &mut status)
+        };
+        // These generated fields are ManuallyDrop because COM references may
+        // be returned even when ProcessOutput reports a stream-change status.
+        let sample = unsafe { ManuallyDrop::take(&mut output.pSample) };
+        let events = unsafe { ManuallyDrop::take(&mut output.pEvents) };
+        drop(events);
+
+        if let Err(error) = result {
+            if error.code().0 == 0xC00D6D72u32 as i32 {
+                return Ok(None); // MF_E_TRANSFORM_NEED_MORE_INPUT
+            }
+            return Err(MediaFoundationError::ProcessOutputFailed(error.code().0));
+        }
+        let Some(sample) = sample else {
+            return Ok(None);
+        };
+
+        let buffer = unsafe { sample.ConvertToContiguousBuffer() }
+            .map_err(|error| MediaFoundationError::BufferFailed(error.code().0))?;
+        let current_length = unsafe { buffer.GetCurrentLength() }
+            .map_err(|error| MediaFoundationError::BufferFailed(error.code().0))? as usize;
+        let mut source = std::ptr::null_mut();
+        unsafe { buffer.Lock(&mut source, None, None) }
+            .map_err(|error| MediaFoundationError::BufferFailed(error.code().0))?;
+        if source.is_null() {
+            let _ = unsafe { buffer.Unlock() };
+            return Err(MediaFoundationError::NullBuffer);
+        }
+        // SAFETY: current_length is the valid data length reported by MF.
+        let data = unsafe { std::slice::from_raw_parts(source, current_length) }.to_vec();
+        unsafe { buffer.Unlock() }
+            .map_err(|error| MediaFoundationError::BufferFailed(error.code().0))?;
+
+        let output_type = unsafe { self.transform.GetOutputCurrentType(self.output_stream) }
+            .map_err(|error| MediaFoundationError::OutputInfoFailed(error.code().0))?;
+        let stride = unsafe { output_type.GetUINT32(&MF_MT_DEFAULT_STRIDE) }
+            .map(|value| (value as i32).unsigned_abs() as usize)
+            .unwrap_or(self.width as usize);
+
+        Ok(Some(DecodedNv12Frame {
+            width: self.width,
+            height: self.height,
+            stride,
+            data,
+        }))
+    }
+}
+
 /// Errors from initializing the Windows media runtime and inspecting decoders.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MediaFoundationError {
     StartupFailed(i32),
     EnumerationFailed(i32),
+    InvalidDimensions,
+    NoH264Decoder,
+    ActivationFailed(i32),
+    MediaTypeFailed(i32),
+    InputTypeFailed(i32),
+    OutputTypeFailed(i32),
+    Nv12OutputUnavailable,
+    EmptyInput,
+    InputTooLarge,
+    BufferFailed(i32),
+    SampleFailed(i32),
+    NullBuffer,
+    ProcessInputFailed(i32),
+    OutputInfoFailed(i32),
+    FrameSizeOverflow,
+    ProcessOutputFailed(i32),
 }
 
 impl fmt::Display for MediaFoundationError {
@@ -164,6 +452,22 @@ impl fmt::Display for MediaFoundationError {
             Self::EnumerationFailed(hr) => {
                 write!(f, "Media Foundation decoder enumeration failed (HRESULT 0x{:08X})", *hr as u32)
             }
+            Self::InvalidDimensions => f.write_str("invalid H.264 frame dimensions"),
+            Self::NoH264Decoder => f.write_str("no synchronous/local H.264 decoder MFT is registered"),
+            Self::ActivationFailed(hr) => write!(f, "H.264 decoder activation failed (HRESULT 0x{:08X})", *hr as u32),
+            Self::MediaTypeFailed(hr) => write!(f, "Media Foundation media type operation failed (HRESULT 0x{:08X})", *hr as u32),
+            Self::InputTypeFailed(hr) => write!(f, "H.264 decoder rejected input type (HRESULT 0x{:08X})", *hr as u32),
+            Self::OutputTypeFailed(hr) => write!(f, "H.264 decoder rejected NV12 output type (HRESULT 0x{:08X})", *hr as u32),
+            Self::Nv12OutputUnavailable => f.write_str("H.264 decoder does not advertise NV12 output"),
+            Self::EmptyInput => f.write_str("H.264 access unit is empty"),
+            Self::InputTooLarge => f.write_str("H.264 access unit exceeds Media Foundation buffer limits"),
+            Self::BufferFailed(hr) => write!(f, "Media Foundation buffer operation failed (HRESULT 0x{:08X})", *hr as u32),
+            Self::SampleFailed(hr) => write!(f, "Media Foundation sample operation failed (HRESULT 0x{:08X})", *hr as u32),
+            Self::NullBuffer => f.write_str("Media Foundation returned a null buffer pointer"),
+            Self::ProcessInputFailed(hr) => write!(f, "H.264 decoder input failed (HRESULT 0x{:08X})", *hr as u32),
+            Self::OutputInfoFailed(hr) => write!(f, "H.264 decoder output query failed (HRESULT 0x{:08X})", *hr as u32),
+            Self::FrameSizeOverflow => f.write_str("decoded frame allocation size overflowed"),
+            Self::ProcessOutputFailed(hr) => write!(f, "H.264 decoder output failed (HRESULT 0x{:08X})", *hr as u32),
         }
     }
 }
