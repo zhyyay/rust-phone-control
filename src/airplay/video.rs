@@ -986,6 +986,61 @@ impl std::fmt::Display for FrameConversionError {
 
 impl std::error::Error for FrameConversionError {}
 
+/// Normalize a bottom-up contiguous NV12 buffer into top-down row order.
+////
+//// Media Foundation represents a negative default stride as a bottom-up
+//// image. The Y plane and interleaved UV plane must each have their own row
+//// order reversed before the normal NV12 converter can consume the buffer.
+pub(super) fn normalize_nv12_bottom_up(
+    data: &mut [u8],
+    width: u32,
+    height: u32,
+    stride: usize,
+) -> Result<(), FrameConversionError> {
+    if width == 0 || height == 0 {
+        return Err(FrameConversionError::ZeroDimension);
+    }
+    if width > MAX_FRAME_DIMENSION || height > MAX_FRAME_DIMENSION {
+        return Err(FrameConversionError::DimensionTooLarge);
+    }
+    if width % 2 != 0 || height % 2 != 0 {
+        return Err(FrameConversionError::OddNv12Dimension);
+    }
+    let width = usize::try_from(width).map_err(|_| FrameConversionError::SizeOverflow)?;
+    let height = usize::try_from(height).map_err(|_| FrameConversionError::SizeOverflow)?;
+    if stride < width {
+        return Err(FrameConversionError::InvalidStride);
+    }
+
+    let y_bytes = stride
+        .checked_mul(height)
+        .ok_or(FrameConversionError::SizeOverflow)?;
+    let uv_rows = height / 2;
+    let uv_bytes = stride
+        .checked_mul(uv_rows)
+        .ok_or(FrameConversionError::SizeOverflow)?;
+    let required = y_bytes
+        .checked_add(uv_bytes)
+        .ok_or(FrameConversionError::SizeOverflow)?;
+    if data.len() < required {
+        return Err(FrameConversionError::BufferTooSmall);
+    }
+
+    fn reverse_plane_rows(data: &mut [u8], offset: usize, rows: usize, stride: usize) {
+        for row in 0..rows / 2 {
+            let top_start = offset + row * stride;
+            let bottom_start = offset + (rows - 1 - row) * stride;
+            let (before_bottom, bottom_and_after) = data.split_at_mut(bottom_start);
+            before_bottom[top_start..top_start + stride]
+                .swap_with_slice(&mut bottom_and_after[..stride]);
+        }
+    }
+
+    reverse_plane_rows(data, 0, height, stride);
+    reverse_plane_rows(data, y_bytes, uv_rows, stride);
+    Ok(())
+}
+
 impl<'a> Nv12Frame<'a> {
     /// Convert limited-range BT.601 NV12 into an owned BGRA frame.
     ///
@@ -1426,6 +1481,27 @@ mod tests {
         assert!(mailbox.has_pending_frame().unwrap());
         mailbox.clear().unwrap();
         assert!(!mailbox.has_pending_frame().unwrap());
+    }
+
+    #[test]
+    fn normalizes_bottom_up_nv12_y_and_uv_planes_independently() {
+        let mut data = vec![
+            1, 2, 3, 4, 5, 6, 7, 8, // Four Y rows.
+            10, 11, 12, 13, // Two interleaved UV rows.
+        ];
+        normalize_nv12_bottom_up(&mut data, 2, 4, 2).expect("valid bottom-up NV12");
+        assert_eq!(
+            data,
+            vec![7, 8, 5, 6, 3, 4, 1, 2, 12, 13, 10, 11]
+        );
+    }
+
+    #[test]
+    fn rejects_truncated_bottom_up_nv12_buffer() {
+        assert_eq!(
+            normalize_nv12_bottom_up(&mut [0; 7], 2, 2, 2),
+            Err(FrameConversionError::BufferTooSmall)
+        );
     }
 
     #[test]
