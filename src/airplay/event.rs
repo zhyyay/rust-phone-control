@@ -80,6 +80,10 @@ fn handle_event_stream(
     running: &AtomicBool,
     peer: SocketAddr,
 ) {
+    if let Err(error) = stream.set_nonblocking(false) {
+        tracing::warn!(%peer, %error, "Could not make AirPlay event socket blocking");
+        return;
+    }
     if let Err(error) = stream.set_read_timeout(Some(POLL_INTERVAL)) {
         tracing::warn!(%peer, %error, "Could not configure AirPlay event socket");
         return;
