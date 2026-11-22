@@ -839,9 +839,7 @@ mod tests {
 
     #[test]
     fn decrypts_encrypted_avcc_payload_and_converts_to_annex_b() {
-        use super::super::mirror_crypto::{
-            MirrorStreamCipher, derive_mirror_stream_keys,
-        };
+        use super::super::mirror_crypto::{MirrorStreamCipher, derive_mirror_stream_keys};
         use super::{AvcConfiguration, decrypt_access_unit_to_annex_b};
 
         let avcc = [
@@ -857,12 +855,8 @@ mod tests {
             .expect("test payload encryption uses the symmetric CTR operation");
 
         let mut decryptor = MirrorStreamCipher::new(&keys);
-        let annex_b = decrypt_access_unit_to_annex_b(
-            &configuration,
-            &mut decryptor,
-            &encrypted,
-        )
-        .expect("decrypt and convert access unit");
+        let annex_b = decrypt_access_unit_to_annex_b(&configuration, &mut decryptor, &encrypted)
+            .expect("decrypt and convert access unit");
         assert_eq!(annex_b, [0, 0, 0, 1, 0x65, 0x88]);
     }
 

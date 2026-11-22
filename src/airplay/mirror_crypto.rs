@@ -53,10 +53,16 @@ impl std::fmt::Display for MirrorCryptoError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::InvalidFairPlayKeyLength(length) => {
-                write!(formatter, "FairPlay video key must be 16 bytes, got {length}")
+                write!(
+                    formatter,
+                    "FairPlay video key must be 16 bytes, got {length}"
+                )
             }
             Self::InvalidSharedSecretLength(length) => {
-                write!(formatter, "X25519 shared secret must be 32 bytes, got {length}")
+                write!(
+                    formatter,
+                    "X25519 shared secret must be 32 bytes, got {length}"
+                )
             }
             Self::CounterExhausted => formatter.write_str("AES-CTR counter exhausted"),
         }
@@ -214,7 +220,9 @@ mod tests {
         };
         let mut whole = vec![0u8; 63];
         let mut reference = MirrorStreamCipher::new(&material);
-        reference.decrypt_packet(&mut whole).expect("reference stream");
+        reference
+            .decrypt_packet(&mut whole)
+            .expect("reference stream");
 
         let mut split = MirrorStreamCipher::new(&material);
         let mut first = vec![0u8; 17];
@@ -238,14 +246,8 @@ mod tests {
     #[test]
     fn derives_expected_legacy_stream_key_and_iv_vector() {
         let material = derive_mirror_stream_keys(&[0x5a; 16], None, 7).unwrap();
-        assert_eq!(
-            material.key(),
-            &hex("fd5d96a562458132f0570f3e6767ec94")
-        );
-        assert_eq!(
-            material.iv(),
-            &hex("9aed3fdb8c1a350dd4c9196598126771")
-        );
+        assert_eq!(material.key(), &hex("fd5d96a562458132f0570f3e6767ec94"));
+        assert_eq!(material.iv(), &hex("9aed3fdb8c1a350dd4c9196598126771"));
     }
 
     #[test]
@@ -253,24 +255,16 @@ mod tests {
         let fairplay_key = [0x5a; FAIRPLAY_KEY_BYTES];
         let shared_secret = [0xa5; X25519_SHARED_SECRET_BYTES];
         let legacy = derive_mirror_stream_keys(&fairplay_key, None, 7).unwrap();
-        let paired =
-            derive_mirror_stream_keys(&fairplay_key, Some(&shared_secret), 7).unwrap();
+        let paired = derive_mirror_stream_keys(&fairplay_key, Some(&shared_secret), 7).unwrap();
         assert_ne!(legacy.key(), paired.key());
         assert_ne!(legacy.iv(), paired.iv());
     }
 
     #[test]
     fn derives_expected_pair_verify_stream_key_and_iv_vector() {
-        let material =
-            derive_mirror_stream_keys(&[0x5a; 16], Some(&[0xa5; 32]), 7).unwrap();
-        assert_eq!(
-            material.key(),
-            &hex("71ca71a8222c472ba1215b941a11aedb")
-        );
-        assert_eq!(
-            material.iv(),
-            &hex("f427cf9796528a860b61f83a0105fcb2")
-        );
+        let material = derive_mirror_stream_keys(&[0x5a; 16], Some(&[0xa5; 32]), 7).unwrap();
+        assert_eq!(material.key(), &hex("71ca71a8222c472ba1215b941a11aedb"));
+        assert_eq!(material.iv(), &hex("f427cf9796528a860b61f83a0105fcb2"));
     }
 
     #[test]
