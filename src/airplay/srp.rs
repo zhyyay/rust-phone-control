@@ -272,13 +272,13 @@ mod tests {
     fn server_and_client_derive_matching_hap_session_and_proofs() {
         let salt = [0x5au8; 16];
         let server = SrpServer::new_with_parameters(
-            "123-45-678",
+            "518-08-582",
             salt,
             BigUint::from(0x123456789abcdefu64),
         )
         .unwrap();
         let (client_key, client_m1, client_a) = client_proof(
-            "123-45-678",
+            "518-08-582",
             &salt,
             &BigUint::from(0xfedcba987654321u64),
             &server.public_b,
@@ -297,13 +297,13 @@ mod tests {
     fn rejects_a_tampered_client_proof() {
         let salt = [0x33u8; 16];
         let server = SrpServer::new_with_parameters(
-            "123-45-678",
+            "518-08-582",
             salt,
             BigUint::from(987654321u64),
         )
         .unwrap();
         let (_, mut proof, client_a) = client_proof(
-            "123-45-678",
+            "518-08-582",
             &salt,
             &BigUint::from(123456789u64),
             &server.public_b,
@@ -318,7 +318,7 @@ mod tests {
     #[test]
     fn rejects_zero_and_out_of_range_client_public_values() {
         let server = SrpServer::new_with_parameters(
-            "123-45-678",
+            "518-08-582",
             [0x11; 16],
             BigUint::from(123u8),
         )
@@ -336,7 +336,7 @@ mod tests {
     #[test]
     fn rejects_wrong_proof_length() {
         let server = SrpServer::new_with_parameters(
-            "123-45-678",
+            "518-08-582",
             [0x22; 16],
             BigUint::from(123u8),
         )
@@ -350,7 +350,7 @@ mod tests {
     #[test]
     fn validates_salt_and_private_ephemeral() {
         assert_eq!(
-            SrpServer::new_with_parameters("123-45-678", [0; 16], BigUint::zero())
+            SrpServer::new_with_parameters("518-08-582", [0; 16], BigUint::zero())
                 .err(),
             Some(SrpError::InvalidPrivateKey)
         );
