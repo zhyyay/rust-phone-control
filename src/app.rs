@@ -164,7 +164,7 @@ impl Render for PhoneControlApp {
                             .on_click(|_, _, _| type_sample_ble()),
                     ),
             )
-            .child(Label::new("AirPlay Pair-Setup / Pair-Verify control-plane prototype · encrypted media and video mirroring are not implemented."))
+            .child(Label::new("AirPlay RTSP SETUP and UDP media reception · decryption, frame decoding, and video rendering are not implemented."))
     }
 }
 
