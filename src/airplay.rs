@@ -2,7 +2,7 @@
 //!
 //! Modules are intentionally separated by responsibility. The current code
 //! provides mDNS publication, a TCP listener, OPTIONS, /server-info, and basic binary-plist /info handling.
-//! Pair-Setup currently handles the SRP M1-M4 exchange only. Pair-Setup M5/M6,
+//! Pair-Setup implements the SRP M1-M4 and encrypted identity M5-M6 exchanges.
 //! Pair-Verify, FairPlay, encrypted media, and video decoding are not implemented.
 //! The endpoint advertises zero feature bits rather than claiming unsupported capabilities.
 
@@ -10,6 +10,7 @@ mod config;
 mod discovery;
 mod plist;
 mod pairing;
+mod pair_setup;
 mod rtsp;
 mod srp;
 mod tlv8;
