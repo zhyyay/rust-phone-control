@@ -8,15 +8,11 @@ use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::time::Duration;
 
-<<<<<<< HEAD
 use super::{
-    config, pairing, plist,
+    config, pair_setup, pair_verify::{self, PairVerifySession}, pairing, plist,
     srp::SrpServer,
     tlv8::{self, Tlv},
 };
-=======
-use super::{config, pair_setup, pair_verify::{self, PairVerifySession}, pairing, plist, srp::SrpServer, tlv8::{self, Tlv}};
->>>>>>> 4691b0f2385b11453b5b4fd89c40bef289acbfcb
 use ::plist::{Dictionary, Value};
 
 const MAX_HEADER_BYTES: usize = 16 * 1024;
