@@ -220,7 +220,8 @@ mod tests {
 
     #[test]
     fn validates_setup_code_display_format() {
-        assert!(is_valid_setup_code("518-08-582"));\n        assert!(!is_valid_setup_code("123-45-678"));\n        assert!(!is_valid_setup_code("111-11-111"));
+        assert!(is_valid_setup_code("518-08-582"));
+        assert!(!is_valid_setup_code("123-45-678"));\n        assert!(!is_valid_setup_code("111-11-111"));
         assert!(!is_valid_setup_code("12345678"));
         assert!(!is_valid_setup_code("abc-de-fgh"));
     }
