@@ -20,7 +20,7 @@ pub(super) struct TimingClient {
 
 impl TimingClient {
     pub(super) fn start(peer_ip: IpAddr, peer_port: u16) -> std::io::Result<Self> {
-        let bind_addr = match peer_ip {
+        let bind_addr: SocketAddr = match peer_ip {
             IpAddr::V4(_) => "0.0.0.0:0".parse().expect("valid IPv4 wildcard address"),
             IpAddr::V6(_) => "[::]:0".parse().expect("valid IPv6 wildcard address"),
         };
