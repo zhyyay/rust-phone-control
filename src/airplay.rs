@@ -29,8 +29,18 @@ struct ReceiverRuntime {
 static RECEIVER: OnceLock<Mutex<Option<ReceiverRuntime>>> = OnceLock::new();
 
 #[cfg(windows)]
+static PAIRING_CODE: OnceLock<String> = OnceLock::new();
+
+#[cfg(windows)]
 fn receiver_slot() -> &'static Mutex<Option<ReceiverRuntime>> {
     RECEIVER.get_or_init(|| Mutex::new(None))
+}
+
+#[cfg(windows)]
+pub fn setup_code() -> String {
+    PAIRING_CODE
+        .get_or_init(pairing::generate_setup_code)
+        .clone()
 }
 
 #[cfg(windows)]
@@ -44,6 +54,7 @@ pub fn start() -> anyhow::Result<()> {
         return Ok(());
     }
 
+    let _pairing_code = setup_code();
     let server = server::ControlServer::start()?;
     let advertisement = discovery::Advertisement::start()?;
     *runtime = Some(ReceiverRuntime {
