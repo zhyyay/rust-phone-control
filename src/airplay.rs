@@ -8,6 +8,7 @@
 
 mod config;
 mod discovery;
+mod media;
 mod pair_setup;
 mod pair_verify;
 mod pairing;
