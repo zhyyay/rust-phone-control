@@ -489,10 +489,11 @@ const MAX_DECODE_ACCESS_UNIT_BYTES: usize = 64 * 1024 * 1024;
 /// H.264 decode-to-frame pipeline for one mirror session.
 ///
 /// Construct and use this value on the dedicated media worker thread. It
-/// accepts complete, already-decrypted Annex-B access units, decodes them via
-/// Media Foundation, converts output to BGRA, and publishes frames into the
-/// bounded latest-frame mailbox. It deliberately does not unwrap FairPlay
-/// keys or interpret encrypted AirPlay packets.
+/// accepts complete Annex-B access units or encrypted AVCC access units when
+/// supplied with a valid per-stream cipher, decodes them via Media Foundation,
+/// converts output to BGRA, and publishes frames into the bounded latest-frame
+/// mailbox. It deliberately does not unwrap FairPlay keys or reconstruct
+/// transport fragments.
 #[cfg(windows)]
 pub struct H264FramePipeline<'runtime> {
     decoder: H264Decoder<'runtime>,
