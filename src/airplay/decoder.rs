@@ -249,7 +249,7 @@ impl H264Decoder {
                 .and_then(|_| input_type.SetUINT64(&MF_MT_FRAME_SIZE, frame_size))
                 .and_then(|_| input_type.SetUINT64(&MF_MT_FRAME_RATE, frame_rate))
                 .and_then(|_| input_type.SetUINT64(&MF_MT_PIXEL_ASPECT_RATIO, (1u64 << 32) | 1))
-                .and_then(|_| input_type.SetUINT32(&MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive.0))
+                .and_then(|_| input_type.SetUINT32(&MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive.0 as u32))
         }
         .map_err(|error| MediaFoundationError::MediaTypeFailed(error.code().0))?;
 
