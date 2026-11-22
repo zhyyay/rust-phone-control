@@ -367,6 +367,22 @@ impl<'runtime> H264Decoder<'runtime> {
         Ok(frames)
     }
 
+    /// Submit one Annex-B access unit, drain decoded frames, and convert
+    /// each NV12 output into tightly packed BGRA for the desktop mailbox.
+    pub fn submit_access_unit_and_drain_bgra(
+        &mut self,
+        access_unit: &[u8],
+    ) -> Result<Vec<crate::airplay::video::BgraFrame>, MediaFoundationError> {
+        self.submit_access_unit_and_drain(access_unit)?
+            .into_iter()
+            .map(|frame| {
+                frame
+                    .to_bgra()
+                    .map_err(MediaFoundationError::FrameConversion)
+            })
+            .collect()
+    }
+
     /// Retrieve up to the requested number of immediately available frames.
     pub fn drain_available_frames(
         &mut self,
@@ -486,6 +502,7 @@ pub enum MediaFoundationError {
     ProcessInputFailed(i32),
     OutputInfoFailed(i32),
     FrameSizeOverflow,
+    FrameConversion(crate::airplay::video::FrameConversionError),
     ProcessOutputFailed(i32),
 }
 
@@ -559,6 +576,7 @@ impl fmt::Display for MediaFoundationError {
                 *hr as u32
             ),
             Self::FrameSizeOverflow => f.write_str("decoded frame allocation size overflowed"),
+            Self::FrameConversion(error) => write!(f, "decoded NV12 frame conversion failed: {error}"),
             Self::ProcessOutputFailed(hr) => write!(
                 f,
                 "H.264 decoder output failed (HRESULT 0x{:08X})",
