@@ -236,6 +236,19 @@ mod tests {
     }
 
     #[test]
+    fn derives_expected_legacy_stream_key_and_iv_vector() {
+        let material = derive_mirror_stream_keys(&[0x5a; 16], None, 7).unwrap();
+        assert_eq!(
+            material.key(),
+            &hex("fd5d96a562458132f0570f3e6767ec94")
+        );
+        assert_eq!(
+            material.iv(),
+            &hex("9aed3fdb8c1a350dd4c9196598126771")
+        );
+    }
+
+    #[test]
     fn includes_pair_verify_secret_when_supplied() {
         let fairplay_key = [0x5a; FAIRPLAY_KEY_BYTES];
         let shared_secret = [0xa5; X25519_SHARED_SECRET_BYTES];
