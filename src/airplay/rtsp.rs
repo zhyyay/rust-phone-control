@@ -1,7 +1,7 @@
 //! Bounded RTSP/HTTP control parser for the AirPlay endpoint.
 //!
 //! The handler supports persistent RTSP connections, bounded request bodies,
-//! OPTIONS, GET /server-info, and a conservative XML-plist GET /info response.
+//! OPTIONS, GET /server-info, and binary-plist /info responses.
 //! Pairing and media transport are intentionally not advertised or implemented.
 
 use std::io::{Read, Write};
@@ -57,7 +57,7 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
         ) {
             ("OPTIONS", _, "RTSP/1.0") => {
                 let response = format!(
-                    "RTSP/1.0 200 OK\r\nCSeq: {}\r\nServer: RustPhoneControl/0.1\r\nPublic: OPTIONS, GET\r\nContent-Length: 0\r\n\r\n",
+                    "RTSP/1.0 200 OK\r\nCSeq: {}\r\nServer: RustPhoneControl/0.1\r\nPublic: OPTIONS, GET, POST\r\nContent-Length: 0\r\n\r\n",
                     request.cseq
                 );
                 write_response(&mut stream, &response, 200)?;
@@ -260,31 +260,51 @@ fn server_info_plist() -> String {
 }
 
 fn build_info_response(request_body: &[u8]) -> Result<Vec<u8>, String> {
-    if !request_body.is_empty() {
+    let response = if request_body.is_empty() {
+        // Unqualified /info asks for baseline playback information.
+        let mut dictionary = Dictionary::new();
+        dictionary.insert("initialVolume".into(), Value::Integer((-120).into()));
+        dictionary
+    } else {
         let request = plist::decode(request_body).map_err(|error| error.to_string())?;
         let dictionary = request
             .as_dictionary()
             .ok_or_else(|| "AirPlay /info request root must be a dictionary".to_owned())?;
 
-        if let Some(qualifier) = dictionary.get("qualifier") {
-            let values = qualifier
-                .as_array()
-                .ok_or_else(|| "AirPlay /info qualifier must be an array".to_owned())?;
-            if values.iter().any(|value| value.as_string().is_none()) {
-                return Err("AirPlay /info qualifier entries must be strings".to_owned());
-            }
-        }
-    }
+        let qualifier = dictionary
+            .get("qualifier")
+            .ok_or_else(|| "AirPlay /info request is missing qualifier".to_owned())?
+            .as_array()
+            .ok_or_else(|| "AirPlay /info qualifier must be an array".to_owned())?;
 
-    let mut response = Dictionary::new();
-    response.insert("deviceID".into(), Value::String(config::device_id()));
-    response.insert("features".into(), Value::Integer(0.into()));
-    response.insert("model".into(), Value::String(config::MODEL.into()));
-    response.insert("protocolVersion".into(), Value::String("1.0".into()));
-    response.insert("sourceVersion".into(), Value::String(config::SOURCE_VERSION.into()));
-    response.insert("statusFlags".into(), Value::Integer(0.into()));
+        if qualifier.iter().any(|value| value.as_string().is_none()) {
+            return Err("AirPlay /info qualifier entries must be strings".to_owned());
+        }
+
+        let asks_for_txt = qualifier
+            .iter()
+            .filter_map(Value::as_string)
+            .any(|value| value == "txtAirPlay");
+
+        if asks_for_txt {
+            txt_airplay_dictionary()
+        } else {
+            return Err("unsupported AirPlay /info qualifier".to_owned());
+        }
+    };
 
     plist::encode_binary(&Value::Dictionary(response)).map_err(|error| error.to_string())
+}
+
+/// Return the conservative properties also published in the mDNS TXT record.
+fn txt_airplay_dictionary() -> Dictionary {
+    let mut dictionary = Dictionary::new();
+    dictionary.insert("deviceid".into(), Value::String(config::device_id()));
+    dictionary.insert("features".into(), Value::String(config::FEATURES.into()));
+    dictionary.insert("model".into(), Value::String(config::MODEL.into()));
+    dictionary.insert("srcvers".into(), Value::String(config::SOURCE_VERSION.into()));
+    dictionary.insert("flags".into(), Value::String("0x0".into()));
+    dictionary
 }
 
 #[cfg(test)]
@@ -295,8 +315,8 @@ mod tests {
 
     #[test]
     fn finds_header_terminator() {
-        assert_eq!(find_header_end(b"OPTIONS * RTSP/1.0\r\nCSeq: 1\r\n\r\n"), Some(27));
-        assert_eq!(find_header_end(b"OPTIONS * RTSP/1.0\r\n"), None);
+        assert_eq!(find_header_end(b"OPTIONS * RTSP/1.0\\r\\nCSeq: 1\\r\\n\\r\\n"), Some(27));
+        assert_eq!(find_header_end(b"OPTIONS * RTSP/1.0\\r\\n"), None);
     }
 
     #[test]
@@ -307,30 +327,39 @@ mod tests {
     }
 
     #[test]
-    fn info_response_is_binary_plist_with_conservative_capabilities() {
+    fn unqualified_info_returns_initial_volume() {
         let bytes = build_info_response(&[]).expect("build /info response");
         assert!(bytes.starts_with(b"bplist00"));
         let value = plist::decode(&bytes).expect("decode response");
         let dict = value.as_dictionary().expect("response dictionary");
-        assert!(matches!(dict.get("features"), Some(Value::Integer(_))));
-        assert!(matches!(dict.get("statusFlags"), Some(Value::Integer(_))));
+        assert!(matches!(dict.get("initialVolume"), Some(Value::Integer(_))));
     }
 
     #[test]
-    fn info_request_parses_binary_qualifier_array() {
+    fn txt_airplay_qualifier_returns_mdns_properties_as_strings() {
         let mut request = Dictionary::new();
         request.insert(
             "qualifier".into(),
-            Value::Array(vec![Value::String("deviceID".into()), Value::String("features".into())]),
+            Value::Array(vec![Value::String("txtAirPlay".into())]),
         );
         let bytes = plist::encode_binary(&Value::Dictionary(request)).expect("encode request");
-        assert!(build_info_response(&bytes).is_ok());
+        let response = build_info_response(&bytes).expect("build TXT response");
+        let value = plist::decode(&response).expect("decode response");
+        let dict = value.as_dictionary().expect("response dictionary");
+
+        for key in ["deviceid", "features", "model", "srcvers", "flags"] {
+            assert!(matches!(dict.get(key), Some(Value::String(_))), "missing string key {key}");
+        }
+        assert_eq!(dict.get("features").and_then(Value::as_string), Some("0x0"));
     }
 
     #[test]
-    fn info_request_rejects_invalid_qualifier() {
+    fn unsupported_info_qualifier_is_rejected() {
         let mut request = Dictionary::new();
-        request.insert("qualifier".into(), Value::String("deviceID".into()));
+        request.insert(
+            "qualifier".into(),
+            Value::Array(vec![Value::String("unknownCapability".into())]),
+        );
         let bytes = plist::encode_binary(&Value::Dictionary(request)).expect("encode request");
         assert!(build_info_response(&bytes).is_err());
     }
