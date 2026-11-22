@@ -295,8 +295,8 @@ impl LatestFrameMailbox {
 
     /// Publish a decoded frame, replacing the previous unconsumed frame.
     pub fn publish(&self, frame: BgraFrame) -> Result<u64, FrameMailboxError> {
-        let sequence = self.sequence.fetch_add(1, Ordering::AcqRel).wrapping_add(1);
         let mut slot = self.frame.lock().map_err(|_| FrameMailboxError::Poisoned)?;
+        let sequence = self.sequence.fetch_add(1, Ordering::AcqRel).wrapping_add(1);
         *slot = Some((sequence, Arc::new(frame)));
         Ok(sequence)
     }
