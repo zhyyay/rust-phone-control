@@ -556,7 +556,19 @@ impl<'runtime> H264FramePipeline<'runtime> {
             .video_dimensions()
             .map_err(MediaFoundationError::InvalidAvcConfiguration)?
             .ok_or(MediaFoundationError::MissingSps)?;
-        Self::new(runtime, dimensions.width, dimensions.height, frames)
+        let mut pipeline = Self::new(runtime, dimensions.width, dimensions.height, frames)?;
+
+        // avcC carries the stream's SPS/PPS. Submit them before the first
+        // picture so Media Foundation has the codec state needed to decode
+        // the first IDR access unit once encrypted video becomes available.
+        let parameter_sets = configuration.parameter_sets_annex_b();
+        if !parameter_sets.is_empty() {
+            let _ = pipeline
+                .decoder
+                .submit_access_unit_and_drain_bgra(&parameter_sets)?;
+        }
+
+        Ok(pipeline)
     }
 
     /// Decode one complete, already-decrypted Annex-B access unit.
