@@ -1097,6 +1097,7 @@ mod tests {
         use std::net::TcpListener;
         use std::sync::atomic::{AtomicBool, Ordering};
         use std::sync::{Arc, mpsc};
+        use std::thread;
         use std::time::Duration;
 
         let listener = TcpListener::bind("127.0.0.1:0").expect("TCP listener binds");
