@@ -76,12 +76,12 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
                 return Ok(());
             }
             ("POST", "/pair-setup", "RTSP/1.0") => {
-                let setup_code = std::env::var("AIRPLAY_SETUP_CODE").ok();
+                let setup_code = super::setup_code();
                 match handle_pair_setup(
                     &request.body,
                     &mut pair_setup_srp,
                     &mut pair_setup_session_key,
-                    setup_code.as_deref(),
+                    Some(&setup_code),
                 ) {
                     Ok(body) => {
                         let header = format!(
