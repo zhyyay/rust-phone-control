@@ -33,6 +33,12 @@ pub struct PairVerifySession {
     encryption_key: [u8; 32],
 }
 
+/// Values made available only after the controller's M3 signature is verified.
+pub(super) struct PairVerifyCompletion {
+    pub(super) response: Vec<u8>,
+    pub(super) shared_secret: [u8; 32],
+}
+
 impl PairVerifySession {
     /// Validate Pair-Verify M1 and create the M2 response.
     pub fn start(body: &[u8]) -> Result<(Self, Vec<u8>), String> {
@@ -123,7 +129,7 @@ impl PairVerifySession {
     }
 
     /// Validate Pair-Verify M3 and return the M4 response.
-    pub fn finish(self, body: &[u8]) -> Result<Vec<u8>, String> {
+    pub fn finish(self, body: &[u8]) -> Result<PairVerifyCompletion, String> {
         let fields = tlv8::decode(body).map_err(|error| error.to_string())?;
         require_state(&fields, 3)?;
         let encrypted = unique_field(&fields, ENCRYPTED_DATA)?;
@@ -167,10 +173,13 @@ impl PairVerifySession {
             .verify(&signed, &signature)
             .map_err(|_| "Pair-Verify controller signature verification failed")?;
 
-        Ok(tlv8::encode(&[Tlv {
-            kind: STATE,
-            value: vec![4],
-        }]))
+        Ok(PairVerifyCompletion {
+            response: tlv8::encode(&[Tlv {
+                kind: STATE,
+                value: vec![4],
+            }]),
+            shared_secret: self.shared_secret,
+        })
     }
 }
 
@@ -351,8 +360,9 @@ mod tests {
             },
         ]);
 
-        let m4 = session.finish(&m3).expect("verify M3");
-        let m4_fields = tlv8::decode(&m4).expect("decode M4");
+        let completion = session.finish(&m3).expect("verify M3");
+        assert_ne!(completion.shared_secret, [0u8; 32]);
+        let m4_fields = tlv8::decode(&completion.response).expect("decode M4");
         assert!(
             m4_fields
                 .iter()
