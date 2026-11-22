@@ -1062,7 +1062,7 @@ fn txt_airplay_dictionary() -> Dictionary {
 mod tests {
     use super::plist;
     use super::{
-        MediaSession, Request, build_info_response, find_header_end, handle_pair_setup,
+        MediaSession, Request, SCREEN_MIRROR_HEADER_SIZE, TcpStream, build_info_response, find_header_end, handle_pair_setup,
         handle_setup_request, server_info_plist,
     };
     use crate::airplay::tlv8::{self, Tlv};
@@ -1089,6 +1089,47 @@ mod tests {
             body: Vec::new(),
         };
         assert_eq!(request.header("Transport"), Some("RTP/AVP/UDP;unicast"));
+    }
+
+    #[test]
+    fn mirror_tcp_stream_reads_128_byte_header_and_payload() {
+        use std::io::Write;
+        use std::net::TcpListener;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::{Arc, mpsc};
+        use std::time::Duration;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("TCP listener binds");
+        let mut client = TcpStream::connect(listener.local_addr().expect("listener address"))
+            .expect("TCP client connects");
+        let (mut server, peer_addr) = listener.accept().expect("accept TCP client");
+        server
+            .set_read_timeout(Some(Duration::from_millis(50)))
+            .expect("set read timeout");
+
+        let running = Arc::new(AtomicBool::new(true));
+        let worker_running = Arc::clone(&running);
+        let (sender, receiver) = mpsc::sync_channel(2);
+        let worker = thread::spawn(move || {
+            super::read_mirror_stream(server, peer_addr, &sender, &worker_running);
+        });
+
+        let mut packet = vec![0u8; SCREEN_MIRROR_HEADER_SIZE + 3];
+        packet[0..4].copy_from_slice(&3u32.to_le_bytes());
+        packet[4..6].copy_from_slice(&0u16.to_le_bytes());
+        packet[8..16].copy_from_slice(&123u64.to_le_bytes());
+        packet[SCREEN_MIRROR_HEADER_SIZE..].copy_from_slice(&[0xAA, 0xBB, 0xCC]);
+        client.write_all(&packet).expect("write framed mirror packet");
+
+        let received = receiver
+            .recv_timeout(Duration::from_secs(2))
+            .expect("TCP packet forwarded");
+        assert_eq!(received.packet_type, super::super::media::ScreenMirrorPacketType::Video);
+        assert_eq!(received.timestamp, 123);
+        assert_eq!(received.payload, vec![0xAA, 0xBB, 0xCC]);
+
+        running.store(false, Ordering::Release);
+        worker.join().expect("TCP stream worker exits");
     }
 
     #[test]
