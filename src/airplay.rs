@@ -8,6 +8,8 @@
 
 mod config;
 mod discovery;
+// The parser is introduced before the UDP media receiver is wired in.
+#[allow(dead_code)]
 mod media;
 mod pair_setup;
 mod pair_verify;
