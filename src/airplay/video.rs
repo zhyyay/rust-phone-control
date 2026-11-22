@@ -255,7 +255,6 @@ impl AvcConfiguration {
     }
 }
 
-
 /// Coded picture dimensions parsed from an H.264 sequence parameter set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AvcVideoDimensions {
@@ -295,7 +294,11 @@ fn parse_h264_sps_dimensions(sps: &[u8]) -> Result<AvcVideoDimensions, AvcConfig
             continue;
         }
         rbsp.push(byte);
-        zero_count = if byte == 0 { zero_count.saturating_add(1) } else { 0 };
+        zero_count = if byte == 0 {
+            zero_count.saturating_add(1)
+        } else {
+            0
+        };
         index += 1;
     }
 
@@ -375,7 +378,12 @@ fn parse_h264_sps_dimensions(sps: &[u8]) -> Result<AvcVideoDimensions, AvcConfig
     let _direct_8x8_inference_flag = bits.read_bit()?;
 
     let (crop_left, crop_right, crop_top, crop_bottom) = if bits.read_bit()? {
-        (bits.read_ue()?, bits.read_ue()?, bits.read_ue()?, bits.read_ue()?)
+        (
+            bits.read_ue()?,
+            bits.read_ue()?,
+            bits.read_ue()?,
+            bits.read_ue()?,
+        )
     } else {
         (0, 0, 0, 0)
     };
@@ -391,7 +399,11 @@ fn parse_h264_sps_dimensions(sps: &[u8]) -> Result<AvcVideoDimensions, AvcConfig
         .and_then(|value| value.checked_mul(frame_factor))
         .ok_or(AvcConfigError::InvalidSps)?;
 
-    let chroma_array_type = if separate_colour_plane { 0 } else { chroma_format_idc };
+    let chroma_array_type = if separate_colour_plane {
+        0
+    } else {
+        chroma_format_idc
+    };
     let (sub_width_c, sub_height_c) = match chroma_array_type {
         0 => (1u64, 1u64),
         1 => (2, 2),
@@ -399,7 +411,11 @@ fn parse_h264_sps_dimensions(sps: &[u8]) -> Result<AvcVideoDimensions, AvcConfig
         3 => (1, 1),
         _ => return Err(AvcConfigError::InvalidSps),
     };
-    let crop_unit_x = if chroma_array_type == 0 { 1 } else { sub_width_c };
+    let crop_unit_x = if chroma_array_type == 0 {
+        1
+    } else {
+        sub_width_c
+    };
     let crop_unit_y = if chroma_array_type == 0 {
         frame_factor
     } else {
@@ -413,8 +429,12 @@ fn parse_h264_sps_dimensions(sps: &[u8]) -> Result<AvcVideoDimensions, AvcConfig
         .checked_add(u64::from(crop_bottom))
         .and_then(|value| value.checked_mul(crop_unit_y))
         .ok_or(AvcConfigError::InvalidSps)?;
-    let width = coded_width.checked_sub(crop_x).ok_or(AvcConfigError::InvalidSps)?;
-    let height = coded_height.checked_sub(crop_y).ok_or(AvcConfigError::InvalidSps)?;
+    let width = coded_width
+        .checked_sub(crop_x)
+        .ok_or(AvcConfigError::InvalidSps)?;
+    let height = coded_height
+        .checked_sub(crop_y)
+        .ok_or(AvcConfigError::InvalidSps)?;
     if width == 0
         || height == 0
         || width > u64::from(MAX_FRAME_DIMENSION)
@@ -435,8 +455,8 @@ fn skip_scaling_list(bits: &mut H264BitReader<'_>, size: usize) -> Result<(), Av
     for _ in 0..size {
         if next_scale != 0 {
             let delta_scale = bits.read_se()?;
-            next_scale = (i64::from(last_scale) + i64::from(delta_scale) + 256)
-                .rem_euclid(256) as i32;
+            next_scale =
+                (i64::from(last_scale) + i64::from(delta_scale) + 256).rem_euclid(256) as i32;
         }
         if next_scale != 0 {
             last_scale = next_scale;
@@ -452,14 +472,23 @@ struct H264BitReader<'a> {
 
 impl<'a> H264BitReader<'a> {
     fn new(bytes: &'a [u8]) -> Self {
-        Self { bytes, bit_offset: 0 }
+        Self {
+            bytes,
+            bit_offset: 0,
+        }
     }
 
     fn read_bit(&mut self) -> Result<bool, AvcConfigError> {
         let byte_index = self.bit_offset / 8;
         let bit_index = 7 - (self.bit_offset % 8);
-        let byte = *self.bytes.get(byte_index).ok_or(AvcConfigError::InvalidSps)?;
-        self.bit_offset = self.bit_offset.checked_add(1).ok_or(AvcConfigError::InvalidSps)?;
+        let byte = *self
+            .bytes
+            .get(byte_index)
+            .ok_or(AvcConfigError::InvalidSps)?;
+        self.bit_offset = self
+            .bit_offset
+            .checked_add(1)
+            .ok_or(AvcConfigError::InvalidSps)?;
         Ok((byte >> bit_index) & 1 != 0)
     }
 
@@ -491,8 +520,13 @@ impl<'a> H264BitReader<'a> {
 
     fn read_se(&mut self) -> Result<i32, AvcConfigError> {
         let code_num = self.read_ue()?;
-        let magnitude = i32::try_from(code_num.div_ceil(2)).map_err(|_| AvcConfigError::InvalidSps)?;
-        Ok(if code_num & 1 == 0 { -magnitude } else { magnitude })
+        let magnitude =
+            i32::try_from(code_num.div_ceil(2)).map_err(|_| AvcConfigError::InvalidSps)?;
+        Ok(if code_num & 1 == 0 {
+            -magnitude
+        } else {
+            magnitude
+        })
     }
 }
 
@@ -1070,7 +1104,9 @@ mod tests {
 
         let mut sps = vec![0x67];
         for chunk in bits.chunks_exact(8) {
-            let byte = chunk.iter().fold(0u8, |value, bit| (value << 1) | u8::from(*bit));
+            let byte = chunk
+                .iter()
+                .fold(0u8, |value, bit| (value << 1) | u8::from(*bit));
             sps.push(byte);
         }
 

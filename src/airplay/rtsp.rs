@@ -8,7 +8,10 @@
 
 use std::io::{self, Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::sync::{Arc, mpsc::{self, Receiver}};
+use std::sync::{
+    Arc,
+    mpsc::{self, Receiver},
+};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
@@ -339,7 +342,7 @@ fn process_media_packets(
                         );
                     }
                 }
-            },
+            }
             super::video::MirrorPacketOutcome::InvalidCodecConfiguration(error) => {
                 tracing::warn!(
                     %packet.peer_addr,
@@ -891,8 +894,8 @@ fn handle_setup_request(
                 ));
             }
 
-            let (media_foundation, frames) = super::media_pipeline_context()
-                .unwrap_or_else(|error| {
+            let (media_foundation, frames) =
+                super::media_pipeline_context().unwrap_or_else(|error| {
                     tracing::warn!(%error, "Could not obtain AirPlay decoder presentation context");
                     (None, Arc::new(super::video::LatestFrameMailbox::new()))
                 });

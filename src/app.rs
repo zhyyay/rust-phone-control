@@ -218,7 +218,6 @@ impl Render for PhoneControlApp {
     }
 }
 
-
 #[cfg(windows)]
 fn preview_panel_for_app(app: &PhoneControlApp) -> impl IntoElement {
     preview_panel(app.preview_image.clone(), app.preview_status.clone())
@@ -253,7 +252,11 @@ fn preview_panel(image: Option<Arc<Image>>, status: String) -> impl IntoElement 
             .flex()
             .items_center()
             .justify_center()
-            .child(Label::new(if status.is_empty() { "Waiting for decoded video frames".to_owned() } else { status }))
+            .child(Label::new(if status.is_empty() {
+                "Waiting for decoded video frames".to_owned()
+            } else {
+                status
+            }))
     };
     panel = panel.child(surface);
     panel
@@ -278,8 +281,12 @@ fn bgra_frame_to_bmp(frame: &crate::airplay::BgraFrame) -> Result<Vec<u8>, &'sta
     if frame.data.len() < source_bytes {
         return Err("BGRA frame buffer is truncated");
     }
-    let pixel_bytes = row_bytes.checked_mul(height).ok_or("BMP image size overflow")?;
-    let file_bytes = 54usize.checked_add(pixel_bytes).ok_or("BMP file size overflow")?;
+    let pixel_bytes = row_bytes
+        .checked_mul(height)
+        .ok_or("BMP image size overflow")?;
+    let file_bytes = 54usize
+        .checked_add(pixel_bytes)
+        .ok_or("BMP file size overflow")?;
     let file_bytes_u32 = u32::try_from(file_bytes).map_err(|_| "BMP file exceeds 4 GiB")?;
     let width_i32 = i32::try_from(width).map_err(|_| "BMP width overflow")?;
     let height_i32 = i32::try_from(height).map_err(|_| "BMP height overflow")?;
@@ -301,7 +308,9 @@ fn bgra_frame_to_bmp(frame: &crate::airplay::BgraFrame) -> Result<Vec<u8>, &'sta
     bmp.extend_from_slice(&[0; 8]);
 
     for row in 0..height {
-        let start = row.checked_mul(frame.stride).ok_or("BGRA row offset overflow")?;
+        let start = row
+            .checked_mul(frame.stride)
+            .ok_or("BGRA row offset overflow")?;
         bmp.extend_from_slice(&frame.data[start..start + row_bytes]);
     }
     Ok(bmp)

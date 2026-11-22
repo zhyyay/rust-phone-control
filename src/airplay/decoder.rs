@@ -20,7 +20,7 @@ use windows_062::Win32::{
         MFTEnumEx, MFVideoFormat_H264, MFVideoFormat_HEVC, MFVideoFormat_NV12,
         MFVideoInterlace_Progressive,
     },
-    System::Com::{CoInitializeEx, CoTaskMemFree, CoUninitialize, COINIT_MULTITHREADED},
+    System::Com::{COINIT_MULTITHREADED, CoInitializeEx, CoTaskMemFree, CoUninitialize},
 };
 
 #[cfg(windows)]
@@ -34,7 +34,6 @@ unsafe extern "system" {
     fn MFStartup(version: u32, flags: u32) -> i32;
     fn MFShutdown() -> i32;
 }
-
 
 /// COM apartment initialized on the same thread that owns the MFT interfaces.
 #[cfg(windows)]
