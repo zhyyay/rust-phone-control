@@ -321,12 +321,12 @@ fn handle_pair_setup(
                 .map_err(|error| PairSetupFailure::bad_request(error.to_string()))?;
             let code = setup_code.ok_or_else(|| {
                 PairSetupFailure::unavailable(
-                    "set AIRPLAY_SETUP_CODE to an XXX-XX-XXX pairing code before starting the receiver",
+                    "the receiver has no generated pairing code",
                 )
             })?;
             if !pairing::is_valid_setup_code(code) {
                 return Err(PairSetupFailure::unavailable(
-                    "AIRPLAY_SETUP_CODE must use the XXX-XX-XXX format",
+                    "the generated pairing code has an invalid format",
                 ));
             }
 
