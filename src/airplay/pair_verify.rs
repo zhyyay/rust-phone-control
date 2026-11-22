@@ -177,30 +177,97 @@ pub fn error_response() -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::{PairVerifySession, PUBLIC_KEY, STATE};
-    use crate::airplay::tlv8::{self, Tlv};
+    use super::{derive_key, PairVerifySession, ENCRYPTED_DATA, IDENTIFIER, NONCE_M2, NONCE_M3, PUBLIC_KEY, SIGNATURE, STATE};
+    use crate::airplay::{pair_setup, tlv8::{self, Tlv}};
+    use chacha20poly1305::aead::{Aead, KeyInit};
+    use chacha20poly1305::{ChaCha20Poly1305, Nonce};
+    use ed25519_dalek::{Signer, SigningKey, Verifier, VerifyingKey};
     use rand::rngs::OsRng;
     use rand::RngCore;
     use x25519_dalek::{PublicKey, StaticSecret};
 
     #[test]
-    fn m1_creates_valid_m2_with_ephemeral_public_key_and_encrypted_data() {
-        let mut bytes = [0u8; 32];
-        OsRng.fill_bytes(&mut bytes);
-        let controller_secret = StaticSecret::from(bytes);
-        let controller_public = PublicKey::from(&controller_secret);
-        let request = tlv8::encode(&[
-            Tlv { kind: STATE, value: vec![1] },
-            Tlv { kind: PUBLIC_KEY, value: controller_public.as_bytes().to_vec() },
-        ]);
-        let (_session, response) = PairVerifySession::start(&request).expect("valid M1");
-        let fields = tlv8::decode(&response).expect("decode M2");
-        assert!(fields.iter().any(|field| field.kind == STATE && field.value == [2]));
-        assert_eq!(
-            fields.iter().find(|field| field.kind == PUBLIC_KEY).unwrap().value.len(),
-            32
+    fn completes_authenticated_pair_verify_m1_to_m4() {
+        let mut ephemeral_bytes = [0u8; 32];
+        OsRng.fill_bytes(&mut ephemeral_bytes);
+        let controller_ephemeral_secret = StaticSecret::from(ephemeral_bytes);
+        let controller_ephemeral_public = PublicKey::from(&controller_ephemeral_secret);
+
+        let controller_identity = SigningKey::generate(&mut OsRng);
+        let controller_identifier = b"pair-verify-test-controller";
+        pair_setup::test_register_controller(
+            controller_identifier,
+            controller_identity.verifying_key().to_bytes(),
         );
-        assert!(fields.iter().any(|field| field.kind == 0x05));
+
+        let m1 = tlv8::encode(&[
+            Tlv { kind: STATE, value: vec![1] },
+            Tlv { kind: PUBLIC_KEY, value: controller_ephemeral_public.as_bytes().to_vec() },
+        ]);
+        let (session, m2) = PairVerifySession::start(&m1).expect("Pair-Verify M2");
+        let m2_fields = tlv8::decode(&m2).expect("decode M2");
+        let accessory_ephemeral: [u8; 32] = m2_fields
+            .iter().find(|field| field.kind == PUBLIC_KEY).unwrap()
+            .value.as_slice().try_into().unwrap();
+        let encrypted_m2 = &m2_fields
+            .iter().find(|field| field.kind == ENCRYPTED_DATA).unwrap().value;
+
+        let shared = controller_ephemeral_secret.diffie_hellman(&PublicKey::from(accessory_ephemeral));
+        let encryption_key = derive_key(
+            shared.as_bytes(),
+            b"Pair-Verify-Encrypt-Salt",
+            b"Pair-Verify-Encrypt-Info",
+        ).unwrap();
+        let cipher = ChaCha20Poly1305::new_from_slice(&encryption_key).unwrap();
+        let m2_plaintext = cipher.decrypt(Nonce::from_slice(NONCE_M2), encrypted_m2.as_ref())
+            .expect("decrypt M2");
+        let m2_inner = tlv8::decode(&m2_plaintext).expect("decode M2 inner TLV");
+        let accessory_identifier = m2_inner
+            .iter().find(|field| field.kind == IDENTIFIER).unwrap().value.clone();
+        let accessory_signature = m2_inner
+            .iter().find(|field| field.kind == SIGNATURE).unwrap().value.clone();
+
+        let accessory_x = derive_key(
+            shared.as_bytes(),
+            b"Pair-Verify-Accessory-Sign-Salt",
+            b"Pair-Verify-Accessory-Sign-Info",
+        ).unwrap();
+        let mut accessory_signed = accessory_x.to_vec();
+        accessory_signed.extend_from_slice(&accessory_ephemeral);
+        accessory_signed.extend_from_slice(&accessory_identifier);
+        accessory_signed.extend_from_slice(controller_ephemeral_public.as_bytes());
+        VerifyingKey::from_bytes(&pair_setup::test_accessory_public_key())
+            .unwrap()
+            .verify(
+                &accessory_signed,
+                &ed25519_dalek::Signature::from_slice(&accessory_signature).unwrap(),
+            )
+            .expect("verify accessory M2 signature");
+
+        let controller_x = derive_key(
+            shared.as_bytes(),
+            b"Pair-Verify-Controller-Sign-Salt",
+            b"Pair-Verify-Controller-Sign-Info",
+        ).unwrap();
+        let mut controller_signed = controller_x.to_vec();
+        controller_signed.extend_from_slice(controller_ephemeral_public.as_bytes());
+        controller_signed.extend_from_slice(controller_identifier);
+        controller_signed.extend_from_slice(&accessory_ephemeral);
+        let controller_signature = controller_identity.sign(&controller_signed);
+        let m3_inner = tlv8::encode(&[
+            Tlv { kind: IDENTIFIER, value: controller_identifier.to_vec() },
+            Tlv { kind: SIGNATURE, value: controller_signature.to_bytes().to_vec() },
+        ]);
+        let encrypted_m3 = cipher.encrypt(Nonce::from_slice(NONCE_M3), m3_inner.as_ref())
+            .expect("encrypt M3");
+        let m3 = tlv8::encode(&[
+            Tlv { kind: STATE, value: vec![3] },
+            Tlv { kind: ENCRYPTED_DATA, value: encrypted_m3 },
+        ]);
+
+        let m4 = session.finish(&m3).expect("verify M3");
+        let m4_fields = tlv8::decode(&m4).expect("decode M4");
+        assert!(m4_fields.iter().any(|field| field.kind == STATE && field.value == [4]));
     }
 
     #[test]
