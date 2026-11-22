@@ -2,13 +2,13 @@
 //!
 //! The handler supports persistent RTSP connections, bounded request bodies,
 //! OPTIONS, GET /server-info, and binary-plist /info responses.
-//! Pair-Setup M1/M3 SRP and encrypted M5/M6 identity exchange are implemented; media transport is not implemented.
+//! Pair-Setup and Pair-Verify control exchanges are implemented; encrypted media transport is not implemented.
 
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::time::Duration;
 
-use super::{config, pair_setup, pair_verify::PairVerifySession, pairing, plist, srp::SrpServer, tlv8::{self, Tlv}};
+use super::{config, pair_setup, pair_verify::{self, PairVerifySession}, pairing, plist, srp::SrpServer, tlv8::{self, Tlv}};
 use ::plist::{Dictionary, Value};
 
 const MAX_HEADER_BYTES: usize = 16 * 1024;
@@ -116,7 +116,7 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
                     Err(error) => {
                         tracing::warn!(%error, "Pair-Verify exchange rejected");
                         pair_verify_session = None;
-                        pair_verify_error_response()
+                        pair_verify::error_response()
                     }
                 };
                 let header = format!(
