@@ -20,6 +20,7 @@ pub(super) struct SessionSetup {
     pub timing_port: Option<u16>,
     pub session_uuid: Option<String>,
     pub screen_mirroring: bool,
+    pub timing_protocol: Option<String>,
 }
 
 /// One stream descriptor from a subsequent SETUP request.
@@ -103,7 +104,24 @@ pub(super) fn parse_setup_request(bytes: &[u8]) -> Result<SetupRequest, String> 
         None => false,
     };
 
-    if timing_port.is_none() && session_uuid.is_none() && !screen_mirroring {
+    let timing_protocol = match dictionary.get("timingProtocol") {
+        Some(value) => {
+            let protocol = value
+                .as_string()
+                .ok_or_else(|| "SETUP timingProtocol must be a string".to_owned())?;
+            if protocol != "NTP" && protocol != "PTP" {
+                return Err("SETUP timingProtocol must be NTP or PTP".to_owned());
+            }
+            Some(protocol.to_owned())
+        }
+        None => None,
+    };
+
+    if timing_port.is_none()
+        && session_uuid.is_none()
+        && !screen_mirroring
+        && timing_protocol.is_none()
+    {
         return Err(
             "SETUP plist contains neither session metadata nor stream descriptors".to_owned(),
         );
@@ -113,6 +131,7 @@ pub(super) fn parse_setup_request(bytes: &[u8]) -> Result<SetupRequest, String> 
         timing_port,
         session_uuid,
         screen_mirroring,
+        timing_protocol,
     }))
 }
 
@@ -138,6 +157,7 @@ mod tests {
             Value::String("48FE92D4-3786-4D24-8270-752ACCCF8A47".into()),
         );
         dictionary.insert("isScreenMirroringSession".into(), Value::Boolean(true));
+        dictionary.insert("timingProtocol".into(), Value::String("PTP".into()));
         let bytes = plist::encode_binary(&Value::Dictionary(dictionary)).expect("encode plist");
 
         let parsed = parse_setup_request(&bytes).expect("parse session SETUP");
@@ -149,6 +169,7 @@ mod tests {
                     Some("48FE92D4-3786-4D24-8270-752ACCCF8A47")
                 );
                 assert!(session.screen_mirroring);
+                assert_eq!(session.timing_protocol.as_deref(), Some("PTP"));
             }
             SetupRequest::Streams(_) => panic!("expected session SETUP"),
         }
