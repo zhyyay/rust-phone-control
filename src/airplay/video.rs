@@ -246,6 +246,127 @@ impl CodecParameterSets {
     }
 }
 
+
+/// Maximum accepted decoded-frame dimension. Prevents hostile media metadata
+/// from causing unbounded allocations in the presentation pipeline.
+pub const MAX_FRAME_DIMENSION: u32 = 8192;
+
+/// A decoded NV12 frame borrowed from a decoder output buffer.
+#[derive(Debug, Clone, Copy)]
+pub struct Nv12Frame<'a> {
+    pub width: u32,
+    pub height: u32,
+    pub y_stride: usize,
+    pub uv_stride: usize,
+    pub data: &'a [u8],
+}
+
+/// Packed 32-bit BGRA frame suitable for upload to a desktop graphics surface.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BgraFrame {
+    pub width: u32,
+    pub height: u32,
+    pub stride: usize,
+    pub data: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FrameConversionError {
+    ZeroDimension,
+    OddNv12Dimension,
+    DimensionTooLarge,
+    InvalidStride,
+    BufferTooSmall,
+    SizeOverflow,
+}
+
+impl std::fmt::Display for FrameConversionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let message = match self {
+            Self::ZeroDimension => "frame dimensions must be non-zero",
+            Self::OddNv12Dimension => "NV12 frame dimensions must be even",
+            Self::DimensionTooLarge => "frame dimensions exceed the configured limit",
+            Self::InvalidStride => "NV12 plane stride is smaller than its row width",
+            Self::BufferTooSmall => "NV12 buffer does not contain all declared rows",
+            Self::SizeOverflow => "frame allocation size overflowed",
+        };
+        f.write_str(message)
+    }
+}
+
+impl std::error::Error for FrameConversionError {}
+
+impl<'a> Nv12Frame<'a> {
+    /// Convert limited-range BT.601 NV12 into an owned BGRA frame.
+    ///
+    /// The input layout is Y plane followed by interleaved UV plane. Strides
+    /// may include row padding; the output is tightly packed BGRA.
+    pub fn to_bgra(self) -> Result<BgraFrame, FrameConversionError> {
+        let width = usize::try_from(self.width).map_err(|_| FrameConversionError::SizeOverflow)?;
+        let height = usize::try_from(self.height).map_err(|_| FrameConversionError::SizeOverflow)?;
+
+        if width == 0 || height == 0 {
+            return Err(FrameConversionError::ZeroDimension);
+        }
+        if self.width > MAX_FRAME_DIMENSION || self.height > MAX_FRAME_DIMENSION {
+            return Err(FrameConversionError::DimensionTooLarge);
+        }
+        if width % 2 != 0 || height % 2 != 0 {
+            return Err(FrameConversionError::OddNv12Dimension);
+        }
+        if self.y_stride < width || self.uv_stride < width {
+            return Err(FrameConversionError::InvalidStride);
+        }
+
+        let y_bytes = self.y_stride.checked_mul(height)
+            .ok_or(FrameConversionError::SizeOverflow)?;
+        let uv_bytes = self.uv_stride.checked_mul(height / 2)
+            .ok_or(FrameConversionError::SizeOverflow)?;
+        let required = y_bytes.checked_add(uv_bytes)
+            .ok_or(FrameConversionError::SizeOverflow)?;
+        if self.data.len() < required {
+            return Err(FrameConversionError::BufferTooSmall);
+        }
+
+        let output_stride = width.checked_mul(4)
+            .ok_or(FrameConversionError::SizeOverflow)?;
+        let output_len = output_stride.checked_mul(height)
+            .ok_or(FrameConversionError::SizeOverflow)?;
+        let mut output = vec![0u8; output_len];
+        let uv_base = y_bytes;
+
+        for row in 0..height {
+            let y_row = row * self.y_stride;
+            let uv_row = uv_base + (row / 2) * self.uv_stride;
+            for col in 0..width {
+                let y = i32::from(self.data[y_row + col]);
+                let uv_index = uv_row + (col / 2) * 2;
+                let u = i32::from(self.data[uv_index]) - 128;
+                let v = i32::from(self.data[uv_index + 1]) - 128;
+
+                // Integer BT.601 limited-range conversion.
+                let c = (y - 16).max(0);
+                let r = ((298 * c + 409 * v + 128) >> 8).clamp(0, 255) as u8;
+                let g = ((298 * c - 100 * u - 208 * v + 128) >> 8).clamp(0, 255) as u8;
+                let b = ((298 * c + 516 * u + 128) >> 8).clamp(0, 255) as u8;
+
+                let out = row * output_stride + col * 4;
+                output[out] = b;
+                output[out + 1] = g;
+                output[out + 2] = r;
+                output[out + 3] = 255;
+            }
+        }
+
+        Ok(BgraFrame {
+            width: self.width,
+            height: self.height,
+            stride: output_stride,
+            data: output,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -343,6 +464,72 @@ mod tests {
         let mut sets = CodecParameterSets::default();
         assert_eq!(sets.update_from_annex_b(VideoCodec::Hevc, &data), 3);
         assert!(sets.is_ready(VideoCodec::Hevc));
+    }
+
+
+    #[test]
+    fn converts_neutral_nv12_black_and_white_to_bgra() {
+        let data = [
+            16, 16, 16, 16, // Y plane
+            128, 128, // UV plane
+        ];
+        let frame = Nv12Frame {
+            width: 2,
+            height: 2,
+            y_stride: 2,
+            uv_stride: 2,
+            data: &data,
+        }.to_bgra().unwrap();
+
+        assert_eq!(frame.stride, 8);
+        assert_eq!(frame.data.len(), 16);
+        assert_eq!(&frame.data[0..4], &[0, 0, 0, 255]);
+        assert_eq!(&frame.data[4..8], &[0, 0, 0, 255]);
+    }
+
+    #[test]
+    fn handles_padded_nv12_strides() {
+        let data = [
+            16, 16, 99, 99,
+            16, 16, 99, 99,
+            128, 128, 99, 99,
+        ];
+        let frame = Nv12Frame {
+            width: 2,
+            height: 2,
+            y_stride: 4,
+            uv_stride: 4,
+            data: &data,
+        }.to_bgra().unwrap();
+        assert_eq!(frame.data.len(), 16);
+        assert_eq!(&frame.data[0..4], &[0, 0, 0, 255]);
+    }
+
+    #[test]
+    fn rejects_invalid_nv12_layouts() {
+        let data = [0u8; 16];
+        let odd = Nv12Frame {
+            width: 3, height: 2, y_stride: 3, uv_stride: 4, data: &data,
+        };
+        assert_eq!(odd.to_bgra().unwrap_err(), FrameConversionError::OddNv12Dimension);
+
+        let short = Nv12Frame {
+            width: 2, height: 2, y_stride: 2, uv_stride: 2, data: &[0; 5],
+        };
+        assert_eq!(short.to_bgra().unwrap_err(), FrameConversionError::BufferTooSmall);
+    }
+
+    #[test]
+    fn rejects_excessive_frame_dimensions() {
+        let data = [0u8; 16];
+        let frame = Nv12Frame {
+            width: MAX_FRAME_DIMENSION + 2,
+            height: 2,
+            y_stride: (MAX_FRAME_DIMENSION + 2) as usize,
+            uv_stride: (MAX_FRAME_DIMENSION + 2) as usize,
+            data: &data,
+        };
+        assert_eq!(frame.to_bgra().unwrap_err(), FrameConversionError::DimensionTooLarge);
     }
 
 }
