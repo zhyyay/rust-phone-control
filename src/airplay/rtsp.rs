@@ -7,7 +7,7 @@
 
 use std::io::{self, Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::sync::mpsc::{self, Receiver};
+use std::sync::{Arc, mpsc::{self, Receiver}};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
@@ -38,6 +38,8 @@ const MEDIA_ACCEPT_POLL_INTERVAL: Duration = Duration::from_millis(20);
 struct MirrorStreamContext {
     connection_id: Option<u64>,
     pair_verify_shared_secret: Option<[u8; 32]>,
+    media_foundation: Option<Arc<super::decoder::MediaFoundationRuntime>>,
+    frames: Arc<super::video::LatestFrameMailbox>,
 }
 
 /// Owns the negotiated TCP screen-mirroring listener and its bounded worker.
@@ -59,6 +61,8 @@ impl MediaSession {
             MirrorStreamContext {
                 connection_id: None,
                 pair_verify_shared_secret: None,
+                media_foundation: None,
+                frames: Arc::new(super::video::LatestFrameMailbox::new()),
             },
         )
     }
@@ -272,6 +276,9 @@ fn process_media_packets(
         "AirPlay media worker initialized with negotiated stream context"
     );
     let mut received = 0u64;
+    let media_foundation = stream_context.media_foundation;
+    let frames = stream_context.frames;
+    let mut frame_pipeline = None;
     let mut processor = super::video::MirrorStreamProcessor::new();
     while let Ok(packet) = packets.recv() {
         received = received.saturating_add(1);
@@ -307,6 +314,28 @@ fn process_media_packets(
                             "Could not read dimensions from AirPlay H.264 SPS"
                         ),
                     }
+                    if let Some(runtime) = media_foundation.as_ref() {
+                        match super::decoder::H264FramePipeline::from_avc_configuration(
+                            runtime,
+                            configuration,
+                            Arc::clone(&frames),
+                        ) {
+                            Ok(pipeline) => {
+                                frame_pipeline = Some(pipeline);
+                                tracing::info!(
+                                    "Windows H.264 decoder pipeline initialized from stream SPS"
+                                );
+                            }
+                            Err(error) => tracing::warn!(
+                                %error,
+                                "Could not initialize Windows H.264 decoder pipeline"
+                            ),
+                        }
+                    } else {
+                        tracing::warn!(
+                            "Media Foundation is unavailable; decoded-frame preview cannot start"
+                        );
+                    }
                 }
             },
             super::video::MirrorPacketOutcome::InvalidCodecConfiguration(error) => {
@@ -325,6 +354,7 @@ fn process_media_packets(
                 timestamp = packet.timestamp,
                 payload_bytes,
                 has_configuration,
+                decoder_ready = frame_pipeline.is_some(),
                 received,
                 "AirPlay video packet received; waiting for FairPlay media decryption"
             ),
@@ -859,11 +889,18 @@ fn handle_setup_request(
                 ));
             }
 
+            let (media_foundation, frames) = super::media_pipeline_context()
+                .unwrap_or_else(|error| {
+                    tracing::warn!(%error, "Could not obtain AirPlay decoder presentation context");
+                    (None, Arc::new(super::video::LatestFrameMailbox::new()))
+                });
             let receiver = MediaSession::start_with_context(
                 peer_ip,
                 MirrorStreamContext {
                     connection_id: stream.connection_id,
                     pair_verify_shared_secret: pair_verify_shared_secret.copied(),
+                    media_foundation,
+                    frames,
                 },
             )
             .map_err(|error| {
