@@ -1,7 +1,8 @@
-//! Bounded RTP v2 packet parsing for the AirPlay media pipeline.
+//! Bounded AirPlay media packet parsing and UDP receive lifecycle.
 //!
-//! This module only parses the standard RTP envelope. It does not decrypt,
-//! authenticate, reassemble, or decode AirPlay media payloads.
+//! Screen-mirroring datagrams use a 128-byte AirPlay-specific header. The RTP
+//! parser remains available for RTP-based streams. Neither parser decrypts,
+//! authenticates, reassembles, or decodes media payloads.
 
 use std::fmt;
 use std::io;
@@ -313,7 +314,7 @@ pub fn parse_screen_mirror_packet(
 const MAX_UDP_DATAGRAM_SIZE: usize = 65_535;
 const RECEIVE_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
-/// A stoppable UDP socket that validates incoming RTP packets.
+/// A stoppable UDP socket that validates incoming screen-mirroring packets.
 ///
 /// The caller must provide the negotiated media address. This receiver is not
 /// started by the AirPlay runtime until RTSP stream setup supplies that address.
@@ -324,7 +325,7 @@ pub struct UdpMediaReceiver {
 }
 
 impl UdpMediaReceiver {
-    /// Bind the requested address and begin parsing incoming RTP datagrams.
+    /// Bind the requested address and begin parsing screen-mirroring datagrams.
     pub fn bind(bind_addr: SocketAddr) -> io::Result<Self> {
         let socket = UdpSocket::bind(bind_addr)?;
         socket.set_read_timeout(Some(RECEIVE_POLL_INTERVAL))?;
@@ -334,7 +335,7 @@ impl UdpMediaReceiver {
 
         let worker = thread::Builder::new()
             .name("airplay-udp-media".to_owned())
-            .spawn(move || receive_rtp_loop(socket, worker_running))?;
+            .spawn(move || receive_media_loop(socket, worker_running))?;
 
         tracing::info!(%local_addr, "AirPlay UDP media receiver bound");
         Ok(Self {
@@ -367,7 +368,7 @@ impl Drop for UdpMediaReceiver {
     }
 }
 
-fn receive_rtp_loop(socket: UdpSocket, running: Arc<AtomicBool>) {
+fn receive_media_loop(socket: UdpSocket, running: Arc<AtomicBool>) {
     let mut buffer = [0u8; MAX_UDP_DATAGRAM_SIZE];
 
     while running.load(Ordering::Acquire) {
