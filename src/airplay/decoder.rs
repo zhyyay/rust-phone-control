@@ -47,6 +47,7 @@ impl ComApartment {
         // SAFETY: this initializes COM for the current worker thread. The
         // matching CoUninitialize is called by Drop on this same thread.
         unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }
+            .ok()
             .map_err(|error| MediaFoundationError::ComInitializationFailed(error.code().0))?;
         Ok(Self {
             _thread_bound: std::marker::PhantomData,
