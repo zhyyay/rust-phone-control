@@ -2,7 +2,7 @@
 //!
 //! Modules are intentionally separated by responsibility. The current code
 //! provides mDNS publication, a TCP listener, OPTIONS, /server-info, and basic binary-plist /info handling.
-//! It does not yet implement AirPlay pairing, FairPlay, encrypted media, or
+//! It includes a standalone TLV8 codec for pairing-message framing, but does not yet implement AirPlay pairing, FairPlay, encrypted media, or
 //! video decoding, and advertises zero feature bits rather than claiming those
 //! unsupported capabilities.
 
@@ -10,6 +10,7 @@ mod config;
 mod discovery;
 mod plist;
 mod rtsp;
+mod tlv8;
 mod server;
 
 #[cfg(windows)]
