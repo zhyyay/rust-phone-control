@@ -15,7 +15,7 @@ use super::{
     config,
     event::EventChannel,
     fairplay::FairPlaySession,
-    media::{ReceivedMediaPacket, parse_screen_mirror_packet, SCREEN_MIRROR_HEADER_SIZE},
+    media::{ReceivedMediaPacket, SCREEN_MIRROR_HEADER_SIZE, parse_screen_mirror_packet},
     pair_setup,
     pair_verify::{self, PairVerifySession},
     pairing, plist,
@@ -45,8 +45,8 @@ struct MediaSession {
 
 impl MediaSession {
     fn start(peer_ip: std::net::IpAddr) -> io::Result<Self> {
-        use std::sync::atomic::{AtomicBool, Ordering};
         use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
 
         let listener = TcpListener::bind("0.0.0.0:0")?;
         listener.set_nonblocking(true)?;
@@ -229,7 +229,9 @@ fn read_exact_while_running<R: Read>(
             Err(error)
                 if matches!(
                     error.kind(),
-                    io::ErrorKind::Interrupted | io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+                    io::ErrorKind::Interrupted
+                        | io::ErrorKind::WouldBlock
+                        | io::ErrorKind::TimedOut
                 ) => {}
             Err(error) => return Err(error),
         }
@@ -1062,8 +1064,8 @@ fn txt_airplay_dictionary() -> Dictionary {
 mod tests {
     use super::plist;
     use super::{
-        MediaSession, Request, SCREEN_MIRROR_HEADER_SIZE, TcpStream, build_info_response, find_header_end, handle_pair_setup,
-        handle_setup_request, server_info_plist,
+        MediaSession, Request, SCREEN_MIRROR_HEADER_SIZE, TcpStream, build_info_response,
+        find_header_end, handle_pair_setup, handle_setup_request, server_info_plist,
     };
     use crate::airplay::tlv8::{self, Tlv};
     use ::plist::{Dictionary, Value};
@@ -1120,12 +1122,17 @@ mod tests {
         packet[4..6].copy_from_slice(&0u16.to_le_bytes());
         packet[8..16].copy_from_slice(&123u64.to_le_bytes());
         packet[SCREEN_MIRROR_HEADER_SIZE..].copy_from_slice(&[0xAA, 0xBB, 0xCC]);
-        client.write_all(&packet).expect("write framed mirror packet");
+        client
+            .write_all(&packet)
+            .expect("write framed mirror packet");
 
         let received = receiver
             .recv_timeout(Duration::from_secs(2))
             .expect("TCP packet forwarded");
-        assert_eq!(received.packet_type, super::super::media::ScreenMirrorPacketType::Video);
+        assert_eq!(
+            received.packet_type,
+            super::super::media::ScreenMirrorPacketType::Video
+        );
         assert_eq!(received.timestamp, 123);
         assert_eq!(received.payload, vec![0xAA, 0xBB, 0xCC]);
 
