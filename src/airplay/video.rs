@@ -1499,7 +1499,7 @@ mod tests {
     #[test]
     fn rejects_truncated_bottom_up_nv12_buffer() {
         assert_eq!(
-            normalize_nv12_bottom_up(&mut [0; 7], 2, 2, 2),
+            normalize_nv12_bottom_up(&mut [0; 5], 2, 2, 2),
             Err(FrameConversionError::BufferTooSmall)
         );
     }
