@@ -931,7 +931,7 @@ mod tests {
     #[test]
     fn media_session_starts_and_stops_its_workers() {
         let peer_ip = "127.0.0.1".parse().expect("loopback IP");
-        let mut session = MediaSession::start(peer_ip).expect("start media session");
+        let mut session = super::MediaSession::start(peer_ip).expect("start media session");
         assert_ne!(session.port(), 0);
         session.stop();
         assert!(session.worker.is_none());
