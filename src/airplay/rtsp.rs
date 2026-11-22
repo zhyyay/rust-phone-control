@@ -2,17 +2,21 @@
 //!
 //! The handler supports persistent RTSP connections, bounded request bodies,
 //! OPTIONS, GET /server-info, and binary-plist /info responses.
-//! Pair-Setup SRP M1/M3 is partially implemented; media transport is not implemented.
+//! Pair-Setup and Pair-Verify control exchanges are implemented; encrypted media transport is not implemented.
 
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::time::Duration;
 
+<<<<<<< HEAD
 use super::{
     config, pairing, plist,
     srp::SrpServer,
     tlv8::{self, Tlv},
 };
+=======
+use super::{config, pair_setup, pair_verify::{self, PairVerifySession}, pairing, plist, srp::SrpServer, tlv8::{self, Tlv}};
+>>>>>>> 4691b0f2385b11453b5b4fd89c40bef289acbfcb
 use ::plist::{Dictionary, Value};
 
 const MAX_HEADER_BYTES: usize = 16 * 1024;
@@ -35,6 +39,7 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
     let mut pending = Vec::with_capacity(READ_CHUNK_BYTES);
     let mut pair_setup_srp: Option<SrpServer> = None;
     let mut pair_setup_session_key: Option<[u8; 64]> = None;
+    let mut pair_verify_session: Option<PairVerifySession> = None;
     tracing::info!("AirPlay RTSP session started");
 
     loop {
@@ -110,6 +115,27 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
                         write_response(&mut stream, &response, error.status)?;
                     }
                 }
+            }
+            ("POST", "/pair-verify", "RTSP/1.0") => {
+                let response_body = match handle_pair_verify(
+                    &request.body,
+                    &mut pair_verify_session,
+                ) {
+                    Ok(body) => body,
+                    Err(error) => {
+                        tracing::warn!(%error, "Pair-Verify exchange rejected");
+                        pair_verify_session = None;
+                        pair_verify::error_response()
+                    }
+                };
+                let header = format!(
+                    "RTSP/1.0 200 OK\r\nCSeq: {}\r\nServer: RustPhoneControl/0.1\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\n\r\n",
+                    request.cseq,
+                    response_body.len()
+                );
+                stream.write_all(header.as_bytes())?;
+                stream.write_all(&response_body)?;
+                stream.flush()?;
             }
             ("GET", "/info", "RTSP/1.0") | ("POST", "/info", "RTSP/1.0") => {
                 match build_info_response(&request.body) {
@@ -306,8 +332,8 @@ impl PairSetupFailure {
     }
 }
 
-/// Handle Pair-Setup M1/M3 on one persistent RTSP connection.
-/// The setup code is supplied by AIRPLAY_SETUP_CODE and is never logged.
+/// Handle Pair-Setup M1/M3/M5 on one persistent RTSP connection.
+/// The setup code is supplied by the application and is never logged.
 fn handle_pair_setup(
     body: &[u8],
     srp_state: &mut Option<SrpServer>,
@@ -361,6 +387,32 @@ fn handle_pair_setup(
             *session_key = None;
             Ok(response)
         }
+        5 => {
+            let encrypted_data = fields
+                .iter()
+                .filter(|field| field.kind == 0x05)
+                .collect::<Vec<_>>();
+            if encrypted_data.len() != 1 {
+                *session_key = None;
+                return Ok(tlv8::encode(&[
+                    Tlv { kind: 0x06, value: vec![0x06] },
+                    Tlv { kind: 0x07, value: vec![0x02] },
+                ]));
+            }
+            let key = session_key.take().ok_or_else(|| {
+                PairSetupFailure::bad_request("Pair-Setup M5 received without a verified M3 exchange")
+            })?;
+            match pair_setup::handle_m5(&key, &encrypted_data[0].value) {
+                Ok(response) => Ok(response),
+                Err(error) => {
+                    tracing::warn!(%error, "Pair-Setup M5 identity exchange rejected");
+                    Ok(tlv8::encode(&[
+                        Tlv { kind: 0x06, value: vec![0x06] },
+                        Tlv { kind: 0x07, value: vec![0x02] },
+                    ]))
+                }
+            }
+        }
         3 => {
             let message = pairing::parse_m3(body)
                 .map_err(|error| PairSetupFailure::bad_request(error.to_string()))?;
@@ -403,6 +455,43 @@ fn handle_pair_setup(
             "unsupported Pair-Setup state {other}"
         ))),
     }
+}
+
+/// Handle one Pair-Verify state transition on the current RTSP connection.
+fn handle_pair_verify(
+    body: &[u8],
+    session: &mut Option<PairVerifySession>,
+) -> Result<Vec<u8>, String> {
+    let fields = tlv8::decode(body).map_err(|error| error.to_string())?;
+    let mut states = fields.iter().filter(|field| field.kind == 0x06);
+    let state = states.next().ok_or_else(|| "Pair-Verify request is missing State".to_owned())?;
+    if states.next().is_some() || state.value.len() != 1 {
+        return Err("Pair-Verify request has an invalid State field".into());
+    }
+
+    match state.value[0] {
+        1 => {
+            if session.is_some() {
+                return Err("Pair-Verify M1 received while another exchange is active".into());
+            }
+            let (new_session, response) = PairVerifySession::start(body)?;
+            *session = Some(new_session);
+            Ok(response)
+        }
+        3 => {
+            let current = session.take()
+                .ok_or_else(|| "Pair-Verify M3 received without M1".to_owned())?;
+            current.finish(body)
+        }
+        other => Err(format!("unsupported Pair-Verify state {other}")),
+    }
+}
+
+fn pair_verify_error_response() -> Vec<u8> {
+    tlv8::encode(&[
+        Tlv { kind: 0x06, value: vec![4] },
+        Tlv { kind: 0x07, value: vec![2] },
+    ])
 }
 
 fn server_info_plist() -> String {
