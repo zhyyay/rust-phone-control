@@ -439,7 +439,10 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
                             pair_verify_shared_secret = Some(shared_secret);
                             body
                         }
-                        Ok((body, None)) => body,
+                        Ok((body, None)) => {
+                            pair_verify_shared_secret = None;
+                            body
+                        },
                         Err(error) => {
                             tracing::warn!(%error, "Pair-Verify exchange rejected");
                             pair_verify_session = None;
