@@ -227,6 +227,87 @@ mod tests {
 
 
 
+/// Fixed AirPlay screen-mirroring packet header size.
+pub const SCREEN_MIRROR_HEADER_SIZE: usize = 128;
+
+/// Packet kind in the AirPlay screen-mirroring data channel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScreenMirrorPacketType {
+    Video,
+    CodecConfiguration,
+    Heartbeat,
+}
+
+/// A validated screen-mirroring packet. The payload remains borrowed and may
+/// still be encrypted; this parser does not decrypt or decode it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScreenMirrorPacket<'a> {
+    pub packet_type: ScreenMirrorPacketType,
+    pub payload_size: usize,
+    pub timestamp: u64,
+    pub payload: &'a [u8],
+}
+
+/// Errors produced while parsing the screen-mirroring packet envelope.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScreenMirrorParseError {
+    TruncatedHeader,
+    UnsupportedPacketType(u16),
+    InvalidPayloadLength,
+}
+
+impl fmt::Display for ScreenMirrorParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::TruncatedHeader => f.write_str("screen-mirroring packet header is truncated"),
+            Self::UnsupportedPacketType(kind) => {
+                write!(f, "unsupported screen-mirroring packet type {kind}")
+            }
+            Self::InvalidPayloadLength => {
+                f.write_str("screen-mirroring payload length exceeds datagram size")
+            }
+        }
+    }
+}
+
+impl std::error::Error for ScreenMirrorParseError {}
+
+/// Parse the 128-byte AirPlay screen-mirroring packet envelope.
+pub fn parse_screen_mirror_packet(
+    packet: &[u8],
+) -> Result<ScreenMirrorPacket<'_>, ScreenMirrorParseError> {
+    if packet.len() < SCREEN_MIRROR_HEADER_SIZE {
+        return Err(ScreenMirrorParseError::TruncatedHeader);
+    }
+
+    let payload_size = u32::from_le_bytes([packet[0], packet[1], packet[2], packet[3]]) as usize;
+    let raw_type = u16::from_le_bytes([packet[4], packet[5]]);
+    let packet_type = match raw_type {
+        0 => ScreenMirrorPacketType::Video,
+        1 => ScreenMirrorPacketType::CodecConfiguration,
+        2 => ScreenMirrorPacketType::Heartbeat,
+        other => return Err(ScreenMirrorParseError::UnsupportedPacketType(other)),
+    };
+    let payload_end = SCREEN_MIRROR_HEADER_SIZE
+        .checked_add(payload_size)
+        .ok_or(ScreenMirrorParseError::InvalidPayloadLength)?;
+    if payload_end > packet.len() {
+        return Err(ScreenMirrorParseError::InvalidPayloadLength);
+    }
+
+    let timestamp = u64::from_le_bytes([
+        packet[8], packet[9], packet[10], packet[11],
+        packet[12], packet[13], packet[14], packet[15],
+    ]);
+
+    Ok(ScreenMirrorPacket {
+        packet_type,
+        payload_size,
+        timestamp,
+        payload: &packet[SCREEN_MIRROR_HEADER_SIZE..payload_end],
+    })
+}
+
 /// Maximum UDP datagram buffer. This is large enough for the maximum IPv4 UDP
 /// payload and avoids allocating based on untrusted packet contents.
 const MAX_UDP_DATAGRAM_SIZE: usize = 65_535;
@@ -291,22 +372,19 @@ fn receive_rtp_loop(socket: UdpSocket, running: Arc<AtomicBool>) {
 
     while running.load(Ordering::Acquire) {
         match socket.recv_from(&mut buffer) {
-            Ok((length, peer_addr)) => match parse_rtp_packet(&buffer[..length]) {
+            Ok((length, peer_addr)) => match parse_screen_mirror_packet(&buffer[..length]) {
                 Ok(packet) => {
                     tracing::debug!(
                         %peer_addr,
-                        sequence_number = packet.sequence_number,
+                        packet_type = ?packet.packet_type,
                         timestamp = packet.timestamp,
-                        ssrc = packet.ssrc,
-                        payload_type = packet.payload_type,
-                        marker = packet.marker,
-                        payload_bytes = packet.payload.len(),
-                        "Received RTP media datagram"
+                        payload_bytes = packet.payload_size,
+                        "Received AirPlay screen-mirroring datagram"
                     );
                 }
                 Err(error) => {
                     tracing::warn!(%peer_addr, %error, datagram_bytes = length,
-                        "Discarding invalid RTP media datagram");
+                        "Discarding invalid screen-mirroring datagram");
                 }
             },
             Err(error)
@@ -326,6 +404,47 @@ fn receive_rtp_loop(socket: UdpSocket, running: Arc<AtomicBool>) {
 mod receiver_tests {
     use super::*;
     use std::net::SocketAddr;
+
+    #[test]
+    fn parses_screen_mirroring_video_and_heartbeat_packets() {
+        let mut video = vec![0u8; SCREEN_MIRROR_HEADER_SIZE + 3];
+        video[0..4].copy_from_slice(&3u32.to_le_bytes());
+        video[4..6].copy_from_slice(&0u16.to_le_bytes());
+        video[8..16].copy_from_slice(&0x0102_0304_0506_0708u64.to_le_bytes());
+        video[128..].copy_from_slice(&[0xAA, 0xBB, 0xCC]);
+        let parsed = parse_screen_mirror_packet(&video).expect("valid video packet");
+        assert_eq!(parsed.packet_type, ScreenMirrorPacketType::Video);
+        assert_eq!(parsed.timestamp, 0x0102_0304_0506_0708);
+        assert_eq!(parsed.payload, &[0xAA, 0xBB, 0xCC]);
+
+        let mut heartbeat = vec![0u8; SCREEN_MIRROR_HEADER_SIZE];
+        heartbeat[4..6].copy_from_slice(&2u16.to_le_bytes());
+        let parsed = parse_screen_mirror_packet(&heartbeat).expect("valid heartbeat");
+        assert_eq!(parsed.packet_type, ScreenMirrorPacketType::Heartbeat);
+        assert!(parsed.payload.is_empty());
+    }
+
+    #[test]
+    fn rejects_invalid_screen_mirroring_datagrams() {
+        assert_eq!(
+            parse_screen_mirror_packet(&[0; 127]),
+            Err(ScreenMirrorParseError::TruncatedHeader)
+        );
+
+        let mut unsupported = vec![0u8; SCREEN_MIRROR_HEADER_SIZE];
+        unsupported[4..6].copy_from_slice(&99u16.to_le_bytes());
+        assert_eq!(
+            parse_screen_mirror_packet(&unsupported),
+            Err(ScreenMirrorParseError::UnsupportedPacketType(99))
+        );
+
+        let mut oversized = vec![0u8; SCREEN_MIRROR_HEADER_SIZE];
+        oversized[0..4].copy_from_slice(&1u32.to_le_bytes());
+        assert_eq!(
+            parse_screen_mirror_packet(&oversized),
+            Err(ScreenMirrorParseError::InvalidPayloadLength)
+        );
+    }
 
     #[test]
     fn udp_receiver_binds_and_stops_cleanly() {
