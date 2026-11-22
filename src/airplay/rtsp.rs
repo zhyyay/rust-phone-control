@@ -51,9 +51,6 @@ struct MediaSession {
 }
 
 impl MediaSession {
-<<<<<<< HEAD
-    fn start(peer_ip: std::net::IpAddr, stream_context: MirrorStreamContext) -> io::Result<Self> {
-=======
     /// Start a media listener without negotiated stream crypto context.
     /// Kept as a simple entry point for tests and non-paired sessions.
     fn start(peer_ip: std::net::IpAddr) -> io::Result<Self> {
@@ -71,7 +68,6 @@ impl MediaSession {
         peer_ip: std::net::IpAddr,
         stream_context: MirrorStreamContext,
     ) -> io::Result<Self> {
->>>>>>> e062541cea666885b4af810cdd8143b7e5ccf37f
         use std::sync::Arc;
         use std::sync::atomic::{AtomicBool, Ordering};
 
