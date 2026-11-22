@@ -1568,8 +1568,8 @@ mod tests {
                 "missing string key {key}"
             );
         }
-        assert_eq!(dict.get("features").and_then(Value::as_string), Some(config::FEATURES));
-        assert_eq!(dict.get("flags").and_then(Value::as_string), Some(config::STATUS_FLAGS));
+        assert_eq!(dict.get("features").and_then(Value::as_string), Some(super::config::FEATURES));
+        assert_eq!(dict.get("flags").and_then(Value::as_string), Some(super::config::STATUS_FLAGS));
     }
 
     #[test]
