@@ -1028,14 +1028,47 @@ mod tests {
 
     #[test]
     fn parses_baseline_sps_dimensions() {
-        // Baseline SPS: 40 macroblocks by 30 macroblock rows, progressive,
-        // with no cropping, yielding 640x480.
-        let sps = [
-            0x67, 0x42, 0x00, 0x1e, 0xf4, 0x05, 0x01, 0x7f, 0xca, 0x80,
-        ];
-        let result = parse_h264_sps_dimensions(&sps);
-        assert!(result.is_ok(), "unexpected SPS parse error: {result:?}");
-        let dimensions = result.unwrap();
+        fn push_bits(bits: &mut Vec<bool>, value: u32, count: usize) {
+            for shift in (0..count).rev() {
+                bits.push((value >> shift) & 1 != 0);
+            }
+        }
+        fn push_ue(bits: &mut Vec<bool>, value: u32) {
+            let code = value + 1;
+            let width = (u32::BITS - code.leading_zeros()) as usize;
+            bits.extend(std::iter::repeat_n(false, width - 1));
+            push_bits(bits, code, width);
+        }
+
+        // Baseline profile, 40x30 macroblocks, progressive and uncropped.
+        let mut bits = Vec::new();
+        push_bits(&mut bits, 66, 8); // profile_idc
+        push_bits(&mut bits, 0, 8); // constraint flags
+        push_bits(&mut bits, 30, 8); // level_idc
+        push_ue(&mut bits, 0); // seq_parameter_set_id
+        push_ue(&mut bits, 0); // log2_max_frame_num_minus4
+        push_ue(&mut bits, 0); // pic_order_cnt_type
+        push_ue(&mut bits, 0); // log2_max_pic_order_cnt_lsb_minus4
+        push_ue(&mut bits, 1); // max_num_ref_frames
+        bits.push(false); // gaps_in_frame_num_value_allowed_flag
+        push_ue(&mut bits, 39); // pic_width_in_mbs_minus1
+        push_ue(&mut bits, 29); // pic_height_in_map_units_minus1
+        bits.push(true); // frame_mbs_only_flag
+        bits.push(true); // direct_8x8_inference_flag
+        bits.push(false); // frame_cropping_flag
+        bits.push(false); // vui_parameters_present_flag
+        bits.push(true); // rbsp_stop_one_bit
+        while bits.len() % 8 != 0 {
+            bits.push(false);
+        }
+
+        let mut sps = vec![0x67];
+        for chunk in bits.chunks_exact(8) {
+            let byte = chunk.iter().fold(0u8, |value, bit| (value << 1) | u8::from(*bit));
+            sps.push(byte);
+        }
+
+        let dimensions = parse_h264_sps_dimensions(&sps).expect("valid baseline SPS");
         assert_eq!(dimensions.width, 640);
         assert_eq!(dimensions.height, 480);
     }
