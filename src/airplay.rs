@@ -7,6 +7,9 @@
 //! PTP synchronization and unsupported AirPlay feature bits remain disabled.
 
 mod config;
+#[cfg(windows)]
+#[allow(dead_code)]
+mod decoder;
 mod discovery;
 #[allow(dead_code)]
 mod fairplay;
