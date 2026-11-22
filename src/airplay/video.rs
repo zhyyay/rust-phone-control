@@ -221,7 +221,6 @@ impl AvcConfiguration {
     }
 }
 
-
 /// Result of processing one packet from the TCP mirror stream.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MirrorPacketOutcome {
@@ -1000,15 +999,14 @@ mod tests {
         );
     }
 
-
     #[test]
     fn mirror_stream_processor_tracks_avc_configuration_and_waits_for_decryption() {
         use super::super::media::ScreenMirrorPacketType;
         use super::{MirrorPacketOutcome, MirrorStreamProcessor};
 
         let avcc = [
-            0x01, 0x64, 0xc0, 0x28, 0xff, 0xe1, 0x00, 0x04, 0x67, 0x64, 0xc0, 0x28, 0x01,
-            0x00, 0x02, 0x68, 0xee,
+            0x01, 0x64, 0xc0, 0x28, 0xff, 0xe1, 0x00, 0x04, 0x67, 0x64, 0xc0, 0x28, 0x01, 0x00,
+            0x02, 0x68, 0xee,
         ];
         let mut processor = MirrorStreamProcessor::new();
         assert!(processor.configuration().is_none());
@@ -1026,7 +1024,10 @@ mod tests {
         assert!(processor.configuration().is_some());
 
         assert_eq!(
-            processor.process_packet(ScreenMirrorPacketType::Video, &[0x00, 0x00, 0x00, 0x02, 0x65, 0x88]),
+            processor.process_packet(
+                ScreenMirrorPacketType::Video,
+                &[0x00, 0x00, 0x00, 0x02, 0x65, 0x88]
+            ),
             MirrorPacketOutcome::VideoWaitingForDecryption {
                 payload_bytes: 6,
                 has_configuration: true,
@@ -1044,8 +1045,8 @@ mod tests {
         use super::{MirrorPacketOutcome, MirrorStreamProcessor};
 
         let valid = [
-            0x01, 0x64, 0xc0, 0x28, 0xff, 0xe1, 0x00, 0x04, 0x67, 0x64, 0xc0, 0x28, 0x01,
-            0x00, 0x02, 0x68, 0xee,
+            0x01, 0x64, 0xc0, 0x28, 0xff, 0xe1, 0x00, 0x04, 0x67, 0x64, 0xc0, 0x28, 0x01, 0x00,
+            0x02, 0x68, 0xee,
         ];
         let mut processor = MirrorStreamProcessor::new();
         processor.process_packet(ScreenMirrorPacketType::CodecConfiguration, &valid);
