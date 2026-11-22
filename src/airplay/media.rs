@@ -320,7 +320,6 @@ const RECEIVE_POLL_INTERVAL: Duration = Duration::from_millis(100);
 /// started by the AirPlay runtime until RTSP stream setup supplies that address.
 pub struct UdpMediaReceiver {
     local_addr: SocketAddr,
-    expected_peer_ip: IpAddr,
     running: Arc<AtomicBool>,
     worker: Option<JoinHandle<()>>,
 }
@@ -341,7 +340,6 @@ impl UdpMediaReceiver {
         tracing::info!(%local_addr, "AirPlay UDP media receiver bound");
         Ok(Self {
             local_addr,
-            expected_peer_ip,
             running,
             worker: Some(worker),
         })
@@ -389,19 +387,23 @@ fn receive_media_loop(
                     continue;
                 }
                 match parse_screen_mirror_packet(&buffer[..length]) {
-                Ok(packet) => {
-                    tracing::debug!(
-                        %peer_addr,
-                        packet_type = ?packet.packet_type,
-                        timestamp = packet.timestamp,
-                        payload_bytes = packet.payload_size,
-                        "Received AirPlay screen-mirroring datagram"
-                    );
-                }
-                Err(error) => {
-                    tracing::warn!(%peer_addr, %error, datagram_bytes = length,
-                        "Discarding invalid screen-mirroring datagram");
-                }
+                    Ok(packet) => {
+                        tracing::debug!(
+                            %peer_addr,
+                            packet_type = ?packet.packet_type,
+                            timestamp = packet.timestamp,
+                            payload_bytes = packet.payload_size,
+                            "Received AirPlay screen-mirroring datagram"
+                        );
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            %peer_addr,
+                            %error,
+                            datagram_bytes = length,
+                            "Discarding invalid screen-mirroring datagram"
+                        );
+                    }
                 }
             }
             Err(error)
