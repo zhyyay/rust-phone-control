@@ -54,10 +54,16 @@ fn run_listener(listener: TcpListener, stop: Arc<AtomicBool>) {
     while !stop.load(Ordering::Acquire) {
         match listener.accept() {
             Ok((stream, peer)) => {
-                tracing::info!(%peer, "AirPlay control connection accepted");
-                let _ = thread::Builder::new()
+                tracing::info!(%peer, "AirPlay TCP client accepted; starting handler");
+                match thread::Builder::new()
                     .name("airplay-client".to_owned())
-                    .spawn(move || handle_client(stream, peer));
+                    .spawn(move || handle_client(stream, peer))
+                {
+                    Ok(_) => tracing::debug!(%peer, "AirPlay client handler thread spawned"),
+                    Err(error) => {
+                        tracing::error!(%peer, error = %error, "Failed to spawn AirPlay client handler");
+                    }
+                }
             }
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                 thread::sleep(Duration::from_millis(30));
@@ -71,7 +77,29 @@ fn run_listener(listener: TcpListener, stop: Arc<AtomicBool>) {
 }
 
 fn handle_client(stream: TcpStream, peer: std::net::SocketAddr) {
-    if let Err(error) = rtsp::serve(stream) {
-        tracing::debug!(%peer, error = %error, "AirPlay control connection ended");
+    // On Windows, accepted sockets can retain the listener's nonblocking
+    // mode. RTSP uses blocking reads with explicit timeouts, so switch each
+    // client connection back to blocking mode before handing it to the parser.
+    if let Err(error) = stream.set_nonblocking(false) {
+        tracing::error!(
+            %peer,
+            error_kind = ?error.kind(),
+            error = %error,
+            "Failed to set AirPlay client socket to blocking mode"
+        );
+        return;
+    }
+
+    tracing::info!(%peer, "AirPlay client handler entered");
+    match rtsp::serve(stream) {
+        Ok(()) => tracing::info!(%peer, "AirPlay client handler completed normally"),
+        Err(error) => {
+            tracing::error!(
+                %peer,
+                error_kind = ?error.kind(),
+                error = %error,
+                "AirPlay RTSP client handler failed"
+            );
+        }
     }
 }
