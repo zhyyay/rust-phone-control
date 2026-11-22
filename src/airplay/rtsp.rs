@@ -241,16 +241,50 @@ fn read_exact_while_running<R: Read>(
 
 fn process_media_packets(packets: Receiver<ReceivedMediaPacket>) {
     let mut received = 0u64;
+    let mut processor = super::video::MirrorStreamProcessor::new();
     while let Ok(packet) = packets.recv() {
         received = received.saturating_add(1);
-        tracing::debug!(
-            %packet.peer_addr,
-            packet_type = ?packet.packet_type,
-            timestamp = packet.timestamp,
-            payload_bytes = packet.payload.len(),
-            received,
-            "AirPlay media packet delivered to session processing worker"
-        );
+        match processor.process_packet(packet.packet_type, &packet.payload) {
+            super::video::MirrorPacketOutcome::CodecConfigurationUpdated {
+                profile,
+                level,
+                nal_length_size,
+                sps_count,
+                pps_count,
+            } => tracing::info!(
+                %packet.peer_addr,
+                profile,
+                level,
+                nal_length_size,
+                sps_count,
+                pps_count,
+                timestamp = packet.timestamp,
+                received,
+                "AirPlay H.264 codec configuration accepted"
+            ),
+            super::video::MirrorPacketOutcome::InvalidCodecConfiguration(error) => {
+                tracing::warn!(
+                    %packet.peer_addr,
+                    %error,
+                    timestamp = packet.timestamp,
+                    "Rejected invalid AirPlay H.264 codec configuration"
+                );
+            }
+            super::video::MirrorPacketOutcome::VideoWaitingForDecryption {
+                payload_bytes,
+                has_configuration,
+            } => tracing::debug!(
+                %packet.peer_addr,
+                timestamp = packet.timestamp,
+                payload_bytes,
+                has_configuration,
+                received,
+                "AirPlay video packet received; waiting for FairPlay media decryption"
+            ),
+            super::video::MirrorPacketOutcome::Heartbeat => {
+                tracing::trace!(%packet.peer_addr, "AirPlay mirror heartbeat received");
+            }
+        }
     }
     tracing::info!(received, "AirPlay media processing worker stopped");
 }
