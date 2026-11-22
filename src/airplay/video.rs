@@ -656,17 +656,22 @@ impl AccessUnitAssembler {
     }
 
     pub fn push(&mut self, unit: AccessUnit) -> bool {
-        if unit.payload.len() > self.max_bytes {
+        // Empty access units consume queue metadata but no byte budget. Reject
+        // them so repeated empty pushes cannot grow this supposedly bounded
+        // queue without limit.
+        if unit.payload.is_empty() || unit.payload.len() > self.max_bytes {
             return false;
         }
 
-        while self.buffered_bytes + unit.payload.len() > self.max_bytes {
+        while self.buffered_bytes > self.max_bytes.saturating_sub(unit.payload.len()) {
             let Some(old) = self.queue.pop_front() else {
                 break;
             };
             self.buffered_bytes = self.buffered_bytes.saturating_sub(old.payload.len());
         }
 
+        // The subtraction-based capacity check above guarantees this addition
+        // cannot overflow and never exceeds max_bytes.
         self.buffered_bytes += unit.payload.len();
         self.queue.push_back(unit);
         true
@@ -1299,6 +1304,35 @@ mod tests {
             payload: vec![1, 2, 3, 4, 5],
         }));
         assert!(assembler.is_empty());
+    }
+
+    #[test]
+    fn empty_units_are_rejected_without_consuming_queue_capacity() {
+        let mut assembler = AccessUnitAssembler::new(4);
+        for timestamp in 0..128 {
+            assert!(!assembler.push(AccessUnit {
+                timestamp,
+                payload: Vec::new(),
+            }));
+        }
+        assert!(assembler.is_empty());
+        assert_eq!(assembler.len(), 0);
+        assert_eq!(assembler.buffered_bytes(), 0);
+    }
+
+    #[test]
+    fn assembler_accounts_bytes_when_popping_and_preserves_order() {
+        let mut assembler = AccessUnitAssembler::new(8);
+        for (timestamp, payload) in [(1, vec![1, 2]), (2, vec![3, 4, 5])] {
+            assert!(assembler.push(AccessUnit { timestamp, payload }));
+        }
+
+        assert_eq!(assembler.buffered_bytes(), 5);
+        assert_eq!(assembler.pop().unwrap().timestamp, 1);
+        assert_eq!(assembler.buffered_bytes(), 3);
+        assert_eq!(assembler.pop().unwrap().timestamp, 2);
+        assert_eq!(assembler.buffered_bytes(), 0);
+        assert!(assembler.pop().is_none());
     }
 
     #[test]
