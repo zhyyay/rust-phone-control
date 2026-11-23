@@ -1155,10 +1155,32 @@ fn handle_pair_setup(
 }
 
 /// Handle one Pair-Verify state transition on the current RTSP connection.
+///
+/// Legacy AirPlay Pair-Verify is a fixed 68-byte binary envelope, not TLV8.
+/// Dispatch it before attempting to decode a HAP State field.
 fn handle_pair_verify(
     body: &[u8],
     session: &mut Option<PairVerifySession>,
 ) -> Result<(Vec<u8>, Option<[u8; 32]>), String> {
+    if body.len() == 68 && body[..4] == [1, 0, 0, 0] {
+        if session.is_some() {
+            return Err("Legacy Pair-Verify M1 received while another exchange is active".into());
+        }
+        let (new_session, response) = PairVerifySession::start(body)?;
+        *session = Some(new_session);
+        return Ok((response, None));
+    }
+
+    if body.len() == 68 && body[..4] == [0, 0, 0, 0] {
+        let current = session
+            .take()
+            .ok_or_else(|| "Legacy Pair-Verify M3 received without M1".to_owned())?;
+        return current
+            .finish(body)
+            .map(|completion| (completion.response, Some(completion.shared_secret)));
+    }
+
+    // HAP Pair-Verify uses TLV8 with State=1 for M1 and State=3 for M3.
     let fields = tlv8::decode(body).map_err(|error| error.to_string())?;
     let mut states = fields.iter().filter(|field| field.kind == 0x06);
     let state = states
