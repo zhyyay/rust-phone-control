@@ -121,7 +121,9 @@ impl ServiceData {
         properties: &[(&str, &str)],
     ) -> Self {
         let mut instance_name = wide(instance_name);
-        let mut host_name = wide(config::HOST_NAME);
+        let host = std::env::var("COMPUTERNAME")
+            .unwrap_or_else(|_| "rust-phone-control".to_owned());
+        let mut host_name = wide(&format!("{host}.local"));
         let key_strings = properties
             .iter()
             .map(|(key, _)| wide(key))
@@ -283,7 +285,7 @@ impl Advertisement {
         let airplay_fullname = format!(
             "{}.{}",
             config::SERVICE_NAME,
-            config::SERVICE_TYPE
+            config::SERVICE_TYPE.trim_end_matches('.')
         );
 
         let raop_instance = format!(
@@ -294,7 +296,7 @@ impl Advertisement {
         let raop_fullname = format!(
             "{}.{}",
             raop_instance,
-            config::RAOP_SERVICE_TYPE
+            config::RAOP_SERVICE_TYPE.trim_end_matches('.')
         );
         let raop_properties = [
             ("txtvers", "1"),
