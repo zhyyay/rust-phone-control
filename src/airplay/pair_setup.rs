@@ -14,7 +14,7 @@ use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use hkdf::Hkdf;
 use rand::RngCore;
 use rand::rngs::OsRng;
-use sha2::Sha512;
+use sha2::{Digest, Sha256, Sha512};
 
 use super::tlv8::{self, Tlv};
 
@@ -231,6 +231,42 @@ pub fn test_accessory_public_key() -> [u8; 32] {
     let lock = pairing_state().expect("pairing state");
     let state = lock.lock().expect("pairing state lock");
     state.accessory.public_key()
+}
+
+/// Check whether a verified Ed25519 public key is present in the persistent registry.
+pub fn is_controller_public_key_paired(public_key: &[u8; 32]) -> Result<bool, String> {
+    let lock = pairing_state()?;
+    let state = lock
+        .lock()
+        .map_err(|_| "AirPlay pairing state lock poisoned")?;
+    Ok(state.controllers.values().any(|stored| stored == public_key))
+}
+
+/// Persist a Legacy Pair-Verify controller after explicit local approval.
+/// Its identifier is a stable SHA-256 fingerprint, never a network address.
+pub fn trust_legacy_controller(public_key: [u8; 32]) -> Result<(), String> {
+    let fingerprint = Sha256::digest(public_key);
+    let identifier = fingerprint
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>()
+        .into_bytes();
+    let lock = pairing_state()?;
+    let mut state = lock
+        .lock()
+        .map_err(|_| "AirPlay pairing state lock poisoned")?;
+    if state.controllers.values().any(|stored| stored == &public_key) {
+        return Ok(());
+    }
+    let previous = state.controllers.insert(identifier.clone(), public_key);
+    if let Err(error) = state.persist() {
+        match previous {
+            Some(key) => { state.controllers.insert(identifier, key); }
+            None => { state.controllers.remove(&identifier); }
+        }
+        return Err(error);
+    }
+    Ok(())
 }
 
 /// Look up a paired controller's long-term Ed25519 public key.
