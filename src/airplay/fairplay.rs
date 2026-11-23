@@ -17,9 +17,9 @@ pub enum MessagePhase {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FairPlayMessage {
     pub phase: MessagePhase,
-    /// Raw selector byte at offset 14 of phase 1. Its interpretation is deliberately
-    /// kept neutral until the target-device negotiation is independently verified.
-    pub initial_selector: Option<u8>,
+    /// All four bytes of the phase-1 payload. Their individual meanings are
+    /// intentionally kept opaque until target-device negotiation is verified.
+    pub initial_parameters: Option<[u8; 4]>,
     pub body: Vec<u8>,
 }
 
@@ -114,7 +114,7 @@ pub fn parse_message(body: &[u8]) -> Result<FairPlayMessage, FairPlayParseError>
             }
             Ok(FairPlayMessage {
                 phase: MessagePhase::Initial,
-                initial_selector: Some(body[14]),
+                initial_parameters: Some(body[12..16].try_into().expect("four-byte initial payload")),
                 body: body.to_vec(),
             })
         }
@@ -124,7 +124,7 @@ pub fn parse_message(body: &[u8]) -> Result<FairPlayMessage, FairPlayParseError>
             }
             Ok(FairPlayMessage {
                 phase: MessagePhase::Challenge,
-                initial_selector: None,
+                initial_parameters: None,
                 body: body.to_vec(),
             })
         }
@@ -134,7 +134,7 @@ pub fn parse_message(body: &[u8]) -> Result<FairPlayMessage, FairPlayParseError>
             }
             Ok(FairPlayMessage {
                 phase: MessagePhase::KeyMessage,
-                initial_selector: None,
+                initial_parameters: None,
                 body: body.to_vec(),
             })
         }
@@ -144,7 +144,7 @@ pub fn parse_message(body: &[u8]) -> Result<FairPlayMessage, FairPlayParseError>
             }
             Ok(FairPlayMessage {
                 phase: MessagePhase::Acknowledgement,
-                initial_selector: None,
+                initial_parameters: None,
                 body: body.to_vec(),
             })
         }
@@ -182,7 +182,7 @@ pub fn build_m4(acknowledgement: &[u8; 20]) -> [u8; 32] {
 
 #[derive(Debug, Default)]
 pub struct FairPlaySession {
-    initial_selector: Option<u8>,
+    initial_parameters: Option<[u8; 4]>,
     challenge_sent: bool,
     key_message: Option<Vec<u8>>,
     challenge_mode: Option<u8>,
@@ -197,10 +197,10 @@ impl FairPlaySession {
     pub fn accept(&mut self, message: FairPlayMessage) -> Result<FairPlayState, String> {
         match message.phase {
             MessagePhase::Initial => {
-                if self.initial_selector.is_some() {
+                if self.initial_parameters.is_some() {
                     return Err("FairPlay initial message was already received".to_owned());
                 }
-                self.initial_selector = message.initial_selector;
+                self.initial_parameters = message.initial_parameters;
                 Ok(FairPlayState::AwaitingChallenge)
             }
             MessagePhase::Challenge | MessagePhase::Acknowledgement => {
@@ -210,7 +210,7 @@ impl FairPlaySession {
                 ));
             }
             MessagePhase::KeyMessage => {
-                if self.initial_selector.is_none() {
+                if self.initial_parameters.is_none() {
                     return Err("FairPlay key message received before initial message".to_owned());
                 }
                 if !self.challenge_sent {
@@ -227,15 +227,15 @@ impl FairPlaySession {
         }
     }
 
-    /// Raw phase-1 selector byte. Its protocol meaning is not normalized here.
-    pub fn initial_selector(&self) -> Option<u8> {
-        self.initial_selector
+    /// Raw four-byte phase-1 payload, without assigning undocumented semantics.
+    pub fn initial_parameters(&self) -> Option<[u8; 4]> {
+        self.initial_parameters
     }
 
     /// Record that a real, negotiated phase-2 challenge has been sent.
     /// Callers must not use this for placeholder or replayed challenge bytes.
     pub fn mark_challenge_sent(&mut self, mode: u8, challenge: [u8; 128]) -> Result<(), String> {
-        if self.initial_selector.is_none() {
+        if self.initial_parameters.is_none() {
             return Err("FairPlay challenge cannot be sent before initial message".to_owned());
         }
         if self.challenge_sent {
@@ -280,7 +280,7 @@ mod tests {
         body[5] = 1;
         body[6] = 1;
         body[8..12].copy_from_slice(&4u32.to_be_bytes());
-        body[14] = mode;
+        body[12..16].copy_from_slice(&[0, 0, mode, 0]);
         body
     }
 
@@ -325,18 +325,26 @@ mod tests {
     }
 
     #[test]
-    fn parses_initial_message_and_mode() {
+    fn parses_initial_message_and_preserves_all_parameters() {
         let message = parse_message(&initial_message(3)).expect("initial FairPlay message");
         assert_eq!(message.phase, MessagePhase::Initial);
-        assert_eq!(message.initial_selector, Some(3));
+        assert_eq!(message.initial_parameters, Some([0, 0, 3, 0]));
         assert_eq!(message.body.len(), 16);
+    }
+
+    #[test]
+    fn parses_observed_iphone_phase1_payload_without_interpreting_it() {
+        let mut body = initial_message(2);
+        body[12..16].copy_from_slice(&[0x02, 0x00, 0x02, 0xbb]);
+        let message = parse_message(&body).expect("observed iPhone phase-1 message");
+        assert_eq!(message.initial_parameters, Some([0x02, 0x00, 0x02, 0xbb]));
     }
 
     #[test]
     fn parses_key_message() {
         let message = parse_message(&key_message()).expect("key FairPlay message");
         assert_eq!(message.phase, MessagePhase::KeyMessage);
-        assert_eq!(message.initial_selector, None);
+        assert_eq!(message.initial_parameters, None);
         assert_eq!(message.body.len(), 164);
     }
 
@@ -405,7 +413,7 @@ mod tests {
             session.accept(initial).expect("accept initial"),
             FairPlayState::AwaitingChallenge
         );
-        assert_eq!(session.initial_selector(), Some(3));
+        assert_eq!(session.initial_parameters(), Some([0, 0, 3, 0]));
         let key_before_challenge = parse_message(&key_message()).expect("key before challenge");
         assert_eq!(
             session.accept(key_before_challenge).unwrap_err(),
