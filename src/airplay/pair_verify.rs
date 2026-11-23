@@ -136,7 +136,10 @@ impl LegacyPairVerifySession {
         if body.len() != 68 || body[..4] != [0, 0, 0, 0] {
             return Err("invalid legacy Pair-Verify M3 envelope".into());
         }
-        let signature = legacy_aes_ctr(&self.aes_key, &self.aes_iv, &body[4..])?;
+        // UxPlay's legacy implementation advances the AES-CTR stream by
+        // one 64-byte signature block after M2 before processing M3.
+        let signature =
+            legacy_aes_ctr_at_offset(&self.aes_key, &self.aes_iv, &body[4..], 64)?;
         let verifying_key = VerifyingKey::from_bytes(&self.controller_public_key)
             .map_err(|_| "invalid legacy Pair-Verify controller Ed25519 public key")?;
         let signature = Signature::from_slice(&signature)
@@ -174,6 +177,47 @@ fn legacy_aes_material(shared_secret: &[u8; 32]) -> ([u8; 16], [u8; 16]) {
     (key, iv)
 }
 
+/// Apply AES-128-CTR after skipping a number of bytes in the keystream.
+fn legacy_aes_ctr_at_offset(
+    key: &[u8; 16],
+    iv: &[u8; 16],
+    input: &[u8],
+    offset: usize,
+) -> Result<Vec<u8>, String> {
+    if offset % 16 != 0 {
+        return Err("legacy Pair-Verify AES-CTR offset must be block-aligned".into());
+    }
+    let cipher = Aes128::new_from_slice(key).map_err(|_| "invalid legacy Pair-Verify AES key")?;
+    let mut counter = *iv;
+    for _ in 0..(offset / 16) {
+        increment_aes_ctr_counter(&mut counter);
+    }
+
+    let mut output = Vec::with_capacity(input.len());
+    for chunk in input.chunks(16) {
+        let mut block = GenericArray::clone_from_slice(&counter);
+        cipher.encrypt_block(&mut block);
+        output.extend(
+            chunk
+                .iter()
+                .zip(block.iter())
+                .map(|(byte, mask)| byte ^ mask),
+        );
+        increment_aes_ctr_counter(&mut counter);
+    }
+    Ok(output)
+}
+
+fn increment_aes_ctr_counter(counter: &mut [u8; 16]) {
+    for byte in counter.iter_mut().rev() {
+        let (next, carry) = byte.overflowing_add(1);
+        *byte = next;
+        if !carry {
+            break;
+        }
+    }
+}
+
 /// Apply AES-128-CTR. CTR encryption and decryption are the same operation.
 fn legacy_aes_ctr(key: &[u8; 16], iv: &[u8; 16], input: &[u8]) -> Result<Vec<u8>, String> {
     let cipher = Aes128::new_from_slice(key).map_err(|_| "invalid legacy Pair-Verify AES key")?;
@@ -190,13 +234,7 @@ fn legacy_aes_ctr(key: &[u8; 16], iv: &[u8; 16], input: &[u8]) -> Result<Vec<u8>
                 .map(|(byte, mask)| byte ^ mask),
         );
 
-        for byte in counter.iter_mut().rev() {
-            let (next, carry) = byte.overflowing_add(1);
-            *byte = next;
-            if !carry {
-                break;
-            }
-        }
+        increment_aes_ctr_counter(&mut counter);
     }
 
     Ok(output)
@@ -571,8 +609,9 @@ mod tests {
         controller_message.extend_from_slice(controller_ephemeral.as_bytes());
         controller_message.extend_from_slice(&accessory_ephemeral);
         let signature = controller_identity.sign(&controller_message);
-        let encrypted_signature = legacy_aes_ctr(&aes_key, &aes_iv, &signature.to_bytes())
-            .expect("encrypt controller signature");
+        let encrypted_signature =
+            legacy_aes_ctr_at_offset(&aes_key, &aes_iv, &signature.to_bytes(), 64)
+                .expect("encrypt controller signature after M2 keystream");
         let mut m3 = vec![0, 0, 0, 0];
         m3.extend_from_slice(&encrypted_signature);
 
