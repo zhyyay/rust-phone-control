@@ -169,6 +169,18 @@ pub fn revoke_trusted_controller(fingerprint: &str) -> Result<bool, String> {
     pair_setup::revoke_legacy_controller(fingerprint)
 }
 
+/// Return denied controller fingerprints shown in the desktop device-management UI.
+#[cfg(windows)]
+pub fn denied_controller_fingerprints() -> Result<Vec<String>, String> {
+    pair_setup::denied_controller_fingerprints()
+}
+
+/// Remove a denial; the controller must still pass first-time approval before connecting.
+#[cfg(windows)]
+pub fn clear_denied_controller(fingerprint: &str) -> Result<bool, String> {
+    pair_setup::clear_legacy_denial(fingerprint)
+}
+
 #[cfg(windows)]
 pub fn setup_code() -> String {
     PAIRING_CODE
