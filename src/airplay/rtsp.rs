@@ -560,8 +560,7 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
                                     const MODE: u8 = 3;
                                     let mut challenge = [0u8; 128];
                                     OsRng.fill_bytes(&mut challenge);
-                                    let response_body =
-                                        super::fairplay::build_m2(MODE, &challenge);
+                                    let response_body = super::fairplay::build_m2(MODE, &challenge);
                                     fairplay_session
                                         .mark_challenge_sent(MODE, challenge)
                                         .map_err(|reason| {
@@ -582,11 +581,12 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
                                         "AirPlay FairPlay M2 challenge sent"
                                     );
                                 } else if phase == super::fairplay::MessagePhase::KeyMessage {
-                                    let response_body =
-                                        super::fairplay::build_m4_from_m3(&request.body)
-                                            .map_err(|reason| {
-                                                io::Error::new(io::ErrorKind::InvalidData, reason)
-                                            })?;
+                                    let response_body = super::fairplay::build_m4_from_m3(
+                                        &request.body,
+                                    )
+                                    .map_err(|reason| {
+                                        io::Error::new(io::ErrorKind::InvalidData, reason)
+                                    })?;
                                     let header = format!(
                                         "RTSP/1.0 200 OK\r\nCSeq: {}\r\nServer: RustPhoneControl/0.1\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\n\r\n",
                                         request.cseq,
