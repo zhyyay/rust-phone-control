@@ -364,16 +364,18 @@ mod tests {
         assert_eq!(m2[12], 2);
         assert_eq!(m2[13], 3);
         assert_eq!(&m2[14..], &challenge);
-        assert_eq!(parse_message(&m2).unwrap().phase, MessagePhase::Challenge);
+        let parsed_m2 = parse_message(&m2).unwrap();
+        assert_eq!(parsed_m2.phase, MessagePhase::Challenge);
+        assert_eq!(parsed_m2.challenge_mode, Some(3));
+        assert_eq!(parsed_m2.challenge, Some(challenge));
 
         let acknowledgement = [0xa5u8; 20];
         let m4 = build_m4(&acknowledgement);
         assert_eq!(&m4[..12], b"FPLY\x03\x01\x04\x00\x00\x00\x00\x14");
         assert_eq!(&m4[12..], &acknowledgement);
-        assert_eq!(
-            parse_message(&m4).unwrap().phase,
-            MessagePhase::Acknowledgement
-        );
+        let parsed_m4 = parse_message(&m4).unwrap();
+        assert_eq!(parsed_m4.phase, MessagePhase::Acknowledgement);
+        assert_eq!(parsed_m4.acknowledgement, Some(acknowledgement));
     }
 
     #[test]
@@ -402,6 +404,31 @@ mod tests {
         let message = parse_message(&body).expect("observed iPhone phase-1 message");
         assert_eq!(message.initial_parameters, Some([0x02, 0x00, 0x02, 0xbb]));
         assert_eq!(message.initial_capabilities, Some(2));
+    }
+
+    #[test]
+    fn rejects_m3_when_mode_does_not_match_the_negotiated_m2_mode() {
+        let mut session = FairPlaySession::new();
+        let initial = parse_message(&initial_message(3)).unwrap();
+        session.accept(initial).unwrap();
+        session.mark_challenge_sent(3, [0x5a; 128]).unwrap();
+
+        let mut mismatched = key_message();
+        mismatched[12] = 2;
+        let parsed = parse_message(&mismatched).unwrap();
+        assert!(session.accept(parsed).unwrap_err().contains("does not match"));
+        assert!(!session.has_key_message());
+    }
+
+    #[test]
+    fn rejects_invalid_m1_payload_marker_and_trailer() {
+        let mut body = initial_message(3);
+        body[12] = 0;
+        assert_eq!(parse_message(&body).unwrap_err(), FairPlayParseError::InvalidInitialPayload);
+
+        let mut body = initial_message(3);
+        body[15] = 0;
+        assert_eq!(parse_message(&body).unwrap_err(), FairPlayParseError::InvalidInitialPayload);
     }
 
     #[test]
