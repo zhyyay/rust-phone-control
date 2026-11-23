@@ -205,7 +205,6 @@ impl RegisteredService {
             &data.keys,
             &data.values,
         );
-        request.pServiceInstance = ptr::null_mut();
 
         tracing::info!(
             service = %fullname,
