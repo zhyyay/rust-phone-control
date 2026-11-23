@@ -294,35 +294,36 @@ fn pending_airplay_approval_panel(app: &PhoneControlApp) -> impl IntoElement {
     } else {
         for (index, fingerprint) in app.trusted_airplay_controllers.iter().enumerate() {
             let target = fingerprint.clone();
-            panel = panel.child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .gap_2()
-                    .child(Label::new(fingerprint.clone()))
-                    .child(
-                        Button::new(format!("airplay-revoke-controller-{index}"))
-                            .label("Revoke")
-                            .on_click(move |_, _, _| {
-                                match crate::airplay::revoke_trusted_controller(&target) {
-                                    Ok(true) => tracing::info!(
-                                        fingerprint = %target,
-                                        "AirPlay controller authorization revoked"
-                                    ),
-                                    Ok(false) => tracing::warn!(
-                                        fingerprint = %target,
-                                        "AirPlay controller authorization was already absent"
-                                    ),
-                                    Err(error) => tracing::error!(
-                                        fingerprint = %target,
-                                        %error,
-                                        "Could not revoke AirPlay controller authorization"
-                                    ),
-                                }
-                            }),
-                    ),
-            );
+            panel =
+                panel.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .gap_2()
+                        .child(Label::new(fingerprint.clone()))
+                        .child(
+                            Button::new(format!("airplay-revoke-controller-{index}"))
+                                .label("Revoke")
+                                .on_click(move |_, _, _| {
+                                    match crate::airplay::revoke_trusted_controller(&target) {
+                                        Ok(true) => tracing::info!(
+                                            fingerprint = %target,
+                                            "AirPlay controller authorization revoked"
+                                        ),
+                                        Ok(false) => tracing::warn!(
+                                            fingerprint = %target,
+                                            "AirPlay controller authorization was already absent"
+                                        ),
+                                        Err(error) => tracing::error!(
+                                            fingerprint = %target,
+                                            %error,
+                                            "Could not revoke AirPlay controller authorization"
+                                        ),
+                                    }
+                                }),
+                        ),
+                );
         }
     }
 
