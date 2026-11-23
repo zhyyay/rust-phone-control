@@ -6,6 +6,7 @@ use std::os::windows::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 const FILE_NAME: &str = "airplay-pairing.bin";
 const MAX_FILE_BYTES: u64 = 1024 * 1024;
@@ -27,6 +28,41 @@ pub struct StoredPairingState {
 }
 
 impl StoredPairingState {
+    /// Return whether this exact Ed25519 controller key has been approved.
+    /// IP addresses and transient network details are deliberately not identities.
+    pub fn is_controller_trusted(&self, public_key: &[u8; 32]) -> bool {
+        self.controllers
+            .iter()
+            .any(|controller| controller.public_key.as_slice() == public_key)
+    }
+
+    /// Persist a controller after an explicit user approval.
+    /// Returns false when the same public key is already trusted.
+    pub fn trust_controller(&mut self, public_key: [u8; 32]) -> io::Result<bool> {
+        if self.is_controller_trusted(&public_key) {
+            return Ok(false);
+        }
+        if self.controllers.len() >= 1024 {
+            return Err(invalid_data("too many paired controllers in pairing store"));
+        }
+
+        let fingerprint = controller_fingerprint(&public_key);
+        self.controllers.push(StoredController {
+            identifier: fingerprint.to_vec(),
+            public_key: public_key.to_vec(),
+        });
+        Ok(true)
+    }
+
+    /// Revoke a trusted controller by its SHA-256 public-key fingerprint.
+    pub fn revoke_controller(&mut self, fingerprint: &[u8; 32]) -> bool {
+        let previous_len = self.controllers.len();
+        self.controllers.retain(|controller| {
+            controller.identifier.as_slice() != fingerprint
+        });
+        self.controllers.len() != previous_len
+    }
+
     pub fn validate(&self) -> io::Result<()> {
         if self.version != 1 {
             return Err(invalid_data("unsupported AirPlay pairing store version"));
@@ -62,6 +98,12 @@ impl StoredPairingState {
         }
         Ok(())
     }
+}
+
+
+/// Stable device identity derived from the controller's Ed25519 public key.
+pub fn controller_fingerprint(public_key: &[u8; 32]) -> [u8; 32] {
+    Sha256::digest(public_key).into()
 }
 
 /// Load and decrypt the store. None means that no store exists yet.
@@ -165,4 +207,41 @@ unsafe extern "system" {
 
 fn invalid_data(message: impl Into<String>) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message.into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{StoredPairingState, controller_fingerprint};
+
+    fn state() -> StoredPairingState {
+        StoredPairingState {
+            version: 1,
+            accessory_identifier: vec![1; 16],
+            accessory_secret_key: vec![2; 32],
+            controllers: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn controller_trust_uses_public_key_not_network_address() {
+        let mut store = state();
+        let key = [0x42; 32];
+        assert!(!store.is_controller_trusted(&key));
+        assert!(store.trust_controller(key).unwrap());
+        assert!(store.is_controller_trusted(&key));
+        assert!(!store.trust_controller(key).unwrap());
+        assert_eq!(store.controllers[0].identifier, controller_fingerprint(&key));
+        store.validate().unwrap();
+    }
+
+    #[test]
+    fn controller_can_be_revoked_by_fingerprint() {
+        let mut store = state();
+        let key = [0x24; 32];
+        store.trust_controller(key).unwrap();
+        let fingerprint = controller_fingerprint(&key);
+        assert!(store.revoke_controller(&fingerprint));
+        assert!(!store.is_controller_trusted(&key));
+        assert!(!store.revoke_controller(&fingerprint));
+    }
 }
