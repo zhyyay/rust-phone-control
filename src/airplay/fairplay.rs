@@ -20,6 +20,13 @@ pub struct FairPlayMessage {
     /// All four bytes of the phase-1 payload. Their individual meanings are
     /// intentionally kept opaque until target-device negotiation is verified.
     pub initial_parameters: Option<[u8; 4]>,
+    pub initial_capabilities: Option<u8>,
+    pub challenge_mode: Option<u8>,
+    pub challenge: Option<[u8; 128]>,
+    pub key_mode: Option<u8>,
+    pub local_sap: Option<[u8; 128]>,
+    pub key_response: Option<[u8; 20]>,
+    pub acknowledgement: Option<[u8; 20]>,
     pub body: Vec<u8>,
 }
 
@@ -34,6 +41,9 @@ pub enum FairPlayParseError {
     InvalidChallengeLength(usize),
     InvalidKeyMessageLength(usize),
     InvalidAcknowledgementLength(usize),
+    InvalidInitialPayload,
+    InvalidChallengePayload,
+    UnsupportedKeyMessageMode(u8),
 }
 
 impl std::fmt::Display for FairPlayParseError {
@@ -77,6 +87,9 @@ impl std::fmt::Display for FairPlayParseError {
                     "FairPlay acknowledgement must be 32 bytes, got {length}"
                 )
             }
+            Self::InvalidInitialPayload => write!(formatter, "invalid FairPlay M1 capability payload"),
+            Self::InvalidChallengePayload => write!(formatter, "invalid FairPlay M2 challenge payload"),
+            Self::UnsupportedKeyMessageMode(mode) => write!(formatter, "unsupported FairPlay M3 mode {mode}"),
         }
     }
 }
@@ -112,13 +125,19 @@ pub fn parse_message(body: &[u8]) -> Result<FairPlayMessage, FairPlayParseError>
             if body.len() != 16 {
                 return Err(FairPlayParseError::InvalidInitialLength(body.len()));
             }
+            if body[12] != 0x02 || body[13] != 0x00 || body[15] != 0xbb {
+                return Err(FairPlayParseError::InvalidInitialPayload);
+            }
             Ok(FairPlayMessage {
                 phase: MessagePhase::Initial,
-                initial_parameters: Some(
-                    body[12..16]
-                        .try_into()
-                        .expect("four-byte initial payload"),
-                ),
+                initial_parameters: Some(body[12..16].try_into().expect("four-byte initial payload")),
+                initial_capabilities: Some(body[14]),
+                challenge_mode: None,
+                challenge: None,
+                key_mode: None,
+                local_sap: None,
+                key_response: None,
+                acknowledgement: None,
                 body: body.to_vec(),
             })
         }
@@ -126,9 +145,19 @@ pub fn parse_message(body: &[u8]) -> Result<FairPlayMessage, FairPlayParseError>
             if body.len() != 142 {
                 return Err(FairPlayParseError::InvalidChallengeLength(body.len()));
             }
+            if body[12] != 0x02 {
+                return Err(FairPlayParseError::InvalidChallengePayload);
+            }
             Ok(FairPlayMessage {
                 phase: MessagePhase::Challenge,
                 initial_parameters: None,
+                initial_capabilities: None,
+                challenge_mode: Some(body[13]),
+                challenge: Some(body[14..142].try_into().expect("128-byte FairPlay challenge")),
+                key_mode: None,
+                local_sap: None,
+                key_response: None,
+                acknowledgement: None,
                 body: body.to_vec(),
             })
         }
@@ -136,9 +165,20 @@ pub fn parse_message(body: &[u8]) -> Result<FairPlayMessage, FairPlayParseError>
             if body.len() != 164 {
                 return Err(FairPlayParseError::InvalidKeyMessageLength(body.len()));
             }
+            let mode = body[12];
+            if mode > 3 {
+                return Err(FairPlayParseError::UnsupportedKeyMessageMode(mode));
+            }
             Ok(FairPlayMessage {
                 phase: MessagePhase::KeyMessage,
                 initial_parameters: None,
+                initial_capabilities: None,
+                challenge_mode: None,
+                challenge: None,
+                key_mode: Some(mode),
+                local_sap: Some(body[16..144].try_into().expect("128-byte FairPlay local SAP")),
+                key_response: Some(body[144..164].try_into().expect("20-byte FairPlay key response")),
+                acknowledgement: None,
                 body: body.to_vec(),
             })
         }
@@ -149,6 +189,13 @@ pub fn parse_message(body: &[u8]) -> Result<FairPlayMessage, FairPlayParseError>
             Ok(FairPlayMessage {
                 phase: MessagePhase::Acknowledgement,
                 initial_parameters: None,
+                initial_capabilities: None,
+                challenge_mode: None,
+                challenge: None,
+                key_mode: None,
+                local_sap: None,
+                key_response: None,
+                acknowledgement: Some(body[12..32].try_into().expect("20-byte FairPlay acknowledgement")),
                 body: body.to_vec(),
             })
         }
@@ -225,6 +272,15 @@ impl FairPlaySession {
                 if self.key_message.is_some() {
                     return Err("FairPlay key message was already received".to_owned());
                 }
+                let received_mode = message.key_mode.ok_or_else(|| {
+                    "FairPlay M3 did not contain a parsed mode".to_owned()
+                })?;
+                if Some(received_mode) != self.challenge_mode {
+                    return Err(format!(
+                        "FairPlay M3 mode {received_mode} does not match negotiated mode {:?}",
+                        self.challenge_mode
+                    ));
+                }
                 self.key_message = Some(message.body);
                 Ok(FairPlayState::KeyMessageReceived)
             }
@@ -284,7 +340,7 @@ mod tests {
         body[5] = 1;
         body[6] = 1;
         body[8..12].copy_from_slice(&4u32.to_be_bytes());
-        body[12..16].copy_from_slice(&[0, 0, mode, 0]);
+        body[12..16].copy_from_slice(&[0x02, 0x00, mode, 0xbb]);
         body
     }
 
@@ -295,6 +351,8 @@ mod tests {
         body[5] = 1;
         body[6] = 3;
         body[8..12].copy_from_slice(&152u32.to_be_bytes());
+        body[12] = 3;
+        body[13..16].copy_from_slice(&[0x8f, 0x1a, 0x9c]);
         body
     }
 
@@ -332,7 +390,8 @@ mod tests {
     fn parses_initial_message_and_preserves_all_parameters() {
         let message = parse_message(&initial_message(3)).expect("initial FairPlay message");
         assert_eq!(message.phase, MessagePhase::Initial);
-        assert_eq!(message.initial_parameters, Some([0, 0, 3, 0]));
+        assert_eq!(message.initial_parameters, Some([0x02, 0x00, 3, 0xbb]));
+        assert_eq!(message.initial_capabilities, Some(3));
         assert_eq!(message.body.len(), 16);
     }
 
@@ -342,6 +401,7 @@ mod tests {
         body[12..16].copy_from_slice(&[0x02, 0x00, 0x02, 0xbb]);
         let message = parse_message(&body).expect("observed iPhone phase-1 message");
         assert_eq!(message.initial_parameters, Some([0x02, 0x00, 0x02, 0xbb]));
+        assert_eq!(message.initial_capabilities, Some(2));
     }
 
     #[test]
@@ -349,6 +409,9 @@ mod tests {
         let message = parse_message(&key_message()).expect("key FairPlay message");
         assert_eq!(message.phase, MessagePhase::KeyMessage);
         assert_eq!(message.initial_parameters, None);
+        assert_eq!(message.key_mode, Some(3));
+        assert_eq!(message.local_sap, Some([0u8; 128]));
+        assert_eq!(message.key_response, Some([0u8; 20]));
         assert_eq!(message.body.len(), 164);
     }
 
@@ -417,7 +480,7 @@ mod tests {
             session.accept(initial).expect("accept initial"),
             FairPlayState::AwaitingChallenge
         );
-        assert_eq!(session.initial_parameters(), Some([0, 0, 3, 0]));
+        assert_eq!(session.initial_parameters(), Some([0x02, 0x00, 3, 0xbb]));
         let key_before_challenge = parse_message(&key_message()).expect("key before challenge");
         assert_eq!(
             session.accept(key_before_challenge).unwrap_err(),
