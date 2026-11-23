@@ -1202,11 +1202,25 @@ fn pair_verify_error_response() -> Vec<u8> {
     ])
 }
 
+fn server_info_features() -> i64 {
+    let mut parts = config::FEATURES.split(',');
+    let low = parts
+        .next()
+        .and_then(|part| u32::from_str_radix(part.trim().trim_start_matches("0x"), 16).ok())
+        .unwrap_or(0) as u64;
+    let high = parts
+        .next()
+        .and_then(|part| u32::from_str_radix(part.trim().trim_start_matches("0x"), 16).ok())
+        .unwrap_or(0) as u64;
+
+    ((high << 32) | low) as i64
+}
+
 fn server_info_plist() -> String {
     format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\"><dict><key>deviceid</key><string>{}</string><key>features</key><integer>{}</integer><key>model</key><string>{}</string><key>protovers</key><string>1.0</string><key>srcvers</key><string>{}</string></dict></plist>",
         config::device_id(),
-        u32::from_str_radix(config::FEATURES.trim_start_matches("0x"), 16).unwrap_or(0),
+        server_info_features(),
         config::MODEL,
         config::SOURCE_VERSION
     )
@@ -1574,7 +1588,10 @@ mod tests {
     #[test]
     fn server_info_contains_declared_model_and_advertised_features() {
         let body = server_info_plist();
-        assert!(body.contains("<key>features</key><integer>128</integer>"));
+        assert!(body.contains(&format!(
+            "<key>features</key><integer>{}</integer>",
+            super::server_info_features()
+        )));
         assert!(body.contains("<key>model</key><string>RustPhoneControl1,1</string>"));
     }
 
