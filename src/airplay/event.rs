@@ -22,7 +22,7 @@ pub(super) struct EventChannel {
 }
 
 impl EventChannel {
-    pub(super) fn bind() -> std::io::Result<Self> {
+    pub(super) fn bind(expected_peer_ip: std::net::IpAddr) -> std::io::Result<Self> {
         let listener = TcpListener::bind(("0.0.0.0", 0))?;
         listener.set_nonblocking(true)?;
         let local_addr = listener.local_addr()?;
@@ -30,7 +30,7 @@ impl EventChannel {
         let worker_running = Arc::clone(&running);
         let worker = thread::Builder::new()
             .name("airplay-event-channel".to_owned())
-            .spawn(move || accept_events(listener, worker_running))?;
+            .spawn(move || accept_events(listener, worker_running, expected_peer_ip))?;
 
         tracing::info!(%local_addr, "AirPlay event channel listening");
         Ok(Self {
@@ -57,10 +57,18 @@ impl Drop for EventChannel {
     }
 }
 
-fn accept_events(listener: TcpListener, running: Arc<AtomicBool>) {
+fn accept_events(listener: TcpListener, running: Arc<AtomicBool>, expected_peer_ip: std::net::IpAddr) {
     while running.load(Ordering::Acquire) {
         match listener.accept() {
             Ok((stream, peer)) => {
+                if peer.ip() != expected_peer_ip {
+                    tracing::warn!(
+                        %peer,
+                        %expected_peer_ip,
+                        "Rejecting unexpected AirPlay reverse event peer"
+                    );
+                    continue;
+                }
                 tracing::info!(%peer, "AirPlay reverse event connection accepted");
                 handle_event_stream(stream, &running, peer);
             }
