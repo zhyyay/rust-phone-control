@@ -104,9 +104,7 @@ impl StoredPairingState {
                 .iter()
                 .any(|denied| denied.public_key == trusted.public_key)
         }) {
-            return Err(invalid_data(
-                "controller cannot be both trusted and denied",
-            ));
+            return Err(invalid_data("controller cannot be both trusted and denied"));
         }
         Ok(())
     }
