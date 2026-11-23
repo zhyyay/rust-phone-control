@@ -1592,7 +1592,10 @@ mod tests {
             "<key>features</key><integer>{}</integer>",
             super::server_info_features()
         )));
-        assert!(body.contains("<key>model</key><string>RustPhoneControl1,1</string>"));
+        assert!(body.contains(&format!(
+            "<key>model</key><string>{}</string>",
+            super::config::MODEL
+        )));
     }
 
     #[test]
