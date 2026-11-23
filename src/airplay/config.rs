@@ -4,12 +4,12 @@ pub const SERVICE_TYPE: &str = "_airplay._tcp.local.";
 pub const RAOP_SERVICE_TYPE: &str = "_raop._tcp.local.";
 pub const SERVICE_NAME: &str = "Rust Phone Control";
 pub const TCP_PORT: u16 = 7000;
-pub const MODEL: &str = "RustPhoneControl1,1";
-pub const SOURCE_VERSION: &str = "1.0";
+pub const MODEL: &str = "AppleTV3,1";
+pub const SOURCE_VERSION: &str = "220.68";
 // Use the widely deployed AirPlay mirroring feature profile used by open
 // receivers. The first word covers the legacy 32-bit capability mask and the
 // second word carries the extended AirPlay capability bits.
-pub const FEATURES: &str = "0x5A7FFFF7,0x1E";
+pub const FEATURES: &str = "0x5A7FFFF7,0xE";
 pub const STATUS_FLAGS: &str = "0x4";
 
 /// Returns the MAC address of the active Wi-Fi adapter for AirPlay's
