@@ -25,6 +25,8 @@ pub struct StoredPairingState {
     pub accessory_identifier: Vec<u8>,
     pub accessory_secret_key: Vec<u8>,
     pub controllers: Vec<StoredController>,
+    #[serde(default)]
+    pub denied_controllers: Vec<StoredController>,
 }
 
 impl StoredPairingState {
@@ -76,24 +78,35 @@ impl StoredPairingState {
                 "invalid accessory secret key in pairing store",
             ));
         }
-        if self.controllers.len() > 1024 {
-            return Err(invalid_data("too many paired controllers in pairing store"));
+        if self.controllers.len() > 1024 || self.denied_controllers.len() > 1024 {
+            return Err(invalid_data("too many controller entries in pairing store"));
         }
-        for (index, controller) in self.controllers.iter().enumerate() {
-            if controller.identifier.is_empty()
-                || controller.identifier.len() > 64
-                || controller.public_key.len() != 32
-            {
-                return Err(invalid_data("invalid controller entry in pairing store"));
+        for entries in [&self.controllers, &self.denied_controllers] {
+            for (index, controller) in entries.iter().enumerate() {
+                if controller.identifier.is_empty()
+                    || controller.identifier.len() > 64
+                    || controller.public_key.len() != 32
+                {
+                    return Err(invalid_data("invalid controller entry in pairing store"));
+                }
+                if entries[..index]
+                    .iter()
+                    .any(|previous| previous.identifier == controller.identifier)
+                {
+                    return Err(invalid_data(
+                        "duplicate controller identifier in pairing store",
+                    ));
+                }
             }
-            if self.controllers[..index]
+        }
+        if self.controllers.iter().any(|trusted| {
+            self.denied_controllers
                 .iter()
-                .any(|previous| previous.identifier == controller.identifier)
-            {
-                return Err(invalid_data(
-                    "duplicate controller identifier in pairing store",
-                ));
-            }
+                .any(|denied| denied.public_key == trusted.public_key)
+        }) {
+            return Err(invalid_data(
+                "controller cannot be both trusted and denied",
+            ));
         }
         Ok(())
     }
@@ -217,6 +230,7 @@ mod tests {
             accessory_identifier: vec![1; 16],
             accessory_secret_key: vec![2; 32],
             controllers: Vec::new(),
+            denied_controllers: Vec::new(),
         }
     }
 
