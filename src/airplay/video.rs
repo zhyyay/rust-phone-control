@@ -205,6 +205,9 @@ impl AvcConfiguration {
             offset += 3;
             let extension_count = usize::from(data[offset]);
             offset += 1;
+            if extension_count > MAX_AVC_PARAMETER_SETS {
+                return Err(AvcConfigError::TooManyParameterSets);
+            }
             for _ in 0..extension_count {
                 if data.len().saturating_sub(offset) < 2 {
                     return Err(AvcConfigError::TruncatedSpsLength);
@@ -1354,6 +1357,14 @@ mod tests {
         };
         assert_eq!(
             AvcConfiguration::parse(&too_many_pps),
+            Err(AvcConfigError::TooManyParameterSets)
+        );
+
+        let too_many_sps_extensions = [
+            1, 100, 0, 0x1f, 0xff, 0xe1, 0, 1, 0x67, 1, 0, 1, 0x68, 0xfc, 0xf8, 0xf8, 33,
+        ];
+        assert_eq!(
+            AvcConfiguration::parse(&too_many_sps_extensions),
             Err(AvcConfigError::TooManyParameterSets)
         );
 
