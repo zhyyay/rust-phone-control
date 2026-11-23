@@ -57,6 +57,7 @@ pub struct PairVerifySession {
 pub(super) struct PairVerifyCompletion {
     pub(super) response: Vec<u8>,
     pub(super) shared_secret: [u8; 32],
+    pub(super) controller_public_key: [u8; 32],
 }
 
 impl PairVerifySession {
@@ -164,6 +165,7 @@ impl LegacyPairVerifySession {
         Ok(PairVerifyCompletion {
             response: Vec::new(),
             shared_secret: self.shared_secret,
+            controller_public_key: self.controller_public_key,
         })
     }
 }
@@ -389,6 +391,7 @@ impl HapPairVerifySession {
                 value: vec![4],
             }]),
             shared_secret: self.shared_secret,
+            controller_public_key,
         })
     }
 }
