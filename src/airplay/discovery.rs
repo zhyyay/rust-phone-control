@@ -115,7 +115,8 @@ struct ServiceData {
 impl ServiceData {
     fn new(instance_name: &str, properties: &[(&str, &str)]) -> Self {
         let mut instance_name = wide(instance_name);
-        let host = std::env::var("COMPUTERNAME").unwrap_or_else(|_| "rust-phone-control".to_owned());
+        let host =
+            std::env::var("COMPUTERNAME").unwrap_or_else(|_| "rust-phone-control".to_owned());
         let mut host_name = wide(&format!("{host}.local"));
         let key_strings = properties
             .iter()
