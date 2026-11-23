@@ -1220,6 +1220,9 @@ fn handle_pair_verify(
             .take()
             .ok_or_else(|| "Legacy Pair-Verify M3 received without M1".to_owned())?;
         let completion = current.finish(body)?;
+        if pair_setup::is_controller_public_key_denied(&completion.controller_public_key)? {
+            return Err("Legacy Pair-Verify controller was previously denied".into());
+        }
         if !pair_setup::is_controller_public_key_paired(&completion.controller_public_key)? {
             super::queue_pending_controller(completion.controller_public_key)?;
             return Err("Legacy Pair-Verify controller is awaiting local approval".into());
@@ -1251,6 +1254,9 @@ fn handle_pair_verify(
                 .take()
                 .ok_or_else(|| "Pair-Verify M3 received without M1".to_owned())?;
             let completion = current.finish(body)?;
+            if pair_setup::is_controller_public_key_denied(&completion.controller_public_key)? {
+                return Err("Pair-Verify controller was previously denied".into());
+            }
             if !pair_setup::is_controller_public_key_paired(&completion.controller_public_key)? {
                 super::queue_pending_controller(completion.controller_public_key)?;
                 return Err("Pair-Verify controller is awaiting local approval".into());
