@@ -1,77 +1,273 @@
-//! DNS-SD / mDNS publication for the local AirPlay endpoint.
+//! Windows DNS-SD publication for the local AirPlay endpoint.
 //!
-//! iOS screen-mirroring discovery commonly browses both the AirPlay service
-//! and the legacy RAOP service. Publish both records with the same stable
-//! device identity and control endpoint. The RAOP record is a discovery hint;
-//! this project does not advertise audio codecs or encryption modes it cannot
-//! currently serve.
+//! Windows owns the mDNS sockets and answers multicast and QU-unicast queries.
+//! The application only registers the AirPlay and RAOP service descriptions;
+//! it does not bind UDP 5353 itself.
 
-use anyhow::{Context, Result};
-use mdns_sd::{DaemonEvent, IfKind, ServiceDaemon, ServiceInfo};
-use std::thread::{self, JoinHandle};
+use anyhow::{Context, Result, anyhow, bail};
+use std::{
+    ffi::c_void,
+    ptr,
+    sync::mpsc,
+};
+use windows_062::{
+    core::PWSTR,
+    Win32::Foundation::{BOOL, DNS_REQUEST_PENDING},
+    Win32::NetworkManagement::Dns::{
+        DnsServiceDeRegister, DnsServiceFreeInstance, DnsServiceRegister,
+        DNS_SERVICE_INSTANCE, DNS_SERVICE_REGISTER_REQUEST,
+    },
+};
 
 use super::config;
 
+const DNS_SERVICE_REQUEST_VERSION: u32 = 1;
+
+struct Completion {
+    status: u32,
+    instance: usize,
+}
+
+unsafe extern "system" fn registration_complete(
+    status: u32,
+    context: *const c_void,
+    instance: *const DNS_SERVICE_INSTANCE,
+) {
+    if context.is_null() {
+        return;
+    }
+
+    // The boxed sender is transferred to this one-shot Windows callback.
+    let sender = unsafe {
+        Box::from_raw(context.cast_mut().cast::<mpsc::Sender<Completion>>())
+    };
+    let _ = sender.send(Completion {
+        status,
+        instance: instance as usize,
+    });
+}
+
+fn submit_request(
+    request: &DNS_SERVICE_REGISTER_REQUEST,
+    deregister: bool,
+) -> Result<usize> {
+    let (sender, receiver) = mpsc::channel();
+    let context = Box::into_raw(Box::new(sender)).cast::<c_void>();
+
+    // DNS-SD registration and deregistration complete asynchronously. Keep
+    // the callback context alive until Windows invokes the completion callback.
+    let status = unsafe {
+        if deregister {
+            DnsServiceDeRegister(request, None)
+        } else {
+            DnsServiceRegister(request, None)
+        }
+    };
+
+    if status != DNS_REQUEST_PENDING as u32 {
+        // No callback will be issued when the request was rejected immediately.
+        unsafe {
+            drop(Box::from_raw(context.cast::<mpsc::Sender<Completion>>()));
+        }
+        bail!(
+            "Windows DNS-SD {} request failed immediately: 0x{status:08X}",
+            if deregister { "deregistration" } else { "registration" }
+        );
+    }
+
+    let completion = receiver
+        .recv()
+        .context("Windows DNS-SD completion callback channel closed")?;
+    if completion.status != 0 {
+        if completion.instance != 0 {
+            unsafe {
+                DnsServiceFreeInstance(
+                    completion.instance as *const DNS_SERVICE_INSTANCE,
+                );
+            }
+        }
+        bail!(
+            "Windows DNS-SD {} completed with status 0x{:08X}",
+            if deregister { "deregistration" } else { "registration" },
+            completion.status
+        );
+    }
+    if completion.instance == 0 {
+        bail!("Windows DNS-SD completed without returning a service instance");
+    }
+
+    Ok(completion.instance)
+}
+
+fn wide(value: &str) -> Vec<u16> {
+    value.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
+struct ServiceData {
+    instance_name: Vec<u16>,
+    host_name: Vec<u16>,
+    key_strings: Vec<Vec<u16>>,
+    value_strings: Vec<Vec<u16>>,
+    keys: Vec<PWSTR>,
+    values: Vec<PWSTR>,
+    instance: DNS_SERVICE_INSTANCE,
+}
+
+impl ServiceData {
+    fn new(
+        instance_name: &str,
+        properties: &[(&str, &str)],
+    ) -> Self {
+        let mut instance_name = wide(instance_name);
+        let mut host_name = wide(config::HOST_NAME);
+        let key_strings = properties
+            .iter()
+            .map(|(key, _)| wide(key))
+            .collect::<Vec<_>>();
+        let value_strings = properties
+            .iter()
+            .map(|(_, value)| wide(value))
+            .collect::<Vec<_>>();
+        let keys = key_strings
+            .iter()
+            .map(|value| PWSTR(value.as_ptr() as *mut u16))
+            .collect::<Vec<_>>();
+        let values = value_strings
+            .iter()
+            .map(|value| PWSTR(value.as_ptr() as *mut u16))
+            .collect::<Vec<_>>();
+
+        let instance = DNS_SERVICE_INSTANCE {
+            pszInstanceName: PWSTR(instance_name.as_mut_ptr()),
+            pszHostName: PWSTR(host_name.as_mut_ptr()),
+            ip4Address: ptr::null_mut(),
+            ip6Address: ptr::null_mut(),
+            wPort: config::TCP_PORT,
+            wPriority: 0,
+            wWeight: 0,
+            dwPropertyCount: keys.len() as u32,
+            keys: if keys.is_empty() {
+                ptr::null_mut()
+            } else {
+                keys.as_ptr() as *mut PWSTR
+            },
+            values: if values.is_empty() {
+                ptr::null_mut()
+            } else {
+                values.as_ptr() as *mut PWSTR
+            },
+            dwInterfaceIndex: 0,
+        };
+
+        Self {
+            instance_name,
+            host_name,
+            key_strings,
+            value_strings,
+            keys,
+            values,
+            instance,
+        }
+    }
+}
+
+struct RegisteredService {
+    fullname: String,
+    instance: usize,
+    interface_index: u32,
+}
+
+impl RegisteredService {
+    fn register(
+        fullname: String,
+        properties: &[(&str, &str)],
+        interface_index: u32,
+    ) -> Result<Self> {
+        let mut data = ServiceData::new(&fullname, properties);
+        let mut request = DNS_SERVICE_REGISTER_REQUEST {
+            Version: DNS_SERVICE_REQUEST_VERSION,
+            InterfaceIndex: interface_index,
+            pServiceInstance: &mut data.instance,
+            pRegisterCompletionCallback: Some(registration_complete),
+            pQueryContext: ptr::null_mut(),
+            unicastEnabled: BOOL(0),
+            ..Default::default()
+        };
+
+        let instance = submit_request(&request, false)
+            .with_context(|| format!("register Windows mDNS service {fullname}"))?;
+
+        // The callback returns a Windows-owned copy, so the temporary UTF-16
+        // strings and pointer arrays can now be released.
+        let _ = (
+            &data.instance_name,
+            &data.host_name,
+            &data.key_strings,
+            &data.value_strings,
+            &data.keys,
+            &data.values,
+        );
+        request.pServiceInstance = ptr::null_mut();
+
+        tracing::info!(
+            service = %fullname,
+            interface_index,
+            port = config::TCP_PORT,
+            "Windows DNS-SD service registration completed"
+        );
+
+        Ok(Self {
+            fullname,
+            instance,
+            interface_index,
+        })
+    }
+
+    fn unregister(self) -> Result<()> {
+        let mut request = DNS_SERVICE_REGISTER_REQUEST {
+            Version: DNS_SERVICE_REQUEST_VERSION,
+            InterfaceIndex: self.interface_index,
+            pServiceInstance: self.instance as *mut DNS_SERVICE_INSTANCE,
+            pRegisterCompletionCallback: Some(registration_complete),
+            pQueryContext: ptr::null_mut(),
+            unicastEnabled: BOOL(0),
+            ..Default::default()
+        };
+
+        let completion_instance = submit_request(&request, true)
+            .with_context(|| format!("unregister Windows mDNS service {}", self.fullname))?;
+
+        unsafe {
+            DnsServiceFreeInstance(completion_instance as *const DNS_SERVICE_INSTANCE);
+        }
+        request.pServiceInstance = ptr::null_mut();
+        tracing::info!(
+            service = %self.fullname,
+            interface_index = self.interface_index,
+            "Windows DNS-SD service unregistered"
+        );
+        Ok(())
+    }
+}
+
 pub struct Advertisement {
-    daemon: ServiceDaemon,
-    fullnames: Vec<String>,
-    monitor_thread: Option<JoinHandle<()>>,
+    registrations: Vec<RegisteredService>,
 }
 
 impl Advertisement {
     pub fn start() -> Result<Self> {
-        let daemon = ServiceDaemon::new().context("create mDNS service daemon")?;
-        // Do not publish discovery records on loopback or the known Clash
-        // Meta virtual adapter. Keep normal physical interfaces enabled so
-        // both Wi-Fi and Ethernet deployments remain discoverable.
-        daemon
-            .disable_interface(IfKind::LoopbackV4)
-            .context("disable IPv4 loopback for AirPlay discovery")?;
-        daemon
-            .disable_interface(IfKind::LoopbackV6)
-            .context("disable IPv6 loopback for AirPlay discovery")?;
-        daemon
-            .disable_interface(IfKind::Name("Meta".to_owned()))
-            .context("disable Meta virtual adapter for AirPlay discovery")?;
-
-        // mdns-sd creates its multicast sockets on the daemon thread. Socket
-        // binding and multicast-interface errors are reported asynchronously
-        // through monitor(), so keep this receiver alive and surface failures.
-        let events = daemon.monitor().context("monitor mDNS service daemon")?;
-        let monitor_thread = thread::Builder::new()
-            .name("airplay-mdns-monitor".to_owned())
-            .spawn(move || {
-                while let Ok(event) = events.recv() {
-                    match event {
-                        DaemonEvent::Error(error) => {
-                            tracing::error!(error = %error, "mDNS daemon reported an error");
-                        }
-                        DaemonEvent::Announce(service, interface) => {
-                            tracing::info!(
-                                service = %service,
-                                interface = %interface,
-                                "mDNS service announcement sent"
-                            );
-                        }
-                        DaemonEvent::Respond(interface) => {
-                            tracing::info!(
-                                interface = %interface,
-                                "mDNS query response sent"
-                            );
-                        }
-                        other => {
-                            tracing::debug!(event = ?other, "mDNS daemon event");
-                        }
-                    }
-                }
-                tracing::debug!("mDNS daemon monitor stopped");
-            })
-            .context("spawn mDNS event monitor thread")?;
-
         let device_id = config::device_id();
         let (public_key, pairing_identifier) = super::pair_setup::discovery_identity()
             .map_err(anyhow::Error::msg)
             .context("load persistent AirPlay discovery identity")?;
+
+        let interface_index = config::wifi_interface_index().unwrap_or_else(|| {
+            tracing::warn!(
+                "No active Wi-Fi adapter was found; Windows DNS-SD will publish on all interfaces"
+            );
+            0
+        });
+
         let airplay_properties = [
             ("deviceid", device_id.as_str()),
             ("features", config::FEATURES),
@@ -82,21 +278,22 @@ impl Advertisement {
             ("pi", pairing_identifier.as_str()),
             ("vv", "2"),
         ];
-        let airplay_service = ServiceInfo::new(
-            config::SERVICE_TYPE,
+        let airplay_fullname = format!(
+            "{}.{}",
             config::SERVICE_NAME,
-            config::HOST_NAME,
-            (),
-            config::TCP_PORT,
-            &airplay_properties[..],
-        )
-        .context("build AirPlay mDNS service record")?
-        .enable_addr_auto();
+            config::SERVICE_TYPE
+        );
 
-        let raop_instance = format!("{}@{}", device_id.replace(':', ""), config::SERVICE_NAME);
-        // RAOP is advertised because iOS versions commonly use it as part of
-        // the Screen Mirroring discovery path. Keep the TXT record minimal:
-        // no codec or encryption support is claimed by this receiver yet.
+        let raop_instance = format!(
+            "{}@{}",
+            device_id.replace(':', ""),
+            config::SERVICE_NAME
+        );
+        let raop_fullname = format!(
+            "{}.{}",
+            raop_instance,
+            config::RAOP_SERVICE_TYPE
+        );
         let raop_properties = [
             ("txtvers", "1"),
             ("am", config::MODEL),
@@ -106,64 +303,54 @@ impl Advertisement {
             ("pk", public_key.as_str()),
             ("vv", "2"),
         ];
-        let raop_service = ServiceInfo::new(
-            config::RAOP_SERVICE_TYPE,
-            &raop_instance,
-            config::HOST_NAME,
-            (),
-            config::TCP_PORT,
-            &raop_properties[..],
-        )
-        .context("build RAOP discovery service record")?
-        .enable_addr_auto();
 
-        let airplay_fullname = airplay_service.get_fullname().to_owned();
-        let raop_fullname = raop_service.get_fullname().to_owned();
+        let mut registrations = Vec::with_capacity(2);
+        registrations.push(RegisteredService::register(
+            airplay_fullname,
+            &airplay_properties,
+            interface_index,
+        )?);
 
-        daemon
-            .register(airplay_service)
-            .context("queue AirPlay mDNS service registration")?;
-        if let Err(error) = daemon.register(raop_service) {
-            let _ = daemon.unregister(&airplay_fullname);
-            let _ = daemon.shutdown();
-            let _ = monitor_thread.join();
-            return Err(error).context("queue RAOP mDNS service registration");
+        match RegisteredService::register(
+            raop_fullname,
+            &raop_properties,
+            interface_index,
+        ) {
+            Ok(registration) => registrations.push(registration),
+            Err(error) => {
+                for registration in registrations.drain(..).rev() {
+                    if let Err(cleanup_error) = registration.unregister() {
+                        tracing::error!(
+                            error = %cleanup_error,
+                            "Could not roll back partial Windows DNS-SD registration"
+                        );
+                    }
+                }
+                return Err(error);
+            }
         }
 
         tracing::info!(
-            airplay_service = %airplay_fullname,
-            raop_service = %raop_fullname,
+            airplay_service = %registrations[0].fullname,
+            raop_service = %registrations[1].fullname,
+            interface_index,
             port = config::TCP_PORT,
             device_id = %device_id,
-            features = config::FEATURES,
-            "AirPlay and RAOP mDNS service registrations queued"
+            "AirPlay and RAOP services registered through Windows DNS-SD"
         );
 
-        Ok(Self {
-            daemon,
-            fullnames: vec![airplay_fullname, raop_fullname],
-            monitor_thread: Some(monitor_thread),
-        })
+        Ok(Self { registrations })
     }
 }
 
 impl Drop for Advertisement {
     fn drop(&mut self) {
-        for fullname in &self.fullnames {
-            if let Err(error) = self.daemon.unregister(fullname) {
-                tracing::warn!(
-                    service = %fullname,
-                    error = %error,
-                    "Could not unregister AirPlay discovery service"
+        for registration in self.registrations.drain(..).rev() {
+            if let Err(error) = registration.unregister() {
+                tracing::error!(
+                    error = %format!("{error:#}"),
+                    "Could not unregister Windows DNS-SD service"
                 );
-            }
-        }
-        if let Err(error) = self.daemon.shutdown() {
-            tracing::warn!(error = %error, "Could not shut down mDNS daemon");
-        }
-        if let Some(monitor_thread) = self.monitor_thread.take() {
-            if monitor_thread.join().is_err() {
-                tracing::warn!("mDNS event monitor thread panicked");
             }
         }
     }
