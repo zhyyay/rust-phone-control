@@ -152,7 +152,7 @@ impl Render for PhoneControlApp {
                         format!("AirPlay status: {}", self.airplay_status)
                     })),
             )
-            .child(pending_airplay_approval_panel(self))
+            .child(pending_airplay_approval_panel(self, cx))
             .child(preview_panel_for_app(self))
             .child(
                 div()
@@ -249,7 +249,10 @@ impl Render for PhoneControlApp {
 }
 
 #[cfg(windows)]
-fn pending_airplay_approval_panel(app: &PhoneControlApp) -> impl IntoElement {
+fn pending_airplay_approval_panel(
+    app: &PhoneControlApp,
+    cx: &Context<PhoneControlApp>,
+) -> impl IntoElement {
     let mut panel = div()
         .flex()
         .flex_col()
@@ -272,24 +275,30 @@ fn pending_airplay_approval_panel(app: &PhoneControlApp) -> impl IntoElement {
                         Button::new("airplay-approve-controller")
                             .primary()
                             .label("Allow this device")
-                            .on_click(|_, _, _| {
-                                match crate::airplay::approve_pending_controller() {
-                                    Ok(true) => tracing::info!("AirPlay device approval saved"),
-                                    Ok(false) => tracing::warn!("No pending AirPlay device to approve"),
-                                    Err(error) => tracing::error!(%error, "Could not approve AirPlay device"),
-                                }
-                            }),
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.airplay_approval_status =
+                                    match crate::airplay::approve_pending_controller() {
+                                        Ok(true) => "Device approved. It can reconnect automatically.".into(),
+                                        Ok(false) => "No pending device to approve.".into(),
+                                        Err(error) => format!("Approval failed: {error}"),
+                                    };
+                                tracing::info!(status = %this.airplay_approval_status, "AirPlay approval action");
+                                cx.notify();
+                            })),
                     )
                     .child(
                         Button::new("airplay-reject-controller")
                             .label("Reject")
-                            .on_click(|_, _, _| {
-                                match crate::airplay::reject_pending_controller() {
-                                    Ok(true) => tracing::info!("AirPlay device denial saved"),
-                                    Ok(false) => tracing::warn!("No pending AirPlay device to reject"),
-                                    Err(error) => tracing::error!(%error, "Could not persist AirPlay device denial"),
-                                }
-                            }),
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.airplay_approval_status =
+                                    match crate::airplay::reject_pending_controller() {
+                                        Ok(true) => "Device blocked. It cannot reconnect until you clear the denial.".into(),
+                                        Ok(false) => "No pending device to reject.".into(),
+                                        Err(error) => format!("Could not block device: {error}"),
+                                    };
+                                tracing::info!(status = %this.airplay_approval_status, "AirPlay rejection action");
+                                cx.notify();
+                            })),
                     ),
             );
     } else {
@@ -313,23 +322,16 @@ fn pending_airplay_approval_panel(app: &PhoneControlApp) -> impl IntoElement {
                         .child(
                             Button::new(format!("airplay-revoke-controller-{index}"))
                                 .label("Revoke")
-                                .on_click(move |_, _, _| {
-                                    match crate::airplay::revoke_trusted_controller(&target) {
-                                        Ok(true) => tracing::info!(
-                                            fingerprint = %target,
-                                            "AirPlay controller authorization revoked"
-                                        ),
-                                        Ok(false) => tracing::warn!(
-                                            fingerprint = %target,
-                                            "AirPlay controller authorization was already absent"
-                                        ),
-                                        Err(error) => tracing::error!(
-                                            fingerprint = %target,
-                                            %error,
-                                            "Could not revoke AirPlay controller authorization"
-                                        ),
-                                    }
-                                }),
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.airplay_approval_status =
+                                        match crate::airplay::revoke_trusted_controller(&target) {
+                                            Ok(true) => format!("Authorization revoked for {target}. Reconnection requires approval."),
+                                            Ok(false) => format!("Authorization for {target} was already absent."),
+                                            Err(error) => format!("Could not revoke {target}: {error}"),
+                                        };
+                                    tracing::info!(status = %this.airplay_approval_status, "AirPlay revoke action");
+                                    cx.notify();
+                                })),
                         ),
                 );
         }
@@ -351,23 +353,16 @@ fn pending_airplay_approval_panel(app: &PhoneControlApp) -> impl IntoElement {
                     .child(
                         Button::new(format!("airplay-clear-denial-{index}"))
                             .label("解除拒绝")
-                            .on_click(move |_, _, _| {
-                                match crate::airplay::clear_denied_controller(&target) {
-                                    Ok(true) => tracing::info!(
-                                        fingerprint = %target,
-                                        "AirPlay controller denial cleared; approval is still required"
-                                    ),
-                                    Ok(false) => tracing::warn!(
-                                        fingerprint = %target,
-                                        "AirPlay controller denial was already absent"
-                                    ),
-                                    Err(error) => tracing::error!(
-                                        fingerprint = %target,
-                                        %error,
-                                        "Could not clear AirPlay controller denial"
-                                    ),
-                                }
-                            }),
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.airplay_approval_status =
+                                    match crate::airplay::clear_denied_controller(&target) {
+                                        Ok(true) => format!("Denial cleared for {target}. The device must still be approved."),
+                                        Ok(false) => format!("Denial for {target} was already absent."),
+                                        Err(error) => format!("Could not clear denial for {target}: {error}"),
+                                    };
+                                tracing::info!(status = %this.airplay_approval_status, "AirPlay clear-denial action");
+                                cx.notify();
+                            })),
                     ),
             );
         }
@@ -380,7 +375,10 @@ fn pending_airplay_approval_panel(app: &PhoneControlApp) -> impl IntoElement {
 }
 
 #[cfg(not(windows))]
-fn pending_airplay_approval_panel(_: &PhoneControlApp) -> impl IntoElement {
+fn pending_airplay_approval_panel(
+    _: &PhoneControlApp,
+    _: &Context<PhoneControlApp>,
+) -> impl IntoElement {
     Label::new("AirPlay device authorization is available on Windows")
 }
 
