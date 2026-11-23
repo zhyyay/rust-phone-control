@@ -53,14 +53,16 @@ fn submit_request(
 ) -> Result<usize> {
     let (sender, receiver) = mpsc::channel();
     let context = Box::into_raw(Box::new(sender)).cast::<c_void>();
+    let mut request = *request;
+    request.pQueryContext = context;
 
     // DNS-SD registration and deregistration complete asynchronously. Keep
     // the callback context alive until Windows invokes the completion callback.
     let status = unsafe {
         if deregister {
-            DnsServiceDeRegister(request, None)
+            DnsServiceDeRegister(&request, None)
         } else {
-            DnsServiceRegister(request, None)
+            DnsServiceRegister(&request, None)
         }
     };
 
