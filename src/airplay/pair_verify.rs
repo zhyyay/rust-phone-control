@@ -119,14 +119,17 @@ impl LegacyPairVerifySession {
         response.extend_from_slice(&accessory_ephemeral);
         response.extend_from_slice(&encrypted_signature);
 
-        Ok((Self {
-            controller_ephemeral,
-            controller_public_key,
-            accessory_ephemeral,
-            shared_secret,
-            aes_key,
-            aes_iv,
-        }, response))
+        Ok((
+            Self {
+                controller_ephemeral,
+                controller_public_key,
+                accessory_ephemeral,
+                shared_secret,
+                aes_key,
+                aes_iv,
+            },
+            response,
+        ))
     }
 
     fn finish(self, body: &[u8]) -> Result<PairVerifyCompletion, String> {
@@ -173,15 +176,19 @@ fn legacy_aes_material(shared_secret: &[u8; 32]) -> ([u8; 16], [u8; 16]) {
 
 /// Apply AES-128-CTR. CTR encryption and decryption are the same operation.
 fn legacy_aes_ctr(key: &[u8; 16], iv: &[u8; 16], input: &[u8]) -> Result<Vec<u8>, String> {
-    let cipher = Aes128::new_from_slice(key)
-        .map_err(|_| "invalid legacy Pair-Verify AES key")?;
+    let cipher = Aes128::new_from_slice(key).map_err(|_| "invalid legacy Pair-Verify AES key")?;
     let mut counter = *iv;
     let mut output = Vec::with_capacity(input.len());
 
     for chunk in input.chunks(16) {
         let mut block = GenericArray::clone_from_slice(&counter);
         cipher.encrypt_block(&mut block);
-        output.extend(chunk.iter().zip(block.iter()).map(|(byte, mask)| byte ^ mask));
+        output.extend(
+            chunk
+                .iter()
+                .zip(block.iter())
+                .map(|(byte, mask)| byte ^ mask),
+        );
 
         for byte in counter.iter_mut().rev() {
             let (next, carry) = byte.overflowing_add(1);
@@ -545,8 +552,7 @@ mod tests {
         assert_eq!(response.len(), 96);
 
         let accessory_ephemeral: [u8; 32] = response[..32].try_into().unwrap();
-        let shared = controller_secret
-            .diffie_hellman(&PublicKey::from(accessory_ephemeral));
+        let shared = controller_secret.diffie_hellman(&PublicKey::from(accessory_ephemeral));
         let (aes_key, aes_iv) = legacy_aes_material(shared.as_bytes());
         let accessory_signature =
             legacy_aes_ctr(&aes_key, &aes_iv, &response[32..]).expect("decrypt M2 signature");
@@ -565,9 +571,8 @@ mod tests {
         controller_message.extend_from_slice(controller_ephemeral.as_bytes());
         controller_message.extend_from_slice(&accessory_ephemeral);
         let signature = controller_identity.sign(&controller_message);
-        let encrypted_signature =
-            legacy_aes_ctr(&aes_key, &aes_iv, &signature.to_bytes())
-                .expect("encrypt controller signature");
+        let encrypted_signature = legacy_aes_ctr(&aes_key, &aes_iv, &signature.to_bytes())
+            .expect("encrypt controller signature");
         let mut m3 = vec![0, 0, 0, 0];
         m3.extend_from_slice(&encrypted_signature);
 
