@@ -241,6 +241,8 @@ impl<'runtime> H264Decoder<'runtime> {
         let com_apartment = ComApartment::initialize()?;
         if width == 0
             || height == 0
+            || width % 2 != 0
+            || height % 2 != 0
             || width > crate::airplay::video::MAX_FRAME_DIMENSION
             || height > crate::airplay::video::MAX_FRAME_DIMENSION
         {
@@ -389,6 +391,8 @@ impl<'runtime> H264Decoder<'runtime> {
             let height = frame_size as u32;
             if width == 0
                 || height == 0
+                || width % 2 != 0
+                || height % 2 != 0
                 || width > crate::airplay::video::MAX_FRAME_DIMENSION
                 || height > crate::airplay::video::MAX_FRAME_DIMENSION
             {
