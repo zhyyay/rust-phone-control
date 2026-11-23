@@ -189,7 +189,11 @@ pub fn parse_message(body: &[u8]) -> Result<FairPlayMessage, FairPlayParseError>
                 challenge_mode: None,
                 challenge: None,
                 key_mode: Some(mode),
-                local_sap: Some(body[16..144].try_into().expect("128-byte FairPlay local SAP")),
+                local_sap: Some(
+                    body[16..144]
+                        .try_into()
+                        .expect("128-byte FairPlay local SAP"),
+                ),
                 key_response: Some(
                     body[144..164]
                         .try_into()
@@ -293,9 +297,9 @@ impl FairPlaySession {
                 if self.key_message.is_some() {
                     return Err("FairPlay key message was already received".to_owned());
                 }
-                let received_mode = message.key_mode.ok_or_else(|| {
-                    "FairPlay M3 did not contain a parsed mode".to_owned()
-                })?;
+                let received_mode = message
+                    .key_mode
+                    .ok_or_else(|| "FairPlay M3 did not contain a parsed mode".to_owned())?;
                 if Some(received_mode) != self.challenge_mode {
                     return Err(format!(
                         "FairPlay M3 mode {received_mode} does not match negotiated mode {:?}",
