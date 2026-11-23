@@ -155,6 +155,15 @@ fn pairing_state() -> Result<&'static Mutex<PairingState>, String> {
 }
 
 /// Return the persisted accessory identifier used by Pair-Verify.
+/// Return the persistent accessory Ed25519 public key used by transient Pair-Setup.
+pub fn accessory_public_key() -> Result<[u8; 32], String> {
+    let lock = pairing_state()?;
+    let state = lock
+        .lock()
+        .map_err(|_| "AirPlay pairing state lock poisoned")?;
+    Ok(state.accessory.public_key())
+}
+
 pub fn accessory_identifier() -> Result<Vec<u8>, String> {
     let lock = pairing_state()?;
     let state = lock
