@@ -274,7 +274,10 @@ pub fn is_controller_public_key_denied(public_key: &[u8; 32]) -> Result<bool, St
     let state = lock
         .lock()
         .map_err(|_| "AirPlay pairing state lock poisoned")?;
-    Ok(state.denied_controllers.values().any(|stored| stored == public_key))
+    Ok(state
+        .denied_controllers
+        .values()
+        .any(|stored| stored == public_key))
 }
 
 /// Persist an explicit denial for a Legacy Pair-Verify controller.
@@ -289,7 +292,11 @@ pub fn deny_legacy_controller(public_key: [u8; 32]) -> Result<(), String> {
     let mut state = lock
         .lock()
         .map_err(|_| "AirPlay pairing state lock poisoned")?;
-    if state.denied_controllers.values().any(|stored| stored == &public_key) {
+    if state
+        .denied_controllers
+        .values()
+        .any(|stored| stored == &public_key)
+    {
         return Ok(());
     }
     let previous_trusted = state.controllers.remove(&identifier);
