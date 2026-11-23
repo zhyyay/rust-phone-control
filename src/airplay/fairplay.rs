@@ -23,6 +23,7 @@ pub struct FairPlayMessage {
     pub challenge_mode: Option<u8>,
     pub challenge: Option<[u8; 128]>,
     pub key_mode: Option<u8>,
+    pub key_label: Option<[u8; 3]>,
     pub local_sap: Option<[u8; 128]>,
     pub key_response: Option<[u8; 20]>,
     pub acknowledgement: Option<[u8; 20]>,
@@ -146,6 +147,7 @@ pub fn parse_message(body: &[u8]) -> Result<FairPlayMessage, FairPlayParseError>
                 challenge_mode: None,
                 challenge: None,
                 key_mode: None,
+                key_label: None,
                 local_sap: None,
                 key_response: None,
                 acknowledgement: None,
@@ -174,6 +176,7 @@ pub fn parse_message(body: &[u8]) -> Result<FairPlayMessage, FairPlayParseError>
                         .expect("128-byte FairPlay challenge"),
                 ),
                 key_mode: None,
+                key_label: None,
                 local_sap: None,
                 key_response: None,
                 acknowledgement: None,
@@ -195,6 +198,11 @@ pub fn parse_message(body: &[u8]) -> Result<FairPlayMessage, FairPlayParseError>
                 challenge_mode: None,
                 challenge: None,
                 key_mode: Some(mode),
+                key_label: Some(
+                    body[13..16]
+                        .try_into()
+                        .expect("three-byte FairPlay M3 label"),
+                ),
                 local_sap: Some(
                     body[16..144]
                         .try_into()
@@ -220,6 +228,7 @@ pub fn parse_message(body: &[u8]) -> Result<FairPlayMessage, FairPlayParseError>
                 challenge_mode: None,
                 challenge: None,
                 key_mode: None,
+                key_label: None,
                 local_sap: None,
                 key_response: None,
                 acknowledgement: Some(
@@ -443,6 +452,28 @@ mod tests {
     }
 
     #[test]
+    fn rejects_duplicate_m1_and_challenge_transitions() {
+        let mut session = FairPlaySession::new();
+        session.accept(parse_message(&initial_message(3)).unwrap()).unwrap();
+        assert!(session
+            .accept(parse_message(&initial_message(3)).unwrap())
+            .unwrap_err()
+            .contains("already received"));
+
+        let mut empty = FairPlaySession::new();
+        assert!(empty
+            .mark_challenge_sent(3, [0x11; 128])
+            .unwrap_err()
+            .contains("before initial"));
+        empty.accept(parse_message(&initial_message(3)).unwrap()).unwrap();
+        empty.mark_challenge_sent(3, [0x11; 128]).unwrap();
+        assert!(empty
+            .mark_challenge_sent(3, [0x22; 128])
+            .unwrap_err()
+            .contains("already sent"));
+    }
+
+    #[test]
     fn rejects_m2_with_unsupported_mode() {
         let mut body = build_m2(3, &[0x5a; 128]);
         body[13] = 4;
@@ -494,6 +525,7 @@ mod tests {
         assert_eq!(message.phase, MessagePhase::KeyMessage);
         assert_eq!(message.initial_parameters, None);
         assert_eq!(message.key_mode, Some(3));
+        assert_eq!(message.key_label, Some([0x8f, 0x1a, 0x9c]));
         assert_eq!(message.local_sap, Some([0u8; 128]));
         assert_eq!(message.key_response, Some([0u8; 20]));
         assert_eq!(message.body.len(), 164);
