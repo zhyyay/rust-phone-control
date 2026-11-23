@@ -5,18 +5,14 @@
 //! it does not bind UDP 5353 itself.
 
 use anyhow::{Context, Result, anyhow, bail};
-use std::{
-    ffi::c_void,
-    ptr,
-    sync::mpsc,
-};
+use std::{ffi::c_void, ptr, sync::mpsc};
 use windows_062::{
-    core::PWSTR,
     Win32::Foundation::{BOOL, DNS_REQUEST_PENDING},
     Win32::NetworkManagement::Dns::{
-        DnsServiceDeRegister, DnsServiceFreeInstance, DnsServiceRegister,
-        DNS_SERVICE_INSTANCE, DNS_SERVICE_REGISTER_REQUEST,
+        DNS_SERVICE_INSTANCE, DNS_SERVICE_REGISTER_REQUEST, DnsServiceDeRegister,
+        DnsServiceFreeInstance, DnsServiceRegister,
     },
+    core::PWSTR,
 };
 
 use super::config;
@@ -38,19 +34,14 @@ unsafe extern "system" fn registration_complete(
     }
 
     // The boxed sender is transferred to this one-shot Windows callback.
-    let sender = unsafe {
-        Box::from_raw(context.cast_mut().cast::<mpsc::Sender<Completion>>())
-    };
+    let sender = unsafe { Box::from_raw(context.cast_mut().cast::<mpsc::Sender<Completion>>()) };
     let _ = sender.send(Completion {
         status,
         instance: instance as usize,
     });
 }
 
-fn submit_request(
-    request: &DNS_SERVICE_REGISTER_REQUEST,
-    deregister: bool,
-) -> Result<usize> {
+fn submit_request(request: &DNS_SERVICE_REGISTER_REQUEST, deregister: bool) -> Result<usize> {
     let (sender, receiver) = mpsc::channel();
     let context = Box::into_raw(Box::new(sender)).cast::<c_void>();
     let mut request = *request;
@@ -73,7 +64,11 @@ fn submit_request(
         }
         bail!(
             "Windows DNS-SD {} request failed immediately: 0x{status:08X}",
-            if deregister { "deregistration" } else { "registration" }
+            if deregister {
+                "deregistration"
+            } else {
+                "registration"
+            }
         );
     }
 
@@ -83,9 +78,7 @@ fn submit_request(
     if completion.status != 0 {
         if completion.instance != 0 {
             unsafe {
-                DnsServiceFreeInstance(
-                    completion.instance as *const DNS_SERVICE_INSTANCE,
-                );
+                DnsServiceFreeInstance(completion.instance as *const DNS_SERVICE_INSTANCE);
             }
         }
         bail!(
@@ -116,13 +109,9 @@ struct ServiceData {
 }
 
 impl ServiceData {
-    fn new(
-        instance_name: &str,
-        properties: &[(&str, &str)],
-    ) -> Self {
+    fn new(instance_name: &str, properties: &[(&str, &str)]) -> Self {
         let mut instance_name = wide(instance_name);
-        let host = std::env::var("COMPUTERNAME")
-            .unwrap_or_else(|_| "rust-phone-control".to_owned());
+        let host = std::env::var("COMPUTERNAME").unwrap_or_else(|_| "rust-phone-control".to_owned());
         let mut host_name = wide(&format!("{host}.local"));
         let key_strings = properties
             .iter()
@@ -288,11 +277,7 @@ impl Advertisement {
             config::SERVICE_TYPE.trim_end_matches('.')
         );
 
-        let raop_instance = format!(
-            "{}@{}",
-            device_id.replace(':', ""),
-            config::SERVICE_NAME
-        );
+        let raop_instance = format!("{}@{}", device_id.replace(':', ""), config::SERVICE_NAME);
         let raop_fullname = format!(
             "{}.{}",
             raop_instance,
@@ -315,11 +300,7 @@ impl Advertisement {
             interface_index,
         )?);
 
-        match RegisteredService::register(
-            raop_fullname,
-            &raop_properties,
-            interface_index,
-        ) {
+        match RegisteredService::register(raop_fullname, &raop_properties, interface_index) {
             Ok(registration) => registrations.push(registration),
             Err(error) => {
                 for registration in registrations.drain(..).rev() {
