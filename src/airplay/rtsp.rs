@@ -15,6 +15,8 @@ use std::sync::{
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
+use rand::{RngCore, rngs::OsRng};
+
 use super::{
     config,
     event::EventChannel,
@@ -540,32 +542,71 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
                     "AirPlay FairPlay request header"
                 );
                 match super::fairplay::parse_message(&request.body) {
-                    Ok(message) => match fairplay_session.accept(message) {
-                        Ok(state) => {
-                            tracing::info!(
-                                ?state,
-                                sender_phase1_selector = ?fairplay_session.initial_selector(),
-                                "AirPlay FairPlay setup message accepted"
-                            );
-                            let response = format!(
-                                "RTSP/1.0 501 Not Implemented\r\nCSeq: {}\r\nServer: RustPhoneControl/0.1\r\nContent-Length: 0\r\n\r\n",
-                                request.cseq
-                            );
-                            write_response(&mut stream, &response, 501)?;
+                    Ok(message) => {
+                        let phase = message.phase;
+                        match fairplay_session.accept(message) {
+                            Ok(state) => {
+                                tracing::info!(
+                                    ?state,
+                                    sender_phase1_selector = ?fairplay_session.initial_selector(),
+                                    "AirPlay FairPlay setup message accepted"
+                                );
+
+                                if phase == super::fairplay::MessagePhase::Initial {
+                                    // Mode 3 is the only mode covered by the independently
+                                    // documented interoperability implementation. The M2
+                                    // challenge is fresh for every RTSP session.
+                                    const MODE: u8 = 3;
+                                    let mut challenge = [0u8; 128];
+                                    let mut rng = OsRng;
+                                    rng.fill_bytes(&mut challenge);
+                                    let response_body =
+                                        super::fairplay::build_m2(MODE, &challenge);
+                                    fairplay_session
+                                        .mark_challenge_sent(MODE, challenge)
+                                        .map_err(|reason| {
+                                            io::Error::new(io::ErrorKind::InvalidData, reason)
+                                        })?;
+
+                                    let header = format!(
+                                        "RTSP/1.0 200 OK\\r\\nCSeq: {}\\r\\nServer: RustPhoneControl/0.1\\r\\nContent-Type: application/octet-stream\\r\\nContent-Length: {}\\r\\n\\r\\n",
+                                        request.cseq,
+                                        response_body.len()
+                                    );
+                                    stream.write_all(header.as_bytes())?;
+                                    stream.write_all(&response_body)?;
+                                    stream.flush()?;
+                                    tracing::info!(
+                                        mode = MODE,
+                                        challenge_bytes = challenge.len(),
+                                        response_bytes = response_body.len(),
+                                        "AirPlay FairPlay M2 challenge sent"
+                                    );
+                                } else {
+                                    tracing::warn!(
+                                        "AirPlay FairPlay M3 received but independent SAP verification is not implemented"
+                                    );
+                                    let response = format!(
+                                        "RTSP/1.0 501 Not Implemented\\r\\nCSeq: {}\\r\\nServer: RustPhoneControl/0.1\\r\\nContent-Length: 0\\r\\n\\r\\n",
+                                        request.cseq
+                                    );
+                                    write_response(&mut stream, &response, 501)?;
+                                }
+                            }
+                            Err(reason) => {
+                                tracing::warn!(%reason, "AirPlay FairPlay setup message rejected by session state");
+                                let response = format!(
+                                    "RTSP/1.0 400 Bad Request\\r\\nCSeq: {}\\r\\nServer: RustPhoneControl/0.1\\r\\nContent-Length: 0\\r\\n\\r\\n",
+                                    request.cseq
+                                );
+                                write_response(&mut stream, &response, 400)?;
+                            }
                         }
-                        Err(reason) => {
-                            tracing::warn!(%reason, "AirPlay FairPlay setup message rejected by session state");
-                            let response = format!(
-                                "RTSP/1.0 400 Bad Request\r\nCSeq: {}\r\nServer: RustPhoneControl/0.1\r\nContent-Length: 0\r\n\r\n",
-                                request.cseq
-                            );
-                            write_response(&mut stream, &response, 400)?;
-                        }
-                    },
+                    }
                     Err(error) => {
                         tracing::warn!(%error, "AirPlay FairPlay setup framing rejected");
                         let response = format!(
-                            "RTSP/1.0 400 Bad Request\r\nCSeq: {}\r\nServer: RustPhoneControl/0.1\r\nContent-Length: 0\r\n\r\n",
+                            "RTSP/1.0 400 Bad Request\\r\\nCSeq: {}\\r\\nServer: RustPhoneControl/0.1\\r\\nContent-Length: 0\\r\\n\\r\\n",
                             request.cseq
                         );
                         write_response(&mut stream, &response, 400)?;
