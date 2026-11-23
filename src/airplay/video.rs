@@ -51,6 +51,9 @@ pub enum AvcConfigError {
     TruncatedNal,
     OutputTooLarge,
     InvalidSps,
+    InvalidPps,
+    InvalidSpsNalType(u8),
+    InvalidPpsNalType(u8),
     SizeOverflow,
 }
 
@@ -63,6 +66,7 @@ impl std::fmt::Display for AvcConfigError {
 impl std::error::Error for AvcConfigError {}
 
 const MAX_ANNEX_B_ACCESS_UNIT_BYTES: usize = 64 * 1024 * 1024;
+const MAX_AVC_PARAMETER_SETS: usize = 32;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EncryptedAccessUnitError {
@@ -108,6 +112,9 @@ impl AvcConfiguration {
         if sps_count == 0 {
             return Err(AvcConfigError::MissingSps);
         }
+        if sps_count > MAX_AVC_PARAMETER_SETS {
+            return Err(AvcConfigError::TooManyParameterSets);
+        }
         let mut sequence_parameter_sets = Vec::with_capacity(sps_count);
         for _ in 0..sps_count {
             if data.len().saturating_sub(offset) < 2 {
@@ -124,7 +131,12 @@ impl AvcConfiguration {
             if end > data.len() {
                 return Err(AvcConfigError::TruncatedSps);
             }
-            sequence_parameter_sets.push(data[offset..end].to_vec());
+            let nal = &data[offset..end];
+            let nal_type = nal[0] & 0x1f;
+            if nal_type != 7 {
+                return Err(AvcConfigError::InvalidSpsNalType(nal_type));
+            }
+            sequence_parameter_sets.push(nal.to_vec());
             offset = end;
         }
 
@@ -135,6 +147,9 @@ impl AvcConfiguration {
         offset += 1;
         if pps_count == 0 {
             return Err(AvcConfigError::MissingPps);
+        }
+        if pps_count > MAX_AVC_PARAMETER_SETS {
+            return Err(AvcConfigError::TooManyParameterSets);
         }
         let mut picture_parameter_sets = Vec::with_capacity(pps_count);
         for _ in 0..pps_count {
@@ -152,7 +167,12 @@ impl AvcConfiguration {
             if end > data.len() {
                 return Err(AvcConfigError::TruncatedPps);
             }
-            picture_parameter_sets.push(data[offset..end].to_vec());
+            let nal = &data[offset..end];
+            let nal_type = nal[0] & 0x1f;
+            if nal_type != 8 {
+                return Err(AvcConfigError::InvalidPpsNalType(nal_type));
+            }
+            picture_parameter_sets.push(nal.to_vec());
             offset = end;
         }
 
@@ -1255,6 +1275,30 @@ mod tests {
         assert_eq!(
             AvcConfiguration::parse(&missing_pps),
             Err(AvcConfigError::MissingPps)
+        );
+
+        let wrong_sps_type = [1, 0x64, 0, 0x1f, 0xff, 0xe1, 0, 1, 0x68, 1, 0, 1, 0x68];
+        assert_eq!(
+            AvcConfiguration::parse(&wrong_sps_type),
+            Err(AvcConfigError::InvalidSpsNalType(8))
+        );
+
+        let wrong_pps_type = [1, 0x64, 0, 0x1f, 0xff, 0xe1, 0, 1, 0x67, 1, 0, 1, 0x67];
+        assert_eq!(
+            AvcConfiguration::parse(&wrong_pps_type),
+            Err(AvcConfigError::InvalidPpsNalType(7))
+        );
+
+        let too_many_pps = {
+            let mut bytes = vec![1, 0x64, 0, 0x1f, 0xff, 0xe1, 0, 1, 0x67, 33];
+            for _ in 0..33 {
+                bytes.extend_from_slice(&[0, 1, 0x68]);
+            }
+            bytes
+        };
+        assert_eq!(
+            AvcConfiguration::parse(&too_many_pps),
+            Err(AvcConfigError::TooManyParameterSets)
         );
 
         let config = [
