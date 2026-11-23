@@ -3,9 +3,9 @@
 //! Legacy AirPlay uses a 68-byte binary ECDH/Ed25519 exchange with AES-CTR;
 //! HAP Pair-Verify uses the TLV8/ChaCha20-Poly1305 exchange.
 
-use aes::cipher::{BlockEncrypt, KeyInit as AesKeyInit, generic_array::GenericArray};
+use aes::cipher::{BlockEncrypt, KeyInit, generic_array::GenericArray};
 use aes::Aes128;
-use chacha20poly1305::aead::{Aead, KeyInit};
+use chacha20poly1305::aead::Aead;
 use chacha20poly1305::{ChaCha20Poly1305, Nonce};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use hkdf::Hkdf;
@@ -33,12 +33,6 @@ struct HapPairVerifySession {
     accessory_ephemeral: [u8; 32],
     shared_secret: [u8; 32],
     encryption_key: [u8; 32],
-}
-
-/// Values made available only after the controller's M3 signature is verified.
-pub(super) struct PairVerifyCompletion {
-    pub(super) response: Vec<u8>,
-    pub(super) shared_secret: [u8; 32],
 }
 
 enum PairVerifyMode {
@@ -530,6 +524,56 @@ mod tests {
                 .iter()
                 .any(|field| field.kind == STATE && field.value == [4])
         );
+    }
+
+    #[test]
+    fn completes_legacy_binary_pair_verify_exchange() {
+        use super::{LegacyPairVerifySession, legacy_aes_ctr, legacy_aes_material};
+        use ed25519_dalek::Signer;
+
+        let mut controller_secret_bytes = [0u8; 32];
+        OsRng.fill_bytes(&mut controller_secret_bytes);
+        let controller_secret = StaticSecret::from(controller_secret_bytes);
+        let controller_ephemeral = PublicKey::from(&controller_secret);
+        let controller_identity = SigningKey::generate(&mut OsRng);
+        let controller_public = controller_identity.verifying_key().to_bytes();
+
+        let mut m1 = vec![1, 0, 0, 0];
+        m1.extend_from_slice(controller_ephemeral.as_bytes());
+        m1.extend_from_slice(&controller_public);
+        let (session, response) = LegacyPairVerifySession::start(&m1).expect("legacy M2");
+        assert_eq!(response.len(), 96);
+
+        let accessory_ephemeral: [u8; 32] = response[..32].try_into().unwrap();
+        let shared = controller_secret
+            .diffie_hellman(&PublicKey::from(accessory_ephemeral));
+        let (aes_key, aes_iv) = legacy_aes_material(shared.as_bytes());
+        let accessory_signature =
+            legacy_aes_ctr(&aes_key, &aes_iv, &response[32..]).expect("decrypt M2 signature");
+        let mut accessory_message = Vec::new();
+        accessory_message.extend_from_slice(&accessory_ephemeral);
+        accessory_message.extend_from_slice(controller_ephemeral.as_bytes());
+        VerifyingKey::from_bytes(&pair_setup::test_accessory_public_key())
+            .unwrap()
+            .verify(
+                &accessory_message,
+                &Signature::from_slice(&accessory_signature).unwrap(),
+            )
+            .expect("verify accessory signature");
+
+        let mut controller_message = Vec::new();
+        controller_message.extend_from_slice(controller_ephemeral.as_bytes());
+        controller_message.extend_from_slice(&accessory_ephemeral);
+        let signature = controller_identity.sign(&controller_message);
+        let encrypted_signature =
+            legacy_aes_ctr(&aes_key, &aes_iv, &signature.to_bytes())
+                .expect("encrypt controller signature");
+        let mut m3 = vec![0, 0, 0, 0];
+        m3.extend_from_slice(&encrypted_signature);
+
+        let completion = session.finish(&m3).expect("legacy M4");
+        assert!(completion.response.is_empty());
+        assert_eq!(completion.shared_secret, *shared.as_bytes());
     }
 
     #[test]
