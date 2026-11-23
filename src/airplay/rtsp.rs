@@ -562,7 +562,7 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
                                 };
                                 tracing::warn!(%reason, "AirPlay FairPlay request cannot be completed");
                                 let response = format!(
-                                    "RTSP/1.0 501 Not Implemented\\r\\nCSeq: {}\\r\\nServer: RustPhoneControl/0.1\\r\\nContent-Length: 0\\r\\n\\r\\n",
+                                    "RTSP/1.0 501 Not Implemented\r\nCSeq: {}\r\nServer: RustPhoneControl/0.1\r\nContent-Length: 0\r\n\r\n",
                                     request.cseq
                                 );
                                 write_response(&mut stream, &response, 501)?;
