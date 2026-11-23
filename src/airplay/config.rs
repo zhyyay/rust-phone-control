@@ -3,7 +3,6 @@
 pub const SERVICE_TYPE: &str = "_airplay._tcp.local.";
 pub const RAOP_SERVICE_TYPE: &str = "_raop._tcp.local.";
 pub const SERVICE_NAME: &str = "Rust Phone Control";
-pub const HOST_NAME: &str = "rust-phone-control.local.";
 pub const TCP_PORT: u16 = 7000;
 pub const MODEL: &str = "RustPhoneControl1,1";
 pub const SOURCE_VERSION: &str = "1.0";
