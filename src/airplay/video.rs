@@ -54,6 +54,9 @@ pub enum AvcConfigError {
     InvalidPps,
     InvalidSpsNalType(u8),
     InvalidPpsNalType(u8),
+    ForbiddenSpsNalHeader,
+    ForbiddenPpsNalHeader,
+    InvalidSpsExtensionNalType(u8),
     SizeOverflow,
 }
 
@@ -132,6 +135,9 @@ impl AvcConfiguration {
                 return Err(AvcConfigError::TruncatedSps);
             }
             let nal = &data[offset..end];
+            if nal[0] & 0x80 != 0 {
+                return Err(AvcConfigError::ForbiddenSpsNalHeader);
+            }
             let nal_type = nal[0] & 0x1f;
             if nal_type != 7 {
                 return Err(AvcConfigError::InvalidSpsNalType(nal_type));
@@ -168,6 +174,9 @@ impl AvcConfiguration {
                 return Err(AvcConfigError::TruncatedPps);
             }
             let nal = &data[offset..end];
+            if nal[0] & 0x80 != 0 {
+                return Err(AvcConfigError::ForbiddenPpsNalHeader);
+            }
             let nal_type = nal[0] & 0x1f;
             if nal_type != 8 {
                 return Err(AvcConfigError::InvalidPpsNalType(nal_type));
@@ -210,6 +219,10 @@ impl AvcConfiguration {
                     .ok_or(AvcConfigError::SizeOverflow)?;
                 if end > data.len() {
                     return Err(AvcConfigError::TruncatedSps);
+                }
+                let nal_type = data[offset] & 0x1f;
+                if data[offset] & 0x80 != 0 || nal_type != 13 {
+                    return Err(AvcConfigError::InvalidSpsExtensionNalType(nal_type));
                 }
                 offset = end;
             }
@@ -1287,6 +1300,18 @@ mod tests {
         assert_eq!(
             AvcConfiguration::parse(&wrong_pps_type),
             Err(AvcConfigError::InvalidPpsNalType(7))
+        );
+
+        let forbidden_sps_header = [1, 0x64, 0, 0x1f, 0xff, 0xe1, 0, 1, 0xe7, 1, 0, 1, 0x68];
+        assert_eq!(
+            AvcConfiguration::parse(&forbidden_sps_header),
+            Err(AvcConfigError::ForbiddenSpsNalHeader)
+        );
+
+        let forbidden_pps_header = [1, 0x64, 0, 0x1f, 0xff, 0xe1, 0, 1, 0x67, 1, 0, 1, 0xe8];
+        assert_eq!(
+            AvcConfiguration::parse(&forbidden_pps_header),
+            Err(AvcConfigError::ForbiddenPpsNalHeader)
         );
 
         let too_many_pps = {
