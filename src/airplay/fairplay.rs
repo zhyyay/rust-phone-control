@@ -9,7 +9,9 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MessagePhase {
     Initial = 1,
+    Challenge = 2,
     KeyMessage = 3,
+    Acknowledgement = 4,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -28,7 +30,10 @@ pub enum FairPlayParseError {
     UnsupportedPhase(u8),
     InvalidPayloadLength { declared: usize, actual: usize },
     InvalidInitialLength(usize),
+    InvalidChallengeLength(usize),
     InvalidKeyMessageLength(usize),
+    InvalidAcknowledgementLength(usize),
+    UnexpectedReceiverPhase(u8),
 }
 
 impl std::fmt::Display for FairPlayParseError {
@@ -54,11 +59,20 @@ impl std::fmt::Display for FairPlayParseError {
                     "FairPlay initial message must be 16 bytes, got {length}"
                 )
             }
+            Self::InvalidChallengeLength(length) => {
+                write!(formatter, "FairPlay challenge message must be 142 bytes, got {length}")
+            }
             Self::InvalidKeyMessageLength(length) => {
                 write!(
                     formatter,
                     "FairPlay key message must be 164 bytes, got {length}"
                 )
+            }
+            Self::InvalidAcknowledgementLength(length) => {
+                write!(formatter, "FairPlay acknowledgement must be 32 bytes, got {length}")
+            }
+            Self::UnexpectedReceiverPhase(phase) => {
+                write!(formatter, "FairPlay receiver-originated phase {phase} cannot be accepted as a sender message")
             }
         }
     }
@@ -101,6 +115,16 @@ pub fn parse_message(body: &[u8]) -> Result<FairPlayMessage, FairPlayParseError>
                 body: body.to_vec(),
             })
         }
+        2 => {
+            if body.len() != 142 {
+                return Err(FairPlayParseError::InvalidChallengeLength(body.len()));
+            }
+            Ok(FairPlayMessage {
+                phase: MessagePhase::Challenge,
+                capabilities: None,
+                body: body.to_vec(),
+            })
+        }
         3 => {
             if body.len() != 164 {
                 return Err(FairPlayParseError::InvalidKeyMessageLength(body.len()));
@@ -111,8 +135,47 @@ pub fn parse_message(body: &[u8]) -> Result<FairPlayMessage, FairPlayParseError>
                 body: body.to_vec(),
             })
         }
+        4 => {
+            if body.len() != 32 {
+                return Err(FairPlayParseError::InvalidAcknowledgementLength(body.len()));
+            }
+            Ok(FairPlayMessage {
+                phase: MessagePhase::Acknowledgement,
+                capabilities: None,
+                body: body.to_vec(),
+            })
+        }
         other => Err(FairPlayParseError::UnsupportedPhase(other)),
     }
+}
+
+
+/// Build the receiver's 142-byte phase-2 challenge record.
+///
+/// This only frames caller-provided protocol material. It does not generate a
+/// valid FairPlay challenge or perform the proprietary SAP authentication.
+pub fn build_m2(mode: u8, challenge: &[u8; 128]) -> [u8; 142] {
+    let mut record = [0u8; 142];
+    record[..4].copy_from_slice(b"FPLY");
+    record[4..8].copy_from_slice(&[3, 1, 2, 0]);
+    record[8..12].copy_from_slice(&130u32.to_be_bytes());
+    record[12] = 2;
+    record[13] = mode;
+    record[14..].copy_from_slice(challenge);
+    record
+}
+
+/// Build the receiver's 32-byte phase-4 acknowledgement record.
+///
+/// The caller must only invoke this after independently validating phase 3.
+/// Framing an acknowledgement is not proof that the sender was authenticated.
+pub fn build_m4(acknowledgement: &[u8; 20]) -> [u8; 32] {
+    let mut record = [0u8; 32];
+    record[..4].copy_from_slice(b"FPLY");
+    record[4..8].copy_from_slice(&[3, 1, 4, 0]);
+    record[8..12].copy_from_slice(&20u32.to_be_bytes());
+    record[12..].copy_from_slice(acknowledgement);
+    record
 }
 
 #[derive(Debug, Default)]
@@ -134,6 +197,9 @@ impl FairPlaySession {
                 }
                 self.initial_capabilities = message.capabilities;
                 Ok(FairPlayState::AwaitingKeyMessage)
+            }
+            MessagePhase::Challenge | MessagePhase::Acknowledgement => {
+                return Err(format!("FairPlay phase {} is receiver-originated", message.phase as u8));
             }
             MessagePhase::KeyMessage => {
                 if self.initial_capabilities.is_none() {
@@ -188,6 +254,37 @@ mod tests {
         body[6] = 3;
         body[8..12].copy_from_slice(&152u32.to_be_bytes());
         body
+    }
+
+
+    #[test]
+    fn builds_protocol_framing_for_m2_and_m4() {
+        let challenge = [0x5au8; 128];
+        let m2 = build_m2(3, &challenge);
+        assert_eq!(&m2[..12], b"FPLY\x03\x01\x02\x00\x00\x00\x00\x82");
+        assert_eq!(m2[12], 2);
+        assert_eq!(m2[13], 3);
+        assert_eq!(&m2[14..], &challenge);
+        assert_eq!(parse_message(&m2).unwrap().phase, MessagePhase::Challenge);
+
+        let acknowledgement = [0xa5u8; 20];
+        let m4 = build_m4(&acknowledgement);
+        assert_eq!(&m4[..12], b"FPLY\x03\x01\x04\x00\x00\x00\x00\x14");
+        assert_eq!(&m4[12..], &acknowledgement);
+        assert_eq!(
+            parse_message(&m4).unwrap().phase,
+            MessagePhase::Acknowledgement
+        );
+    }
+
+    #[test]
+    fn rejects_receiver_originated_records_as_inbound_session_messages() {
+        let mut session = FairPlaySession::new();
+        let m2 = parse_message(&build_m2(3, &[0u8; 128])).unwrap();
+        assert_eq!(
+            session.accept(m2).unwrap_err(),
+            "FairPlay phase 2 is receiver-originated"
+        );
     }
 
     #[test]
