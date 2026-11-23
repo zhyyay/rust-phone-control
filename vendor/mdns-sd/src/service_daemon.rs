@@ -3574,7 +3574,11 @@ impl Zeroconf {
                 // PTR answers are shared records: defer the response unless this
                 // is a legacy-unicast (source port differs from ours) or probe-defense
                 // (records in the Authority Section) query.
-                if !legacy_querier && msg.num_authorities() == 0 {
+                let requests_qu_unicast = msg
+                    .questions()
+                    .iter()
+                    .any(|question| question.requests_unicast_response());
+                if !legacy_querier && !requests_qu_unicast && msg.num_authorities() == 0 {
                     delayed = true;
                 }
                 for service in self.my_services.values() {
