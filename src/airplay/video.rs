@@ -35,6 +35,8 @@ pub enum AvcConfigError {
     UnsupportedVersion(u8),
     InvalidReservedBits,
     UnsupportedNalLengthSize,
+    MissingSps,
+    MissingPps,
     TruncatedSpsCount,
     TruncatedSpsLength,
     EmptySps,
@@ -103,6 +105,9 @@ impl AvcConfiguration {
 
         let mut offset = 6usize;
         let sps_count = usize::from(data[5] & 0x1f);
+        if sps_count == 0 {
+            return Err(AvcConfigError::MissingSps);
+        }
         let mut sequence_parameter_sets = Vec::with_capacity(sps_count);
         for _ in 0..sps_count {
             if data.len().saturating_sub(offset) < 2 {
@@ -128,6 +133,9 @@ impl AvcConfiguration {
         }
         let pps_count = usize::from(data[offset]);
         offset += 1;
+        if pps_count == 0 {
+            return Err(AvcConfigError::MissingPps);
+        }
         let mut picture_parameter_sets = Vec::with_capacity(pps_count);
         for _ in 0..pps_count {
             if data.len().saturating_sub(offset) < 2 {
@@ -1235,6 +1243,18 @@ mod tests {
         assert_eq!(
             AvcConfiguration::parse(&invalid_reserved),
             Err(AvcConfigError::InvalidReservedBits)
+        );
+
+        let missing_sps = [1, 0x64, 0, 0x1f, 0xff, 0xe0, 0];
+        assert_eq!(
+            AvcConfiguration::parse(&missing_sps),
+            Err(AvcConfigError::MissingSps)
+        );
+
+        let missing_pps = [1, 0x64, 0, 0x1f, 0xff, 0xe1, 0, 1, 0x67, 0];
+        assert_eq!(
+            AvcConfiguration::parse(&missing_pps),
+            Err(AvcConfigError::MissingPps)
         );
 
         let config = [
