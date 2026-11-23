@@ -451,11 +451,17 @@ pub fn handle_m5(session_key: &[u8; 64], encrypted_data: &[u8]) -> Result<Vec<u8
         .encrypt(Nonce::from_slice(NONCE_M6), inner.as_ref())
         .map_err(|_| "Pair-Setup M6 encryption failed")?;
 
-    // Persist a candidate snapshot first. The registry is rolled back on failure.
+    // Explicit Pair-Setup with the setup code may re-authorize a previously
+    // denied controller. Persist a candidate snapshot and roll back on failure.
+    let previous_denied = state.denied_controllers.clone();
+    state
+        .denied_controllers
+        .retain(|_, denied_key| denied_key != &controller_public_key);
     let previous = state
         .controllers
         .insert(controller_id.to_vec(), controller_public_key);
     if let Err(error) = state.persist() {
+        state.denied_controllers = previous_denied;
         match previous {
             Some(public_key) => {
                 state.controllers.insert(controller_id.to_vec(), public_key);
