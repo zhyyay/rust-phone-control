@@ -57,9 +57,8 @@ impl StoredPairingState {
     /// Revoke a trusted controller by its SHA-256 public-key fingerprint.
     pub fn revoke_controller(&mut self, fingerprint: &[u8; 32]) -> bool {
         let previous_len = self.controllers.len();
-        self.controllers.retain(|controller| {
-            controller.identifier.as_slice() != fingerprint
-        });
+        self.controllers
+            .retain(|controller| controller.identifier.as_slice() != fingerprint);
         self.controllers.len() != previous_len
     }
 
@@ -230,7 +229,10 @@ mod tests {
         assert!(store.trust_controller(key).unwrap());
         assert!(store.is_controller_trusted(&key));
         assert!(!store.trust_controller(key).unwrap());
-        assert_eq!(store.controllers[0].identifier, controller_fingerprint(&key));
+        assert_eq!(
+            store.controllers[0].identifier,
+            controller_fingerprint(&key)
+        );
         store.validate().unwrap();
     }
 
