@@ -128,7 +128,7 @@ pub fn parse_message(body: &[u8]) -> Result<FairPlayMessage, FairPlayParseError>
             }
             Ok(FairPlayMessage {
                 phase: MessagePhase::KeyMessage,
-                capabilities: None,
+                initial_selector: None,
                 body: body.to_vec(),
             })
         }
@@ -241,7 +241,6 @@ impl FairPlaySession {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FairPlayState {
     AwaitingChallenge,
-    AwaitingKeyMessage,
     KeyMessageReceived,
 }
 
@@ -383,6 +382,11 @@ mod tests {
             FairPlayState::AwaitingChallenge
         );
         assert_eq!(session.initial_selector(), Some(3));
+        let key_before_challenge = parse_message(&key_message()).expect("key before challenge");
+        assert_eq!(
+            session.accept(key_before_challenge).unwrap_err(),
+            "FairPlay key message received before receiver challenge"
+        );
         session.mark_challenge_sent().expect("send M2 challenge");
 
         let duplicate_initial = parse_message(&initial_message(3)).expect("duplicate initial");
@@ -392,7 +396,6 @@ mod tests {
         );
 
         let key = parse_message(&key_message()).expect("key message");
-        session.mark_challenge_sent().expect("send M2 challenge");
         assert_eq!(
             session.accept(key).expect("accept key"),
             FairPlayState::KeyMessageReceived
