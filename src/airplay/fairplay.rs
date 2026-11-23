@@ -17,8 +17,7 @@ pub enum MessagePhase {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FairPlayMessage {
     pub phase: MessagePhase,
-    /// All four bytes of the phase-1 payload. Their individual meanings are
-    /// intentionally kept opaque until target-device negotiation is verified.
+    /// Raw four-byte M1 payload. Byte 14 is the sender capability mask.
     pub initial_parameters: Option<[u8; 4]>,
     pub initial_capabilities: Option<u8>,
     pub challenge_mode: Option<u8>,
@@ -87,9 +86,15 @@ impl std::fmt::Display for FairPlayParseError {
                     "FairPlay acknowledgement must be 32 bytes, got {length}"
                 )
             }
-            Self::InvalidInitialPayload => write!(formatter, "invalid FairPlay M1 capability payload"),
-            Self::InvalidChallengePayload => write!(formatter, "invalid FairPlay M2 challenge payload"),
-            Self::UnsupportedKeyMessageMode(mode) => write!(formatter, "unsupported FairPlay M3 mode {mode}"),
+            Self::InvalidInitialPayload => {
+                write!(formatter, "invalid FairPlay M1 capability payload")
+            }
+            Self::InvalidChallengePayload => {
+                write!(formatter, "invalid FairPlay M2 challenge payload")
+            }
+            Self::UnsupportedKeyMessageMode(mode) => {
+                write!(formatter, "unsupported FairPlay M3 mode {mode}")
+            }
         }
     }
 }
@@ -130,7 +135,11 @@ pub fn parse_message(body: &[u8]) -> Result<FairPlayMessage, FairPlayParseError>
             }
             Ok(FairPlayMessage {
                 phase: MessagePhase::Initial,
-                initial_parameters: Some(body[12..16].try_into().expect("four-byte initial payload")),
+                initial_parameters: Some(
+                    body[12..16]
+                        .try_into()
+                        .expect("four-byte initial payload"),
+                ),
                 initial_capabilities: Some(body[14]),
                 challenge_mode: None,
                 challenge: None,
@@ -153,7 +162,11 @@ pub fn parse_message(body: &[u8]) -> Result<FairPlayMessage, FairPlayParseError>
                 initial_parameters: None,
                 initial_capabilities: None,
                 challenge_mode: Some(body[13]),
-                challenge: Some(body[14..142].try_into().expect("128-byte FairPlay challenge")),
+                challenge: Some(
+                    body[14..142]
+                        .try_into()
+                        .expect("128-byte FairPlay challenge"),
+                ),
                 key_mode: None,
                 local_sap: None,
                 key_response: None,
@@ -177,7 +190,11 @@ pub fn parse_message(body: &[u8]) -> Result<FairPlayMessage, FairPlayParseError>
                 challenge: None,
                 key_mode: Some(mode),
                 local_sap: Some(body[16..144].try_into().expect("128-byte FairPlay local SAP")),
-                key_response: Some(body[144..164].try_into().expect("20-byte FairPlay key response")),
+                key_response: Some(
+                    body[144..164]
+                        .try_into()
+                        .expect("20-byte FairPlay key response"),
+                ),
                 acknowledgement: None,
                 body: body.to_vec(),
             })
@@ -195,7 +212,11 @@ pub fn parse_message(body: &[u8]) -> Result<FairPlayMessage, FairPlayParseError>
                 key_mode: None,
                 local_sap: None,
                 key_response: None,
-                acknowledgement: Some(body[12..32].try_into().expect("20-byte FairPlay acknowledgement")),
+                acknowledgement: Some(
+                    body[12..32]
+                        .try_into()
+                        .expect("20-byte FairPlay acknowledgement"),
+                ),
                 body: body.to_vec(),
             })
         }
@@ -333,14 +354,14 @@ pub enum FairPlayState {
 mod tests {
     use super::*;
 
-    fn initial_message(mode: u8) -> Vec<u8> {
+    fn initial_message(capabilities: u8) -> Vec<u8> {
         let mut body = vec![0u8; 16];
         body[..4].copy_from_slice(b"FPLY");
         body[4] = 3;
         body[5] = 1;
         body[6] = 1;
         body[8..12].copy_from_slice(&4u32.to_be_bytes());
-        body[12..16].copy_from_slice(&[0x02, 0x00, mode, 0xbb]);
+        body[12..16].copy_from_slice(&[0x02, 0x00, capabilities, 0xbb]);
         body
     }
 
@@ -398,7 +419,7 @@ mod tests {
     }
 
     #[test]
-    fn parses_observed_iphone_phase1_payload_without_interpreting_it() {
+    fn parses_observed_iphone_phase1_capability_payload() {
         let mut body = initial_message(2);
         body[12..16].copy_from_slice(&[0x02, 0x00, 0x02, 0xbb]);
         let message = parse_message(&body).expect("observed iPhone phase-1 message");
@@ -416,7 +437,10 @@ mod tests {
         let mut mismatched = key_message();
         mismatched[12] = 2;
         let parsed = parse_message(&mismatched).unwrap();
-        assert!(session.accept(parsed).unwrap_err().contains("does not match"));
+        assert!(session
+            .accept(parsed)
+            .unwrap_err()
+            .contains("does not match"));
         assert!(!session.has_key_message());
     }
 
@@ -424,7 +448,10 @@ mod tests {
     fn rejects_invalid_m1_payload_marker_and_trailer() {
         let mut body = initial_message(3);
         body[12] = 0;
-        assert_eq!(parse_message(&body).unwrap_err(), FairPlayParseError::InvalidInitialPayload);
+        assert_eq!(
+            parse_message(&body).unwrap_err(),
+            FairPlayParseError::InvalidInitialPayload
+        );
 
         let mut body = initial_message(3);
         body[15] = 0;
