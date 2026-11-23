@@ -60,7 +60,10 @@ impl std::fmt::Display for FairPlayParseError {
                 )
             }
             Self::InvalidChallengeLength(length) => {
-                write!(formatter, "FairPlay challenge message must be 142 bytes, got {length}")
+                write!(
+                    formatter,
+                    "FairPlay challenge message must be 142 bytes, got {length}"
+                )
             }
             Self::InvalidKeyMessageLength(length) => {
                 write!(
@@ -69,7 +72,10 @@ impl std::fmt::Display for FairPlayParseError {
                 )
             }
             Self::InvalidAcknowledgementLength(length) => {
-                write!(formatter, "FairPlay acknowledgement must be 32 bytes, got {length}")
+                write!(
+                    formatter,
+                    "FairPlay acknowledgement must be 32 bytes, got {length}"
+                )
             }
         }
     }
@@ -146,7 +152,6 @@ pub fn parse_message(body: &[u8]) -> Result<FairPlayMessage, FairPlayParseError>
     }
 }
 
-
 /// Build the receiver's 142-byte phase-2 challenge record.
 ///
 /// This only frames caller-provided protocol material. It does not generate a
@@ -197,14 +202,19 @@ impl FairPlaySession {
                 Ok(FairPlayState::AwaitingChallenge)
             }
             MessagePhase::Challenge | MessagePhase::Acknowledgement => {
-                return Err(format!("FairPlay phase {} is receiver-originated", message.phase as u8));
+                return Err(format!(
+                    "FairPlay phase {} is receiver-originated",
+                    message.phase as u8
+                ));
             }
             MessagePhase::KeyMessage => {
                 if self.initial_selector.is_none() {
                     return Err("FairPlay key message received before initial message".to_owned());
                 }
                 if !self.challenge_sent {
-                    return Err("FairPlay key message received before receiver challenge".to_owned());
+                    return Err(
+                        "FairPlay key message received before receiver challenge".to_owned()
+                    );
                 }
                 if self.key_message.is_some() {
                     return Err("FairPlay key message was already received".to_owned());
@@ -268,7 +278,6 @@ mod tests {
         body[8..12].copy_from_slice(&152u32.to_be_bytes());
         body
     }
-
 
     #[test]
     fn builds_protocol_framing_for_m2_and_m4() {
