@@ -547,83 +547,36 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
                 match super::fairplay::parse_message(&request.body) {
                     Ok(message) => {
                         let phase = message.phase;
-                        match fairplay_session.accept(message) {
-                            Ok(state) => {
-                                tracing::info!(
-                                    ?state,
-                                    sender_phase1_selector = ?fairplay_session.initial_selector(),
-                                    "AirPlay FairPlay setup message accepted"
-                                );
-
-                                if phase == super::fairplay::MessagePhase::Initial {
-                                    // The receiver creates a fresh 128-byte challenge.
-                                    // Mode 3 is selected by this receiver; the M1 bytes
-                                    // are retained as sender capability data, not treated
-                                    // as the selected M2 mode.
-                                    const MODE: u8 = 3;
-                                    let mut challenge = [0u8; 128];
-                                    OsRng.fill_bytes(&mut challenge);
-                                    let response_body = super::fairplay::build_m2(MODE, &challenge);
-                                    fairplay_session
-                                        .mark_challenge_sent(MODE, challenge)
-                                        .map_err(|reason| {
-                                            io::Error::new(io::ErrorKind::InvalidData, reason)
-                                        })?;
-                                    let header = format!(
-                                        "RTSP/1.0 200 OK\r\nCSeq: {}\r\nServer: RustPhoneControl/0.1\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\n\r\n",
-                                        request.cseq,
-                                        response_body.len()
-                                    );
-                                    stream.write_all(header.as_bytes())?;
-                                    stream.write_all(&response_body)?;
-                                    stream.flush()?;
-                                    tracing::info!(
-                                        mode = MODE,
-                                        challenge_bytes = challenge.len(),
-                                        response_bytes = response_body.len(),
-                                        "AirPlay FairPlay M2 challenge sent"
-                                    );
-                                } else if phase == super::fairplay::MessagePhase::KeyMessage {
-                                    let response_body = super::fairplay::build_m4_from_m3(
-                                        &request.body,
-                                    )
-                                    .map_err(|reason| {
-                                        io::Error::new(io::ErrorKind::InvalidData, reason)
-                                    })?;
-                                    let header = format!(
-                                        "RTSP/1.0 200 OK\r\nCSeq: {}\r\nServer: RustPhoneControl/0.1\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\n\r\n",
-                                        request.cseq,
-                                        response_body.len()
-                                    );
-                                    stream.write_all(header.as_bytes())?;
-                                    stream.write_all(&response_body)?;
-                                    stream.flush()?;
-                                    tracing::info!(
-                                        response_bytes = response_body.len(),
-                                        "AirPlay FairPlay M4 acknowledgement sent; media key unwrap remains pending"
-                                    );
-                                } else {
-                                    let response = format!(
-                                        "RTSP/1.0 501 Not Implemented\r\nCSeq: {}\r\nServer: RustPhoneControl/0.1\r\nContent-Length: 0\r\n\r\n",
-                                        request.cseq
-                                    );
-                                    write_response(&mut stream, &response, 501)?;
-                                }
-                            }
-                            Err(reason) => {
-                                tracing::warn!(%reason, "AirPlay FairPlay setup message rejected by session state");
-                                let response = format!(
-                                    "RTSP/1.0 400 Bad Request\r\nCSeq: {}\r\nServer: RustPhoneControl/0.1\r\nContent-Length: 0\r\n\r\n",
-                                    request.cseq
-                                );
-                                write_response(&mut stream, &response, 400)?;
-                            }
+                        if phase == super::fairplay::MessagePhase::Initial {
+                            // Never send random challenge bytes or acknowledge an
+                            // unauthenticated M3. The SAP crypto provider is not
+                            // implemented yet, so fail closed until it can produce
+                            // a session-aware, independently verified response.
+                            tracing::error!(
+                                sender_phase1_selector = ?message.initial_selector,
+                                "FairPlay SAP unavailable: refusing placeholder M2"
+                            );
+                            let response = format!(
+                                "RTSP/1.0 501 Not Implemented\\r\\nCSeq: {}\\r\\nServer: RustPhoneControl/0.1\\r\\nContent-Length: 0\\r\\n\\r\\n",
+                                request.cseq
+                            );
+                            write_response(&mut stream, &response, 501)?;
+                        } else {
+                            tracing::warn!(
+                                phase = phase as u8,
+                                "FairPlay message received but no authenticated SAP session exists"
+                            );
+                            let response = format!(
+                                "RTSP/1.0 403 Forbidden\\r\\nCSeq: {}\\r\\nServer: RustPhoneControl/0.1\\r\\nContent-Length: 0\\r\\n\\r\\n",
+                                request.cseq
+                            );
+                            write_response(&mut stream, &response, 403)?;
                         }
                     }
                     Err(error) => {
                         tracing::warn!(%error, "AirPlay FairPlay setup framing rejected");
                         let response = format!(
-                            "RTSP/1.0 400 Bad Request\r\nCSeq: {}\r\nServer: RustPhoneControl/0.1\r\nContent-Length: 0\r\n\r\n",
+                            "RTSP/1.0 400 Bad Request\\r\\nCSeq: {}\\r\\nServer: RustPhoneControl/0.1\\r\\nContent-Length: 0\\r\\n\\r\\n",
                             request.cseq
                         );
                         write_response(&mut stream, &response, 400)?;
