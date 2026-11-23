@@ -582,10 +582,25 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
                                         response_bytes = response_body.len(),
                                         "AirPlay FairPlay M2 challenge sent"
                                     );
-                                } else {
-                                    tracing::warn!(
-                                        "AirPlay FairPlay M3 received but SAP validation and M4 acknowledgement are not implemented"
+                                } else if phase == super::fairplay::MessagePhase::KeyMessage {
+                                    let response_body =
+                                        super::fairplay::build_m4_from_m3(&request.body)
+                                            .map_err(|reason| {
+                                                io::Error::new(io::ErrorKind::InvalidData, reason)
+                                            })?;
+                                    let header = format!(
+                                        "RTSP/1.0 200 OK\r\nCSeq: {}\r\nServer: RustPhoneControl/0.1\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\n\r\n",
+                                        request.cseq,
+                                        response_body.len()
                                     );
+                                    stream.write_all(header.as_bytes())?;
+                                    stream.write_all(&response_body)?;
+                                    stream.flush()?;
+                                    tracing::info!(
+                                        response_bytes = response_body.len(),
+                                        "AirPlay FairPlay M4 acknowledgement sent; media key unwrap remains pending"
+                                    );
+                                } else {
                                     let response = format!(
                                         "RTSP/1.0 501 Not Implemented\r\nCSeq: {}\r\nServer: RustPhoneControl/0.1\r\nContent-Length: 0\r\n\r\n",
                                         request.cseq
