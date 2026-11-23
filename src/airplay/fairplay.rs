@@ -458,26 +458,30 @@ mod tests {
         session
             .accept(parse_message(&initial_message(3)).unwrap())
             .unwrap();
-        assert!(session
-            .accept(parse_message(&initial_message(3)).unwrap())
-            .unwrap_err()
-            .contains("already received"));
+        assert!(
+            session
+                .accept(parse_message(&initial_message(3)).unwrap())
+                .unwrap_err()
+                .contains("already received")
+        );
 
         let mut empty = FairPlaySession::new();
-        assert!(empty
-            .mark_challenge_sent(3, [0x11; 128])
-            .unwrap_err()
-            .contains("before initial"));
+        assert!(
+            empty
+                .mark_challenge_sent(3, [0x11; 128])
+                .unwrap_err()
+                .contains("before initial")
+        );
         empty
             .accept(parse_message(&initial_message(3)).unwrap())
             .unwrap();
-        empty
-            .mark_challenge_sent(3, [0x11; 128])
-            .unwrap();
-        assert!(empty
-            .mark_challenge_sent(3, [0x22; 128])
-            .unwrap_err()
-            .contains("already sent"));
+        empty.mark_challenge_sent(3, [0x11; 128]).unwrap();
+        assert!(
+            empty
+                .mark_challenge_sent(3, [0x22; 128])
+                .unwrap_err()
+                .contains("already sent")
+        );
     }
 
     #[test]
@@ -496,11 +500,11 @@ mod tests {
         session
             .accept(parse_message(&initial_message(3)).unwrap())
             .unwrap();
-        session
-            .mark_challenge_sent(3, [0x5a; 128])
-            .unwrap();
+        session.mark_challenge_sent(3, [0x5a; 128]).unwrap();
 
-        let state = session.accept(parse_message(&key_message()).unwrap()).unwrap();
+        let state = session
+            .accept(parse_message(&key_message()).unwrap())
+            .unwrap();
         assert_eq!(state, FairPlayState::KeyMessageReceivedUnverified);
         assert!(session.has_key_message());
     }
