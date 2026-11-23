@@ -157,6 +157,18 @@ fn receiver_slot() -> &'static Mutex<Option<ReceiverRuntime>> {
     RECEIVER.get_or_init(|| Mutex::new(None))
 }
 
+/// Return the approved AirPlay controller fingerprints shown in the desktop UI.
+#[cfg(windows)]
+pub fn trusted_controller_fingerprints() -> Result<Vec<String>, String> {
+    pair_setup::trusted_controller_fingerprints()
+}
+
+/// Revoke a previously approved controller using its public-key fingerprint.
+#[cfg(windows)]
+pub fn revoke_trusted_controller(fingerprint: &str) -> Result<bool, String> {
+    pair_setup::revoke_legacy_controller(fingerprint)
+}
+
 #[cfg(windows)]
 pub fn setup_code() -> String {
     PAIRING_CODE
