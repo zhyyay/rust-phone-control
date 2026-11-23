@@ -303,14 +303,19 @@ impl FairPlaySession {
                     ));
                 }
                 self.key_message = Some(message.body);
-                Ok(FairPlayState::KeyMessageReceived)
+                Ok(FairPlayState::KeyMessageReceivedUnverified)
             }
         }
     }
 
-    /// Raw four-byte phase-1 payload, without assigning undocumented semantics.
+    /// Raw four-byte M1 payload.
     pub fn initial_parameters(&self) -> Option<[u8; 4]> {
         self.initial_parameters
+    }
+
+    /// Sender capability mask advertised in byte 14 of the M1 payload.
+    pub fn initial_capabilities(&self) -> Option<u8> {
+        self.initial_parameters.map(|parameters| parameters[2])
     }
 
     /// Record that a real, negotiated phase-2 challenge has been sent.
@@ -535,6 +540,7 @@ mod tests {
             FairPlayState::AwaitingChallenge
         );
         assert_eq!(session.initial_parameters(), Some([0x02, 0x00, 3, 0xbb]));
+        assert_eq!(session.initial_capabilities(), Some(3));
         let key_before_challenge = parse_message(&key_message()).expect("key before challenge");
         assert_eq!(
             session.accept(key_before_challenge).unwrap_err(),
