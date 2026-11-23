@@ -544,7 +544,7 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
                         Ok(state) => {
                             tracing::info!(
                                 ?state,
-                                sender_capabilities = ?fairplay_session.capabilities(),
+                                sender_phase1_selector = ?fairplay_session.initial_selector(),
                                 "AirPlay FairPlay setup message accepted"
                             );
                             let response = format!(
