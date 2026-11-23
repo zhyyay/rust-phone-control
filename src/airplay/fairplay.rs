@@ -491,6 +491,21 @@ mod tests {
     }
 
     #[test]
+    fn accepts_structural_m3_without_claiming_sap_authentication() {
+        let mut session = FairPlaySession::new();
+        session
+            .accept(parse_message(&initial_message(3)).unwrap())
+            .unwrap();
+        session
+            .mark_challenge_sent(3, [0x5a; 128])
+            .unwrap();
+
+        let state = session.accept(parse_message(&key_message()).unwrap()).unwrap();
+        assert_eq!(state, FairPlayState::KeyMessageReceivedUnverified);
+        assert!(session.has_key_message());
+    }
+
+    #[test]
     fn rejects_m3_when_mode_does_not_match_the_negotiated_m2_mode() {
         let mut session = FairPlaySession::new();
         let initial = parse_message(&initial_message(3)).unwrap();
