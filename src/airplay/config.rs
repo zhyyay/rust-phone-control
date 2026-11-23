@@ -17,7 +17,7 @@ pub const STATUS_FLAGS: &str = "0x4";
 /// `deviceid` TXT property. No machine-specific address is hard-coded.
 pub fn device_id() -> String {
     #[cfg(windows)]
-    if let Some(mac) = windows_wifi_mac_address() {
+    if let Some((mac, _)) = windows_wifi_adapter() {
         return mac;
     }
 
@@ -37,7 +37,12 @@ pub fn device_id() -> String {
 }
 
 #[cfg(windows)]
-fn windows_wifi_mac_address() -> Option<String> {
+pub fn wifi_interface_index() -> Option<u32> {
+    windows_wifi_adapter().map(|(_, interface_index)| interface_index)
+}
+
+#[cfg(windows)]
+fn windows_wifi_adapter() -> Option<(String, u32)> {
     use std::ffi::c_void;
     use std::mem::size_of;
     use std::ptr::null_mut;
@@ -121,7 +126,7 @@ fn windows_wifi_mac_address() -> Option<String> {
                 .map(|byte| format!("{byte:02X}"))
                 .collect::<Vec<_>>()
                 .join(":");
-            return Some(mac);
+            return Some((mac, current.if_index));
         }
         adapter = current.next;
     }
