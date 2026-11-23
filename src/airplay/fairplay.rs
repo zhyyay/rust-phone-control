@@ -234,11 +234,7 @@ impl FairPlaySession {
 
     /// Record that a real, negotiated phase-2 challenge has been sent.
     /// Callers must not use this for placeholder or replayed challenge bytes.
-    pub fn mark_challenge_sent(
-        &mut self,
-        mode: u8,
-        challenge: [u8; 128],
-    ) -> Result<(), String> {
+    pub fn mark_challenge_sent(&mut self, mode: u8, challenge: [u8; 128]) -> Result<(), String> {
         if self.initial_selector.is_none() {
             return Err("FairPlay challenge cannot be sent before initial message".to_owned());
         }
