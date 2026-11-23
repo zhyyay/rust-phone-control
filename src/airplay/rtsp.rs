@@ -1948,12 +1948,18 @@ mod tests {
             payload: Vec::new(),
         };
         sender.try_send(packet()).expect("fill bounded queue");
-        let running = Arc::new(AtomicBool::new(false));
-        assert!(!super::send_packet_while_running(
-            &sender,
-            packet(),
-            &running
-        ));
+        let running = Arc::new(AtomicBool::new(true));
+        let worker_running = Arc::clone(&running);
+        let worker_sender = sender.clone();
+        let worker = thread::spawn(move || {
+            super::send_packet_while_running(&worker_sender, packet(), &worker_running)
+        });
+
+        thread::sleep(Duration::from_millis(20));
+        let stopped_at = std::time::Instant::now();
+        running.store(false, Ordering::Release);
+        assert!(!worker.join().expect("backpressure worker exits"));
+        assert!(stopped_at.elapsed() < Duration::from_millis(100));
         assert!(!running.load(Ordering::Acquire));
     }
 
