@@ -263,13 +263,17 @@ fn read_exact_while_running<R: Read>(
                 ));
             }
             Ok(read) => offset += read,
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
             Err(error)
                 if matches!(
                     error.kind(),
-                    io::ErrorKind::Interrupted
-                        | io::ErrorKind::WouldBlock
-                        | io::ErrorKind::TimedOut
-                ) => {}
+                    io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+                ) =>
+            {
+                // A peer may stall halfway through a packet. Avoid spinning
+                // one CPU core while preserving prompt cancellation.
+                thread::sleep(Duration::from_millis(1));
+            }
             Err(error) => return Err(error),
         }
     }
