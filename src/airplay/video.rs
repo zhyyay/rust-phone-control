@@ -980,7 +980,9 @@ impl LatestFrameMailbox {
         }
         let required_bytes = frame
             .stride
-            .checked_mul(usize::try_from(frame.height).map_err(|_| FrameMailboxError::InvalidStride)?)
+            .checked_mul(
+                usize::try_from(frame.height).map_err(|_| FrameMailboxError::InvalidStride)?,
+            )
             .ok_or(FrameMailboxError::InvalidStride)?;
         if frame.data.len() < required_bytes {
             return Err(FrameMailboxError::BufferTooSmall);
@@ -1028,7 +1030,9 @@ impl std::fmt::Display for FrameMailboxError {
             Self::ZeroDimension => f.write_str("decoded frame has a zero dimension"),
             Self::DimensionTooLarge => f.write_str("decoded frame exceeds the maximum dimension"),
             Self::InvalidStride => f.write_str("decoded frame has an invalid BGRA stride"),
-            Self::BufferTooSmall => f.write_str("decoded frame buffer is smaller than its dimensions"),
+            Self::BufferTooSmall => {
+                f.write_str("decoded frame buffer is smaller than its dimensions")
+            },
         }
     }
 }
