@@ -966,6 +966,10 @@ fn handle_setup_request(
             let mut response = Dictionary::new();
             response.insert("eventPort".into(), Value::Integer(event_port.into()));
             response.insert("timingPort".into(), Value::Integer(timing_port.into()));
+            // A fresh session-level SETUP starts a new RTSP session.
+            // Stop any previous stream listener before publishing the new
+            // event/timing channels so stale media workers cannot outlive it.
+            *media_receiver = None;
             *event_channel = Some(channel);
             *timing_client = new_timing_client;
             plist::encode_binary(&Value::Dictionary(response)).map_err(|error| {
