@@ -262,8 +262,10 @@ fn pending_airplay_approval_panel(app: &PhoneControlApp) -> impl IntoElement {
                         Button::new("airplay-reject-controller")
                             .label("Reject")
                             .on_click(|_, _, cx| {
-                                if crate::airplay::reject_pending_controller() {
-                                    tracing::info!("Pending AirPlay device rejected");
+                                match crate::airplay::reject_pending_controller() {
+                                    Ok(true) => tracing::info!("AirPlay device denial saved"),
+                                    Ok(false) => tracing::warn!("No pending AirPlay device to reject"),
+                                    Err(error) => tracing::error!(%error, "Could not persist AirPlay device denial"),
                                 }
                                 cx.notify();
                             }),
