@@ -394,13 +394,16 @@ pub fn revoke_legacy_controller(fingerprint: &str) -> Result<bool, String> {
     let mut state = lock
         .lock()
         .map_err(|_| "AirPlay pairing state lock poisoned")?;
-    let identifier = state.controllers.iter().find_map(|(identifier, public_key)| {
-        let candidate = Sha256::digest(public_key)
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect::<String>();
-        (candidate == normalized).then(|| identifier.clone())
-    });
+    let identifier = state
+        .controllers
+        .iter()
+        .find_map(|(identifier, public_key)| {
+            let candidate = Sha256::digest(public_key)
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>();
+            (candidate == normalized).then(|| identifier.clone())
+        });
     let Some(identifier) = identifier else {
         return Ok(false);
     };
