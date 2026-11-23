@@ -427,6 +427,7 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
             body_bytes = request.body.len(),
             transport = ?request.header("Transport"),
             content_type = ?request.header("Content-Type"),
+            user_agent = ?request.header("User-Agent"),
             "AirPlay RTSP request parsed"
         );
 
@@ -716,8 +717,10 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
                         "AirPlay RECORD request accepted; media listener is active, but media decryption/decoding is not active"
                     );
                 } else {
-                    tracing::warn!(
-                        "AirPlay RECORD arrived without a stream-level SETUP; no screen-mirroring media listener is active"
+                    // Apple senders may issue RECORD before the stream-level
+                    // SETUP. Keep the session open and wait for that SETUP.
+                    tracing::info!(
+                        "AirPlay RECORD accepted; awaiting stream-level SETUP before media reception"
                     );
                 }
                 write_response(&mut stream, &response, 200)?;
