@@ -114,7 +114,11 @@ pub fn parse_message(body: &[u8]) -> Result<FairPlayMessage, FairPlayParseError>
             }
             Ok(FairPlayMessage {
                 phase: MessagePhase::Initial,
-                initial_parameters: Some(body[12..16].try_into().expect("four-byte initial payload")),
+                initial_parameters: Some(
+                    body[12..16]
+                        .try_into()
+                        .expect("four-byte initial payload"),
+                ),
                 body: body.to_vec(),
             })
         }
