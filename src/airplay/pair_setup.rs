@@ -70,6 +70,7 @@ impl AccessoryIdentity {
 struct PairingState {
     accessory: AccessoryIdentity,
     controllers: HashMap<Vec<u8>, [u8; 32]>,
+    denied_controllers: HashMap<Vec<u8>, [u8; 32]>,
 }
 
 impl PairingState {
@@ -95,15 +96,28 @@ impl PairingState {
                         Ok((entry.identifier, public_key))
                     })
                     .collect::<Result<HashMap<_, _>, String>>()?;
+                let denied_controllers = stored
+                    .denied_controllers
+                    .into_iter()
+                    .map(|entry| {
+                        let public_key: [u8; 32] = entry
+                            .public_key
+                            .try_into()
+                            .map_err(|_| "invalid persisted denied controller public key")?;
+                        Ok((entry.identifier, public_key))
+                    })
+                    .collect::<Result<HashMap<_, _>, String>>()?;
                 return Ok(Self {
                     accessory,
                     controllers,
+                    denied_controllers,
                 });
             }
 
             let state = Self {
                 accessory: AccessoryIdentity::generate(),
                 controllers: HashMap::new(),
+                denied_controllers: HashMap::new(),
             };
             state.persist().map_err(|error| {
                 format!("cannot create protected AirPlay pairing store: {error}")
@@ -116,6 +130,7 @@ impl PairingState {
             Ok(Self {
                 accessory: AccessoryIdentity::generate(),
                 controllers: HashMap::new(),
+                denied_controllers: HashMap::new(),
             })
         }
     }
@@ -130,6 +145,14 @@ impl PairingState {
                 accessory_secret_key: self.accessory.signing_key.to_bytes().to_vec(),
                 controllers: self
                     .controllers
+                    .iter()
+                    .map(|(identifier, public_key)| StoredController {
+                        identifier: identifier.clone(),
+                        public_key: public_key.to_vec(),
+                    })
+                    .collect(),
+                denied_controllers: self
+                    .denied_controllers
                     .iter()
                     .map(|(identifier, public_key)| StoredController {
                         identifier: identifier.clone(),
@@ -242,6 +265,48 @@ pub fn is_controller_public_key_paired(public_key: &[u8; 32]) -> Result<bool, St
     Ok(state.controllers.values().any(|stored| stored == public_key))
 }
 
+/// Check whether a controller was explicitly denied by the local user.
+pub fn is_controller_public_key_denied(public_key: &[u8; 32]) -> Result<bool, String> {
+    let lock = pairing_state()?;
+    let state = lock
+        .lock()
+        .map_err(|_| "AirPlay pairing state lock poisoned")?;
+    Ok(state.denied_controllers.values().any(|stored| stored == public_key))
+}
+
+/// Persist an explicit denial for a Legacy Pair-Verify controller.
+pub fn deny_legacy_controller(public_key: [u8; 32]) -> Result<(), String> {
+    let fingerprint = Sha256::digest(public_key);
+    let identifier = fingerprint
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>()
+        .into_bytes();
+    let lock = pairing_state()?;
+    let mut state = lock
+        .lock()
+        .map_err(|_| "AirPlay pairing state lock poisoned")?;
+    if state.denied_controllers.values().any(|stored| stored == &public_key) {
+        return Ok(());
+    }
+    let previous_trusted = state.controllers.remove(&identifier);
+    let previous_denied = state
+        .denied_controllers
+        .insert(identifier.clone(), public_key);
+    if let Err(error) = state.persist() {
+        match previous_trusted {
+            Some(key) => { state.controllers.insert(identifier.clone(), key); }
+            None => { state.controllers.remove(&identifier); }
+        }
+        match previous_denied {
+            Some(key) => { state.denied_controllers.insert(identifier, key); }
+            None => { state.denied_controllers.remove(&identifier); }
+        }
+        return Err(error);
+    }
+    Ok(())
+}
+
 /// Persist a Legacy Pair-Verify controller after explicit local approval.
 /// Its identifier is a stable SHA-256 fingerprint, never a network address.
 pub fn trust_legacy_controller(public_key: [u8; 32]) -> Result<(), String> {
@@ -258,8 +323,12 @@ pub fn trust_legacy_controller(public_key: [u8; 32]) -> Result<(), String> {
     if state.controllers.values().any(|stored| stored == &public_key) {
         return Ok(());
     }
+    let previous_denied = state.denied_controllers.remove(&identifier);
     let previous = state.controllers.insert(identifier.clone(), public_key);
     if let Err(error) = state.persist() {
+        if let Some(key) = previous_denied {
+            state.denied_controllers.insert(identifier.clone(), key);
+        }
         match previous {
             Some(key) => { state.controllers.insert(identifier, key); }
             None => { state.controllers.remove(&identifier); }
