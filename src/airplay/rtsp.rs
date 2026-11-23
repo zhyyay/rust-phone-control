@@ -556,9 +556,10 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
                                 sender_phase1_selector = ?message.initial_selector,
                                 "FairPlay SAP unavailable: refusing placeholder M2"
                             );
-                            let response = format!(
-                                "RTSP/1.0 501 Not Implemented\\r\\nCSeq: {}\\r\\nServer: RustPhoneControl/0.1\\r\\nContent-Length: 0\\r\\n\\r\\n",
-                                request.cseq
+                            let response = fairplay_error_response(
+                                501,
+                                "Not Implemented",
+                                &request.cseq,
                             );
                             write_response(&mut stream, &response, 501)?;
                         } else {
@@ -566,18 +567,20 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
                                 phase = phase as u8,
                                 "FairPlay message received but no authenticated SAP session exists"
                             );
-                            let response = format!(
-                                "RTSP/1.0 403 Forbidden\\r\\nCSeq: {}\\r\\nServer: RustPhoneControl/0.1\\r\\nContent-Length: 0\\r\\n\\r\\n",
-                                request.cseq
+                            let response = fairplay_error_response(
+                                403,
+                                "Forbidden",
+                                &request.cseq,
                             );
                             write_response(&mut stream, &response, 403)?;
                         }
                     }
                     Err(error) => {
                         tracing::warn!(%error, "AirPlay FairPlay setup framing rejected");
-                        let response = format!(
-                            "RTSP/1.0 400 Bad Request\\r\\nCSeq: {}\\r\\nServer: RustPhoneControl/0.1\\r\\nContent-Length: 0\\r\\n\\r\\n",
-                            request.cseq
+                        let response = fairplay_error_response(
+                            400,
+                            "Bad Request",
+                            &request.cseq,
                         );
                         write_response(&mut stream, &response, 400)?;
                     }
@@ -1025,6 +1028,12 @@ fn handle_setup_request(
             })
         }
     }
+}
+
+fn fairplay_error_response(status: u16, reason: &str, cseq: &str) -> String {
+    format!(
+        "RTSP/1.0 {status} {reason}\r\nCSeq: {cseq}\r\nServer: RustPhoneControl/0.1\r\nContent-Length: 0\r\n\r\n"
+    )
 }
 
 fn write_response(stream: &mut TcpStream, response: &str, status: u16) -> std::io::Result<()> {
@@ -1650,6 +1659,21 @@ mod tests {
             .0,
             501
         );
+    }
+
+    #[test]
+    fn fairplay_error_responses_use_real_crlf_line_endings() {
+        for (status, reason) in [
+            (501, "Not Implemented"),
+            (403, "Forbidden"),
+            (400, "Bad Request"),
+        ] {
+            let response = super::fairplay_error_response(status, reason, "3");
+            assert!(response.starts_with(&format!("RTSP/1.0 {status} {reason}\r\n")));
+            assert!(response.ends_with("\r\n\r\n"));
+            assert!(!response.contains("\\r\\n"));
+            assert!(response.contains("\r\nCSeq: 3\r\n"));
+        }
     }
 
     #[test]
