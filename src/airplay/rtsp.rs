@@ -524,6 +524,21 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
                 }
             }
             ("POST", "/fp-setup", "RTSP/1.0") => {
+                // The first 16 bytes contain only the public FPLY record header,
+                // sequence and mode selector. Never log the full 164-byte M3.
+                let record_prefix = request
+                    .body
+                    .iter()
+                    .take(16)
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                tracing::info!(
+                    body_prefix_hex = %record_prefix,
+                    x_apple_et = ?request.header("X-Apple-ET"),
+                    content_type = ?request.header("Content-Type"),
+                    "AirPlay FairPlay request header"
+                );
                 match super::fairplay::parse_message(&request.body) {
                     Ok(message) => match fairplay_session.accept(message) {
                         Ok(state) => {
