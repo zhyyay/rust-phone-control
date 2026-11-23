@@ -1933,6 +1933,27 @@ mod tests {
     }
 
     #[test]
+    fn media_packet_backpressure_exits_promptly_after_teardown() {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+            mpsc,
+        };
+
+        let (sender, _receiver) = mpsc::sync_channel(1);
+        let packet = || super::ReceivedMediaPacket {
+            peer_addr: "127.0.0.1:1234".parse().expect("peer address"),
+            packet_type: crate::airplay::media::ScreenMirrorPacketType::Heartbeat,
+            timestamp: 1,
+            payload: Vec::new(),
+        };
+        sender.try_send(packet()).expect("fill bounded queue");
+        let running = Arc::new(AtomicBool::new(false));
+        assert!(!super::send_packet_while_running(&sender, packet(), &running));
+        assert!(!running.load(Ordering::Acquire));
+    }
+
+    #[test]
     fn unsupported_info_qualifier_is_rejected() {
         let mut request = Dictionary::new();
         request.insert(
