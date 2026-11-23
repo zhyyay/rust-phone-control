@@ -1939,6 +1939,8 @@ mod tests {
             atomic::{AtomicBool, Ordering},
             mpsc,
         };
+        use std::thread;
+        use std::time::Duration;
 
         let (sender, _receiver) = mpsc::sync_channel(1);
         let packet = || super::ReceivedMediaPacket {
