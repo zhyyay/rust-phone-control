@@ -425,6 +425,8 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
             protocol = %request.protocol,
             cseq = %request.cseq,
             body_bytes = request.body.len(),
+            transport = ?request.header("Transport"),
+            content_type = ?request.header("Content-Type"),
             "AirPlay RTSP request parsed"
         );
 
