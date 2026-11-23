@@ -1949,7 +1949,11 @@ mod tests {
         };
         sender.try_send(packet()).expect("fill bounded queue");
         let running = Arc::new(AtomicBool::new(false));
-        assert!(!super::send_packet_while_running(&sender, packet(), &running));
+        assert!(!super::send_packet_while_running(
+            &sender,
+            packet(),
+            &running
+        ));
         assert!(!running.load(Ordering::Acquire));
     }
 
