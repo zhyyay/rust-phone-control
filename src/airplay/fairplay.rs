@@ -337,7 +337,7 @@ mod tests {
             *byte = index as u8;
         }
         let m4 = build_m4_from_m3(&m3).expect("build M4 acknowledgement");
-        assert_eq!(&m4[..12], b"FPLY\\x03\\x01\\x04\\x00\\x00\\x00\\x00\\x14");
+        assert_eq!(&m4[..12], b"FPLY\x03\x01\x04\x00\x00\x00\x00\x14");
         assert_eq!(&m4[12..], &m3[144..164]);
     }
 
