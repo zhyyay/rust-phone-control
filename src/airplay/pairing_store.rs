@@ -99,7 +99,6 @@ impl StoredPairingState {
     }
 }
 
-
 /// Stable device identity derived from the controller's Ed25519 public key.
 pub fn controller_fingerprint(public_key: &[u8; 32]) -> [u8; 32] {
     Sha256::digest(public_key).into()
