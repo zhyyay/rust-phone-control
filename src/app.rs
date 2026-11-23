@@ -12,6 +12,10 @@ use std::{sync::Arc, time::Duration};
 pub struct PhoneControlApp {
     airplay_status: String,
     #[cfg(windows)]
+    pending_airplay_controller: Option<String>,
+    #[cfg(windows)]
+    airplay_approval_status: String,
+    #[cfg(windows)]
     preview_image: Option<Arc<Image>>,
     #[cfg(windows)]
     preview_status: String,
@@ -29,6 +33,8 @@ impl Render for PhoneControlApp {
                         .timer(Duration::from_millis(33))
                         .await;
                     let updated = this.update(cx, |this, cx| {
+                        this.pending_airplay_controller =
+                            crate::airplay::pending_controller_approval();
                         match crate::airplay::take_latest_video_frame() {
                             Ok(Some(snapshot)) => match bgra_frame_to_bmp(&snapshot.frame) {
                                 Ok(bytes) => {
@@ -123,6 +129,7 @@ impl Render for PhoneControlApp {
                         format!("AirPlay status: {}", self.airplay_status)
                     })),
             )
+            .child(pending_airplay_approval_panel(self))
             .child(preview_panel_for_app(self))
             .child(
                 div()
@@ -216,6 +223,65 @@ impl Render for PhoneControlApp {
             )
             .child(Label::new("AirPlay discovery and RTSP control · waiting for FairPlay media-key recovery before video packets can be decrypted and decoded into the preview."))
     }
+}
+
+#[cfg(windows)]
+fn pending_airplay_approval_panel(app: &PhoneControlApp) -> impl IntoElement {
+    let mut panel = div()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .p_2()
+        .rounded_lg()
+        .border_1()
+        .border_color(gpui_kit::rgb(0xB7791F))
+        .child(Label::new("AirPlay device authorization"));
+
+    if let Some(fingerprint) = app.pending_airplay_controller.as_ref() {
+        panel = panel
+            .child(Label::new("A new iPhone has completed identity verification and is waiting for your approval."))
+            .child(Label::new(format!("Device key fingerprint: {fingerprint}")))
+            .child(
+                div()
+                    .flex()
+                    .gap_2()
+                    .child(
+                        Button::new("airplay-approve-controller")
+                            .primary()
+                            .label("Allow this device")
+                            .on_click(|_, _, cx| {
+                                match crate::airplay::approve_pending_controller() {
+                                    Ok(true) => tracing::info!("AirPlay device approval saved"),
+                                    Ok(false) => tracing::warn!("No pending AirPlay device to approve"),
+                                    Err(error) => tracing::error!(%error, "Could not approve AirPlay device"),
+                                }
+                                cx.notify();
+                            }),
+                    )
+                    .child(
+                        Button::new("airplay-reject-controller")
+                            .label("Reject")
+                            .on_click(|_, _, cx| {
+                                if crate::airplay::reject_pending_controller() {
+                                    tracing::info!("Pending AirPlay device rejected");
+                                }
+                                cx.notify();
+                            }),
+                    ),
+            );
+    } else {
+        panel = panel.child(Label::new("No new device is waiting for authorization."));
+    }
+
+    if !app.airplay_approval_status.is_empty() {
+        panel = panel.child(Label::new(app.airplay_approval_status.clone()));
+    }
+    panel
+}
+
+#[cfg(not(windows))]
+fn pending_airplay_approval_panel(_: &PhoneControlApp) -> impl IntoElement {
+    Label::new("AirPlay device authorization is available on Windows")
 }
 
 #[cfg(windows)]
