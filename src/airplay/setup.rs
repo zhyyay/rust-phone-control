@@ -57,6 +57,7 @@ pub(super) fn parse_setup_request(bytes: &[u8]) -> Result<SetupRequest, String> 
                 Value::String(_) => "string",
                 Value::Date(_) => "date",
                 Value::Uid(_) => "uid",
+                _ => "other",
             };
             format!("{key}:{kind}")
         })
