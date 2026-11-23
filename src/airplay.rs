@@ -128,19 +128,28 @@ pub fn approve_pending_controller() -> Result<bool, String> {
 }
 
 #[cfg(windows)]
-pub fn reject_pending_controller() -> bool {
-    let Ok(mut pending) = pending_controllers().lock() else {
-        return false;
+pub fn reject_pending_controller() -> Result<bool, String> {
+    let rejected = {
+        let pending = pending_controllers()
+            .lock()
+            .map_err(|_| "pending AirPlay controller lock is poisoned")?;
+        let Some(key) = pending.first() else {
+            return Ok(false);
+        };
+        *key
     };
-    if pending.is_empty() {
-        return false;
+    pair_setup::deny_legacy_controller(rejected)?;
+    let mut pending = pending_controllers()
+        .lock()
+        .map_err(|_| "pending AirPlay controller lock is poisoned")?;
+    if pending.first() == Some(&rejected) {
+        pending.remove(0);
     }
-    let rejected = pending.remove(0);
     tracing::info!(
         fingerprint = %controller_fingerprint_label(&rejected),
-        "AirPlay controller approval rejected"
+        "AirPlay controller denial persisted"
     );
-    true
+    Ok(true)
 }
 
 #[cfg(windows)]
