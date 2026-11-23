@@ -919,6 +919,10 @@ impl CodecParameterSets {
 /// from causing unbounded allocations in the presentation pipeline.
 pub const MAX_FRAME_DIMENSION: u32 = 8192;
 
+/// Maximum decoded BGRA frame retained by the preview mailbox (128 MiB).
+/// This caps retained memory independently of the dimension limit.
+pub const MAX_BGRA_FRAME_BYTES: usize = 128 * 1024 * 1024;
+
 /// A decoded NV12 frame borrowed from a decoder output buffer.
 #[derive(Debug, Clone, Copy)]
 pub struct Nv12Frame<'a> {
@@ -984,6 +988,9 @@ impl LatestFrameMailbox {
                 usize::try_from(frame.height).map_err(|_| FrameMailboxError::InvalidStride)?,
             )
             .ok_or(FrameMailboxError::InvalidStride)?;
+        if required_bytes > MAX_BGRA_FRAME_BYTES {
+            return Err(FrameMailboxError::FrameTooLarge);
+        }
         if frame.data.len() < required_bytes {
             return Err(FrameMailboxError::BufferTooSmall);
         }
@@ -1021,6 +1028,7 @@ pub enum FrameMailboxError {
     DimensionTooLarge,
     InvalidStride,
     BufferTooSmall,
+    FrameTooLarge,
 }
 
 impl std::fmt::Display for FrameMailboxError {
@@ -1032,6 +1040,9 @@ impl std::fmt::Display for FrameMailboxError {
             Self::InvalidStride => f.write_str("decoded frame has an invalid BGRA stride"),
             Self::BufferTooSmall => {
                 f.write_str("decoded frame buffer is smaller than its dimensions")
+            }
+            Self::FrameTooLarge => {
+                f.write_str("decoded frame exceeds the maximum retained BGRA frame size")
             }
         }
     }
@@ -1600,6 +1611,22 @@ mod tests {
         assert_eq!(snapshot.frame.data, vec![5, 6, 7, 8]);
         assert!(!mailbox.has_pending_frame().unwrap());
         assert!(mailbox.take_latest().unwrap().is_none());
+    }
+
+    #[test]
+    fn latest_frame_mailbox_rejects_frames_over_retained_byte_limit() {
+        let mailbox = LatestFrameMailbox::new();
+        let frame = BgraFrame {
+            width: MAX_FRAME_DIMENSION,
+            height: MAX_FRAME_DIMENSION,
+            stride: MAX_FRAME_DIMENSION as usize * 4,
+            data: Vec::new(),
+        };
+        assert_eq!(
+            mailbox.publish(frame),
+            Err(FrameMailboxError::FrameTooLarge)
+        );
+        assert!(!mailbox.has_pending_frame().unwrap());
     }
 
     #[test]
