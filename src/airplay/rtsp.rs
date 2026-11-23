@@ -556,32 +556,21 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
                                 sender_phase1_parameters = ?message.initial_parameters,
                                 "FairPlay SAP unavailable: refusing placeholder M2"
                             );
-                            let response = fairplay_error_response(
-                                501,
-                                "Not Implemented",
-                                &request.cseq,
-                            );
+                            let response =
+                                fairplay_error_response(501, "Not Implemented", &request.cseq);
                             write_response(&mut stream, &response, 501)?;
                         } else {
                             tracing::warn!(
                                 phase = phase as u8,
                                 "FairPlay message received but no authenticated SAP session exists"
                             );
-                            let response = fairplay_error_response(
-                                403,
-                                "Forbidden",
-                                &request.cseq,
-                            );
+                            let response = fairplay_error_response(403, "Forbidden", &request.cseq);
                             write_response(&mut stream, &response, 403)?;
                         }
                     }
                     Err(error) => {
                         tracing::warn!(%error, "AirPlay FairPlay setup framing rejected");
-                        let response = fairplay_error_response(
-                            400,
-                            "Bad Request",
-                            &request.cseq,
-                        );
+                        let response = fairplay_error_response(400, "Bad Request", &request.cseq);
                         write_response(&mut stream, &response, 400)?;
                     }
                 }
