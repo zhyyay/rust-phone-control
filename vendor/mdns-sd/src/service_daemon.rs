@@ -4964,49 +4964,55 @@ fn send_dns_outgoing_impl(
         out.additionals().len()
     );
 
-    match if_addr.ip() {
-        IpAddr::V4(ipv4) => {
-            if let Err(e) = sock.set_multicast_if_v4(&ipv4) {
-                debug!(
-                    "send_dns_outgoing: failed to set multicast interface for IPv4 {}: {}",
-                    ipv4, e
-                );
-                // cannot send without a valid interface
-                if e.kind() == std::io::ErrorKind::AddrNotAvailable {
-                    let intf_addr = Interface {
-                        name: if_name.to_string(),
-                        addr: if_addr.clone(),
-                        index: Some(if_index),
-                        oper_status: if_addrs::IfOperStatus::Down,
-                        is_p2p: false,
-                        #[cfg(windows)]
-                        adapter_name: String::new(),
-                    };
-                    return Err(InternalError::IntfAddrInvalid(intf_addr));
+    // Selecting a multicast egress interface is only meaningful for multicast
+    // packets. In particular, do not let IP_MULTICAST_IF / IPV6_MULTICAST_IF
+    // configuration interfere with RFC 6762 QU replies: those are ordinary
+    // unicast UDP datagrams sent to the querier's source address and port.
+    if unicast_dest.is_none() {
+        match if_addr.ip() {
+            IpAddr::V4(ipv4) => {
+                if let Err(e) = sock.set_multicast_if_v4(&ipv4) {
+                    debug!(
+                        "send_dns_outgoing: failed to set multicast interface for IPv4 {}: {}",
+                        ipv4, e
+                    );
+                    // cannot send without a valid interface
+                    if e.kind() == std::io::ErrorKind::AddrNotAvailable {
+                        let intf_addr = Interface {
+                            name: if_name.to_string(),
+                            addr: if_addr.clone(),
+                            index: Some(if_index),
+                            oper_status: if_addrs::IfOperStatus::Down,
+                            is_p2p: false,
+                            #[cfg(windows)]
+                            adapter_name: String::new(),
+                        };
+                        return Err(InternalError::IntfAddrInvalid(intf_addr));
+                    }
+                    return Ok(vec![]); // non-fatal other failure
                 }
-                return Ok(vec![]); // non-fatal other failure
             }
-        }
-        IpAddr::V6(ipv6) => {
-            if let Err(e) = sock.set_multicast_if_v6(if_index) {
-                debug!(
-                    "send_dns_outgoing: failed to set multicast interface for IPv6 {}: {}",
-                    ipv6, e
-                );
-                // cannot send without a valid interface
-                if e.kind() == std::io::ErrorKind::AddrNotAvailable {
-                    let intf_addr = Interface {
-                        name: if_name.to_string(),
-                        addr: if_addr.clone(),
-                        index: Some(if_index),
-                        oper_status: if_addrs::IfOperStatus::Down,
-                        is_p2p: false,
-                        #[cfg(windows)]
-                        adapter_name: String::new(),
-                    };
-                    return Err(InternalError::IntfAddrInvalid(intf_addr));
+            IpAddr::V6(ipv6) => {
+                if let Err(e) = sock.set_multicast_if_v6(if_index) {
+                    debug!(
+                        "send_dns_outgoing: failed to set multicast interface for IPv6 {}: {}",
+                        ipv6, e
+                    );
+                    // cannot send without a valid interface
+                    if e.kind() == std::io::ErrorKind::AddrNotAvailable {
+                        let intf_addr = Interface {
+                            name: if_name.to_string(),
+                            addr: if_addr.clone(),
+                            index: Some(if_index),
+                            oper_status: if_addrs::IfOperStatus::Down,
+                            is_p2p: false,
+                            #[cfg(windows)]
+                            adapter_name: String::new(),
+                        };
+                        return Err(InternalError::IntfAddrInvalid(intf_addr));
+                    }
+                    return Ok(vec![]); // non-fatal other failure
                 }
-                return Ok(vec![]); // non-fatal other failure
             }
         }
     }
@@ -5014,7 +5020,15 @@ fn send_dns_outgoing_impl(
     let packet_list = out.to_data_on_wire(config.max_packet_size, config.is_ipv4);
     for packet in packet_list.iter() {
         match unicast_dest {
-            Some(dest) => unicast_on_intf(packet, if_name, dest, sock),
+            Some(dest) => {
+                debug!(
+                    "sending unicast mDNS {} bytes on interface {} to {}",
+                    packet.len(),
+                    if_name,
+                    dest
+                );
+                unicast_on_intf(packet, if_name, dest, sock);
+            }
             None => multicast_on_intf(packet, if_name, if_index, if_addr, sock, config.port),
         }
     }
@@ -5032,14 +5046,14 @@ fn unicast_on_intf(packet: &[u8], if_name: &str, dest: SocketAddr, socket: &PktI
 
     let sock_addr = dest.into();
     match socket.send_to(packet, &sock_addr) {
-        Ok(sz) => trace!(
-            "sent unicast {} bytes on interface {} to {}",
+        Ok(sz) => debug!(
+            "sent unicast mDNS {} bytes on interface {} to {}",
             sz,
             if_name,
             dest
         ),
-        Err(e) => trace!(
-            "Failed to send unicast to {} via {:?}: {}",
+        Err(e) => debug!(
+            "failed to send unicast mDNS to {} via {}: {}",
             dest,
             if_name,
             e
