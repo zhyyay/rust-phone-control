@@ -462,7 +462,8 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
                     });
                 let setup_code = super::setup_code();
                 let response_body = if transient_pair_setup {
-                    super::pair_setup::accessory_public_key().map(|key| key.to_vec())
+                    super::pair_setup::accessory_public_key()
+                        .map(|key| key.to_vec())
                         .map_err(|reason| PairSetupFailure::unavailable(reason))
                 } else {
                     handle_pair_setup(
