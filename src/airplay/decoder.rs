@@ -523,7 +523,11 @@ impl<'runtime> H264Decoder<'runtime> {
                 .and_then(|pixels| pixels.checked_mul(3))
                 .map(|bytes| bytes / 2)
                 .ok_or(MediaFoundationError::FrameSizeOverflow)?;
-            let buffer = unsafe { MFCreateMemoryBuffer(stream_info.cbSize.max(frame_bytes)) }
+            let buffer_size = stream_info.cbSize.max(frame_bytes);
+            if buffer_size as usize > MAX_DECODED_NV12_BYTES {
+                return Err(MediaFoundationError::OutputBufferTooLarge);
+            }
+            let buffer = unsafe { MFCreateMemoryBuffer(buffer_size) }
                 .map_err(|error| MediaFoundationError::BufferFailed(error.code().0))?;
             let sample = unsafe { MFCreateSample() }
                 .map_err(|error| MediaFoundationError::SampleFailed(error.code().0))?;
@@ -570,6 +574,9 @@ impl<'runtime> H264Decoder<'runtime> {
         let current_length = unsafe { buffer.GetCurrentLength() }
             .map_err(|error| MediaFoundationError::BufferFailed(error.code().0))?
             as usize;
+        if current_length > MAX_DECODED_NV12_BYTES {
+            return Err(MediaFoundationError::OutputBufferTooLarge);
+        }
         let mut source = std::ptr::null_mut();
         unsafe { buffer.Lock(&mut source, None, None) }
             .map_err(|error| MediaFoundationError::BufferFailed(error.code().0))?;
@@ -610,6 +617,10 @@ impl<'runtime> H264Decoder<'runtime> {
 /// Maximum Annex-B access-unit size accepted by the decode pipeline.
 #[cfg(windows)]
 const MAX_DECODE_ACCESS_UNIT_BYTES: usize = 64 * 1024 * 1024;
+
+/// Maximum NV12 output buffer accepted from a Media Foundation transform.
+#[cfg(windows)]
+const MAX_DECODED_NV12_BYTES: usize = 128 * 1024 * 1024;
 
 /// H.264 decode-to-frame pipeline for one mirror session.
 ///
@@ -736,6 +747,7 @@ pub enum MediaFoundationError {
     ProcessInputFailed(i32),
     OutputInfoFailed(i32),
     FrameSizeOverflow,
+    OutputBufferTooLarge,
     VideoDecryption(crate::airplay::video::EncryptedAccessUnitError),
     FrameConversion(crate::airplay::video::FrameConversionError),
     FrameMailbox(crate::airplay::video::FrameMailboxError),
@@ -821,6 +833,9 @@ impl fmt::Display for MediaFoundationError {
                 *hr as u32
             ),
             Self::FrameSizeOverflow => f.write_str("decoded frame allocation size overflowed"),
+            Self::OutputBufferTooLarge => {
+                f.write_str("Media Foundation output buffer exceeds the 128 MiB limit")
+            }
             Self::VideoDecryption(error) => {
                 write!(f, "encrypted H.264 access unit decryption failed: {error}")
             }
