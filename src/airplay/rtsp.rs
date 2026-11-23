@@ -457,9 +457,9 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
                 // does not advertise pw=true. That wire format is a raw
                 // 32-byte Ed25519 public key, not a HomeKit TLV8/SRP message.
                 let transient_pair_setup = request.body.len() == 32
-                    && request
-                        .header("Content-Type")
-                        .is_some_and(|value| value.eq_ignore_ascii_case("application/octet-stream"));
+                    && request.header("Content-Type").is_some_and(|value| {
+                        value.eq_ignore_ascii_case("application/octet-stream")
+                    });
                 let setup_code = super::setup_code();
                 let response_body = if transient_pair_setup {
                     super::pair_setup::accessory_public_key().map(|key| key.to_vec())
