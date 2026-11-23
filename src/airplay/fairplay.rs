@@ -42,6 +42,7 @@ pub enum FairPlayParseError {
     InvalidAcknowledgementLength(usize),
     InvalidInitialPayload,
     InvalidChallengePayload,
+    UnsupportedChallengeMode(u8),
     UnsupportedKeyMessageMode(u8),
 }
 
@@ -92,6 +93,9 @@ impl std::fmt::Display for FairPlayParseError {
             Self::InvalidChallengePayload => {
                 write!(formatter, "invalid FairPlay M2 challenge payload")
             }
+            Self::UnsupportedChallengeMode(mode) => {
+                write!(formatter, "unsupported FairPlay M2 mode {mode}")
+            }
             Self::UnsupportedKeyMessageMode(mode) => {
                 write!(formatter, "unsupported FairPlay M3 mode {mode}")
             }
@@ -136,9 +140,7 @@ pub fn parse_message(body: &[u8]) -> Result<FairPlayMessage, FairPlayParseError>
             Ok(FairPlayMessage {
                 phase: MessagePhase::Initial,
                 initial_parameters: Some(
-                    body[12..16]
-                        .try_into()
-                        .expect("four-byte initial payload"),
+                    body[12..16].try_into().expect("four-byte initial payload"),
                 ),
                 initial_capabilities: Some(body[14]),
                 challenge_mode: None,
@@ -157,11 +159,15 @@ pub fn parse_message(body: &[u8]) -> Result<FairPlayMessage, FairPlayParseError>
             if body[12] != 0x02 {
                 return Err(FairPlayParseError::InvalidChallengePayload);
             }
+            let mode = body[13];
+            if mode > 3 {
+                return Err(FairPlayParseError::UnsupportedChallengeMode(mode));
+            }
             Ok(FairPlayMessage {
                 phase: MessagePhase::Challenge,
                 initial_parameters: None,
                 initial_capabilities: None,
-                challenge_mode: Some(body[13]),
+                challenge_mode: Some(mode),
                 challenge: Some(
                     body[14..142]
                         .try_into()
@@ -437,6 +443,16 @@ mod tests {
     }
 
     #[test]
+    fn rejects_m2_with_unsupported_mode() {
+        let mut body = build_m2(3, &[0x5a; 128]);
+        body[13] = 4;
+        assert_eq!(
+            parse_message(&body).unwrap_err(),
+            FairPlayParseError::UnsupportedChallengeMode(4)
+        );
+    }
+
+    #[test]
     fn rejects_m3_when_mode_does_not_match_the_negotiated_m2_mode() {
         let mut session = FairPlaySession::new();
         let initial = parse_message(&initial_message(3)).unwrap();
@@ -446,10 +462,12 @@ mod tests {
         let mut mismatched = key_message();
         mismatched[12] = 2;
         let parsed = parse_message(&mismatched).unwrap();
-        assert!(session
-            .accept(parsed)
-            .unwrap_err()
-            .contains("does not match"));
+        assert!(
+            session
+                .accept(parsed)
+                .unwrap_err()
+                .contains("does not match")
+        );
         assert!(!session.has_key_message());
     }
 
@@ -464,7 +482,10 @@ mod tests {
 
         let mut body = initial_message(3);
         body[15] = 0;
-        assert_eq!(parse_message(&body).unwrap_err(), FairPlayParseError::InvalidInitialPayload);
+        assert_eq!(
+            parse_message(&body).unwrap_err(),
+            FairPlayParseError::InvalidInitialPayload
+        );
     }
 
     #[test]
