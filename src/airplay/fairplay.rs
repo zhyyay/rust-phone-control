@@ -180,6 +180,22 @@ pub fn build_m4(acknowledgement: &[u8; 20]) -> [u8; 32] {
     record
 }
 
+/// Build the phase-4 acknowledgement from a structurally valid phase-3 record.
+///
+/// The observed wire format echoes the final 20-byte response field. This is
+/// framing compatibility only; it does not cryptographically authenticate M3
+/// or unwrap the sender's media key.
+pub fn build_m4_from_m3(m3: &[u8]) -> Result<[u8; 32], String> {
+    let message = parse_message(m3).map_err(|error| error.to_string())?;
+    if message.phase != MessagePhase::KeyMessage {
+        return Err("FairPlay M4 requires a phase-3 key message".to_owned());
+    }
+    let acknowledgement: [u8; 20] = m3[144..164]
+        .try_into()
+        .expect("validated 164-byte FairPlay M3");
+    Ok(build_m4(&acknowledgement))
+}
+
 #[derive(Debug, Default)]
 pub struct FairPlaySession {
     initial_selector: Option<u8>,
@@ -312,6 +328,17 @@ mod tests {
             parse_message(&m4).unwrap().phase,
             MessagePhase::Acknowledgement
         );
+    }
+
+    #[test]
+    fn builds_m4_by_echoing_the_m3_response_field() {
+        let mut m3 = key_message();
+        for (index, byte) in m3[144..164].iter_mut().enumerate() {
+            *byte = index as u8;
+        }
+        let m4 = build_m4_from_m3(&m3).expect("build M4 acknowledgement");
+        assert_eq!(&m4[..12], b"FPLY\\x03\\x01\\x04\\x00\\x00\\x00\\x00\\x14");
+        assert_eq!(&m4[12..], &m3[144..164]);
     }
 
     #[test]
