@@ -262,7 +262,10 @@ pub fn is_controller_public_key_paired(public_key: &[u8; 32]) -> Result<bool, St
     let state = lock
         .lock()
         .map_err(|_| "AirPlay pairing state lock poisoned")?;
-    Ok(state.controllers.values().any(|stored| stored == public_key))
+    Ok(state
+        .controllers
+        .values()
+        .any(|stored| stored == public_key))
 }
 
 /// Check whether a controller was explicitly denied by the local user.
@@ -295,12 +298,20 @@ pub fn deny_legacy_controller(public_key: [u8; 32]) -> Result<(), String> {
         .insert(identifier.clone(), public_key);
     if let Err(error) = state.persist() {
         match previous_trusted {
-            Some(key) => { state.controllers.insert(identifier.clone(), key); }
-            None => { state.controllers.remove(&identifier); }
+            Some(key) => {
+                state.controllers.insert(identifier.clone(), key);
+            }
+            None => {
+                state.controllers.remove(&identifier);
+            }
         }
         match previous_denied {
-            Some(key) => { state.denied_controllers.insert(identifier, key); }
-            None => { state.denied_controllers.remove(&identifier); }
+            Some(key) => {
+                state.denied_controllers.insert(identifier, key);
+            }
+            None => {
+                state.denied_controllers.remove(&identifier);
+            }
         }
         return Err(error);
     }
@@ -320,7 +331,11 @@ pub fn trust_legacy_controller(public_key: [u8; 32]) -> Result<(), String> {
     let mut state = lock
         .lock()
         .map_err(|_| "AirPlay pairing state lock poisoned")?;
-    if state.controllers.values().any(|stored| stored == &public_key) {
+    if state
+        .controllers
+        .values()
+        .any(|stored| stored == &public_key)
+    {
         return Ok(());
     }
     let previous_denied = state.denied_controllers.remove(&identifier);
@@ -330,8 +345,12 @@ pub fn trust_legacy_controller(public_key: [u8; 32]) -> Result<(), String> {
             state.denied_controllers.insert(identifier.clone(), key);
         }
         match previous {
-            Some(key) => { state.controllers.insert(identifier, key); }
-            None => { state.controllers.remove(&identifier); }
+            Some(key) => {
+                state.controllers.insert(identifier, key);
+            }
+            None => {
+                state.controllers.remove(&identifier);
+            }
         }
         return Err(error);
     }
