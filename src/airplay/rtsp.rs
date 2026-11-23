@@ -238,12 +238,33 @@ fn read_mirror_stream(
         // dropping one encrypted packet would advance the sender's CTR stream
         // without advancing the receiver's cipher, corrupting every later
         // packet. A bounded blocking send applies backpressure instead.
-        match sender.send(owned) {
-            Ok(()) => received = received.saturating_add(1),
-            Err(_) => break,
+        if !send_packet_while_running(sender, owned, running) {
+            break;
         }
+        received = received.saturating_add(1);
     }
     tracing::debug!(%peer_addr, received, "AirPlay mirror TCP stream reader stopped");
+}
+
+fn send_packet_while_running(
+    sender: &mpsc::SyncSender<ReceivedMediaPacket>,
+    mut packet: ReceivedMediaPacket,
+    running: &std::sync::Arc<std::sync::atomic::AtomicBool>,
+) -> bool {
+    use std::sync::atomic::Ordering;
+    loop {
+        if !running.load(Ordering::Acquire) {
+            return false;
+        }
+        match sender.try_send(packet) {
+            Ok(()) => return true,
+            Err(mpsc::TrySendError::Full(returned)) => {
+                packet = returned;
+                thread::sleep(Duration::from_millis(2));
+            }
+            Err(mpsc::TrySendError::Disconnected(_)) => return false,
+        }
+    }
 }
 
 fn read_exact_while_running<R: Read>(
