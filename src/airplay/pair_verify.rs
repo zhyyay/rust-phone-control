@@ -573,7 +573,9 @@ mod tests {
 
     #[test]
     fn completes_legacy_binary_pair_verify_exchange() {
-        use super::{LegacyPairVerifySession, legacy_aes_ctr, legacy_aes_material};
+        use super::{
+            LegacyPairVerifySession, legacy_aes_ctr, legacy_aes_ctr_at_offset, legacy_aes_material,
+        };
         use ed25519_dalek::{Signature, Signer};
 
         let mut controller_secret_bytes = [0u8; 32];
