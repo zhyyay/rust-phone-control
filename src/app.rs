@@ -16,6 +16,8 @@ pub struct PhoneControlApp {
     #[cfg(windows)]
     trusted_airplay_controllers: Vec<String>,
     #[cfg(windows)]
+    denied_airplay_controllers: Vec<String>,
+    #[cfg(windows)]
     airplay_approval_status: String,
     #[cfg(windows)]
     preview_image: Option<Arc<Image>>,
@@ -38,6 +40,8 @@ impl Render for PhoneControlApp {
                         let pending = crate::airplay::pending_controller_approval();
                         let trusted = crate::airplay::trusted_controller_fingerprints()
                             .unwrap_or_default();
+                        let denied = crate::airplay::denied_controller_fingerprints()
+                            .unwrap_or_default();
                         let mut changed = false;
                         if this.pending_airplay_controller != pending {
                             this.pending_airplay_controller = pending;
@@ -45,6 +49,10 @@ impl Render for PhoneControlApp {
                         }
                         if this.trusted_airplay_controllers != trusted {
                             this.trusted_airplay_controllers = trusted;
+                            changed = true;
+                        }
+                        if this.denied_airplay_controllers != denied {
+                            this.denied_airplay_controllers = denied;
                             changed = true;
                         }
                         match crate::airplay::take_latest_video_frame() {
@@ -324,6 +332,44 @@ fn pending_airplay_approval_panel(app: &PhoneControlApp) -> impl IntoElement {
                                 }),
                         ),
                 );
+        }
+    }
+
+    panel = panel.child(Label::new("Blocked devices"));
+    if app.denied_airplay_controllers.is_empty() {
+        panel = panel.child(Label::new("No blocked devices."));
+    } else {
+        for (index, fingerprint) in app.denied_airplay_controllers.iter().enumerate() {
+            let target = fingerprint.clone();
+            panel = panel.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_2()
+                    .child(Label::new(fingerprint.clone()))
+                    .child(
+                        Button::new(format!("airplay-clear-denial-{index}"))
+                            .label("解除拒绝")
+                            .on_click(move |_, _, _| {
+                                match crate::airplay::clear_denied_controller(&target) {
+                                    Ok(true) => tracing::info!(
+                                        fingerprint = %target,
+                                        "AirPlay controller denial cleared; approval is still required"
+                                    ),
+                                    Ok(false) => tracing::warn!(
+                                        fingerprint = %target,
+                                        "AirPlay controller denial was already absent"
+                                    ),
+                                    Err(error) => tracing::error!(
+                                        fingerprint = %target,
+                                        %error,
+                                        "Could not clear AirPlay controller denial"
+                                    ),
+                                }
+                            }),
+                    ),
+            );
         }
     }
 
