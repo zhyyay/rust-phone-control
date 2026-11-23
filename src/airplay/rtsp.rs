@@ -17,7 +17,6 @@ use std::time::Duration;
 
 use rand::{RngCore, rngs::OsRng};
 
-
 use super::{
     config,
     event::EventChannel,
