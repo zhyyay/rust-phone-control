@@ -453,14 +453,33 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
                 return Ok(());
             }
             ("POST", "/pair-setup", "RTSP/1.0") => {
+                // iOS uses transient (no-PIN) Pair-Setup when the receiver
+                // does not advertise pw=true. That wire format is a raw
+                // 32-byte Ed25519 public key, not a HomeKit TLV8/SRP message.
+                let transient_pair_setup = request.body.len() == 32
+                    && request
+                        .header("Content-Type")
+                        .is_some_and(|value| value.eq_ignore_ascii_case("application/octet-stream"));
                 let setup_code = super::setup_code();
-                match handle_pair_setup(
-                    &request.body,
-                    &mut pair_setup_srp,
-                    &mut pair_setup_session_key,
-                    Some(&setup_code),
-                ) {
+                let response_body = if transient_pair_setup {
+                    super::pair_setup::accessory_public_key().map(|key| key.to_vec())
+                        .map_err(|reason| PairSetupFailure::unavailable(reason))
+                } else {
+                    handle_pair_setup(
+                        &request.body,
+                        &mut pair_setup_srp,
+                        &mut pair_setup_session_key,
+                        Some(&setup_code),
+                    )
+                };
+                match response_body {
                     Ok(body) => {
+                        if transient_pair_setup {
+                            tracing::info!(
+                                controller_key_bytes = request.body.len(),
+                                "AirPlay transient Pair-Setup accepted"
+                            );
+                        }
                         let header = format!(
                             "RTSP/1.0 200 OK\r\nCSeq: {}\r\nServer: RustPhoneControl/0.1\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\n\r\n",
                             request.cseq,
