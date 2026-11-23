@@ -471,7 +471,25 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
                         stream.flush()?;
                     }
                     Err(error) => {
-                        tracing::warn!(status = error.status, reason = %error.reason, "Pair-Setup request rejected");
+                        // Only expose the first four bytes: enough to identify the
+                        // TLV envelope/state and diagnose framing, without logging
+                        // controller keys, SRP material, or encrypted payloads.
+                        let body_prefix = request
+                            .body
+                            .iter()
+                            .take(4)
+                            .map(|byte| format!("{byte:02x}"))
+                            .collect::<Vec<_>>()
+                            .join(" ");
+                        let content_type = request.header("Content-Type").unwrap_or("missing");
+                        tracing::warn!(
+                            status = error.status,
+                            reason = %error.reason,
+                            body_bytes = request.body.len(),
+                            body_prefix = %body_prefix,
+                            content_type,
+                            "Pair-Setup request rejected"
+                        );
                         let reason = if error.status == 503 {
                             "Service Unavailable"
                         } else {
