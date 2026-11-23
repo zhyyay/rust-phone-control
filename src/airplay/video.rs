@@ -1057,6 +1057,7 @@ pub enum FrameConversionError {
     DimensionTooLarge,
     InvalidStride,
     BufferTooSmall,
+    FrameTooLarge,
     SizeOverflow,
 }
 
@@ -1068,6 +1069,7 @@ impl std::fmt::Display for FrameConversionError {
             Self::DimensionTooLarge => "frame dimensions exceed the configured limit",
             Self::InvalidStride => "NV12 plane stride is smaller than its row width",
             Self::BufferTooSmall => "NV12 buffer does not contain all declared rows",
+            Self::FrameTooLarge => "converted BGRA frame exceeds the 128 MiB limit",
             Self::SizeOverflow => "frame allocation size overflowed",
         };
         f.write_str(message)
@@ -1165,9 +1167,6 @@ impl<'a> Nv12Frame<'a> {
         let required = y_bytes
             .checked_add(uv_bytes)
             .ok_or(FrameConversionError::SizeOverflow)?;
-        if self.data.len() < required {
-            return Err(FrameConversionError::BufferTooSmall);
-        }
 
         let output_stride = width
             .checked_mul(4)
@@ -1175,6 +1174,12 @@ impl<'a> Nv12Frame<'a> {
         let output_len = output_stride
             .checked_mul(height)
             .ok_or(FrameConversionError::SizeOverflow)?;
+        if output_len > MAX_BGRA_FRAME_BYTES {
+            return Err(FrameConversionError::FrameTooLarge);
+        }
+        if self.data.len() < required {
+            return Err(FrameConversionError::BufferTooSmall);
+        }
         let mut output = vec![0u8; output_len];
         let uv_base = y_bytes;
 
@@ -1213,6 +1218,18 @@ impl<'a> Nv12Frame<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn nv12_conversion_rejects_oversized_bgra_before_allocating() {
+        let frame = Nv12Frame {
+            width: MAX_FRAME_DIMENSION,
+            height: MAX_FRAME_DIMENSION,
+            y_stride: MAX_FRAME_DIMENSION as usize,
+            uv_stride: MAX_FRAME_DIMENSION as usize,
+            data: &[],
+        };
+        assert_eq!(frame.to_bgra(), Err(FrameConversionError::FrameTooLarge));
+    }
 
     #[test]
     fn parses_baseline_sps_dimensions() {
