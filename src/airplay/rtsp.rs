@@ -15,6 +15,8 @@ use std::sync::{
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
+use rand::{RngCore, rngs::OsRng};
+
 
 use super::{
     config,
@@ -551,21 +553,45 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
                                     "AirPlay FairPlay setup message accepted"
                                 );
 
-                                let reason = match phase {
-                                    super::fairplay::MessagePhase::Initial => {
-                                        "independent FairPlay SAP M2 challenge generation is not implemented"
-                                    }
-                                    super::fairplay::MessagePhase::KeyMessage => {
-                                        "independent FairPlay SAP M3 verification is not implemented"
-                                    }
-                                    _ => "unexpected FairPlay message phase",
-                                };
-                                tracing::warn!(%reason, "AirPlay FairPlay request cannot be completed");
-                                let response = format!(
-                                    "RTSP/1.0 501 Not Implemented\r\nCSeq: {}\r\nServer: RustPhoneControl/0.1\r\nContent-Length: 0\r\n\r\n",
-                                    request.cseq
-                                );
-                                write_response(&mut stream, &response, 501)?;
+                                if phase == super::fairplay::MessagePhase::Initial {
+                                    // The receiver creates a fresh 128-byte challenge.
+                                    // Mode 3 is selected by this receiver; the M1 bytes
+                                    // are retained as sender capability data, not treated
+                                    // as the selected M2 mode.
+                                    const MODE: u8 = 3;
+                                    let mut challenge = [0u8; 128];
+                                    OsRng.fill_bytes(&mut challenge);
+                                    let response_body =
+                                        super::fairplay::build_m2(MODE, &challenge);
+                                    fairplay_session
+                                        .mark_challenge_sent(MODE, challenge)
+                                        .map_err(|reason| {
+                                            io::Error::new(io::ErrorKind::InvalidData, reason)
+                                        })?;
+                                    let header = format!(
+                                        "RTSP/1.0 200 OK\r\nCSeq: {}\r\nServer: RustPhoneControl/0.1\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\n\r\n",
+                                        request.cseq,
+                                        response_body.len()
+                                    );
+                                    stream.write_all(header.as_bytes())?;
+                                    stream.write_all(&response_body)?;
+                                    stream.flush()?;
+                                    tracing::info!(
+                                        mode = MODE,
+                                        challenge_bytes = challenge.len(),
+                                        response_bytes = response_body.len(),
+                                        "AirPlay FairPlay M2 challenge sent"
+                                    );
+                                } else {
+                                    tracing::warn!(
+                                        "AirPlay FairPlay M3 received but SAP validation and M4 acknowledgement are not implemented"
+                                    );
+                                    let response = format!(
+                                        "RTSP/1.0 501 Not Implemented\r\nCSeq: {}\r\nServer: RustPhoneControl/0.1\r\nContent-Length: 0\r\n\r\n",
+                                        request.cseq
+                                    );
+                                    write_response(&mut stream, &response, 501)?;
+                                }
                             }
                             Err(reason) => {
                                 tracing::warn!(%reason, "AirPlay FairPlay setup message rejected by session state");
