@@ -14,6 +14,8 @@ pub struct PhoneControlApp {
     #[cfg(windows)]
     pending_airplay_controller: Option<String>,
     #[cfg(windows)]
+    trusted_airplay_controllers: Vec<String>,
+    #[cfg(windows)]
     airplay_approval_status: String,
     #[cfg(windows)]
     preview_image: Option<Arc<Image>>,
@@ -33,8 +35,18 @@ impl Render for PhoneControlApp {
                         .timer(Duration::from_millis(33))
                         .await;
                     let updated = this.update(cx, |this, cx| {
-                        this.pending_airplay_controller =
-                            crate::airplay::pending_controller_approval();
+                        let pending = crate::airplay::pending_controller_approval();
+                        let trusted = crate::airplay::trusted_controller_fingerprints()
+                            .unwrap_or_default();
+                        let mut changed = false;
+                        if this.pending_airplay_controller != pending {
+                            this.pending_airplay_controller = pending;
+                            changed = true;
+                        }
+                        if this.trusted_airplay_controllers != trusted {
+                            this.trusted_airplay_controllers = trusted;
+                            changed = true;
+                        }
                         match crate::airplay::take_latest_video_frame() {
                             Ok(Some(snapshot)) => match bgra_frame_to_bmp(&snapshot.frame) {
                                 Ok(bytes) => {
@@ -48,7 +60,7 @@ impl Render for PhoneControlApp {
                                         ImageFormat::Bmp,
                                         bytes,
                                     )));
-                                    cx.notify();
+                                    changed = true;
                                 }
                                 Err(error) => {
                                     tracing::warn!(%error, "Could not prepare decoded frame for GPUI");
@@ -58,6 +70,9 @@ impl Render for PhoneControlApp {
                             Err(error) => {
                                 tracing::warn!(%error, "Could not read decoded AirPlay frame");
                             }
+                        }
+                        if changed {
+                            cx.notify();
                         }
                     });
                     if updated.is_err() {
@@ -271,6 +286,44 @@ fn pending_airplay_approval_panel(app: &PhoneControlApp) -> impl IntoElement {
             );
     } else {
         panel = panel.child(Label::new("No new device is waiting for authorization."));
+    }
+
+    panel = panel.child(Label::new("Approved devices"));
+    if app.trusted_airplay_controllers.is_empty() {
+        panel = panel.child(Label::new("No approved devices."));
+    } else {
+        for (index, fingerprint) in app.trusted_airplay_controllers.iter().enumerate() {
+            let target = fingerprint.clone();
+            panel = panel.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_2()
+                    .child(Label::new(fingerprint.clone()))
+                    .child(
+                        Button::new(format!("airplay-revoke-controller-{index}"))
+                            .label("Revoke")
+                            .on_click(move |_, _, _| {
+                                match crate::airplay::revoke_trusted_controller(&target) {
+                                    Ok(true) => tracing::info!(
+                                        fingerprint = %target,
+                                        "AirPlay controller authorization revoked"
+                                    ),
+                                    Ok(false) => tracing::warn!(
+                                        fingerprint = %target,
+                                        "AirPlay controller authorization was already absent"
+                                    ),
+                                    Err(error) => tracing::error!(
+                                        fingerprint = %target,
+                                        %error,
+                                        "Could not revoke AirPlay controller authorization"
+                                    ),
+                                }
+                            }),
+                    ),
+            );
+        }
     }
 
     if !app.airplay_approval_status.is_empty() {
