@@ -83,7 +83,11 @@ fn submit_request(request: &DNS_SERVICE_REGISTER_REQUEST, deregister: bool) -> R
         }
         bail!(
             "Windows DNS-SD {} completed with status 0x{:08X}",
-            if deregister { "deregistration" } else { "registration" },
+            if deregister {
+                "deregistration"
+            } else {
+                "registration"
+            },
             completion.status
         );
     }
