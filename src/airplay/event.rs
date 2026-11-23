@@ -57,7 +57,11 @@ impl Drop for EventChannel {
     }
 }
 
-fn accept_events(listener: TcpListener, running: Arc<AtomicBool>, expected_peer_ip: std::net::IpAddr) {
+fn accept_events(
+    listener: TcpListener,
+    running: Arc<AtomicBool>,
+    expected_peer_ip: std::net::IpAddr,
+) {
     while running.load(Ordering::Acquire) {
         match listener.accept() {
             Ok((stream, peer)) => {
