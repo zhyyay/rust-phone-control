@@ -17,8 +17,9 @@ pub enum MessagePhase {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FairPlayMessage {
     pub phase: MessagePhase,
-    /// Capability mask advertised by the sender in its phase-1 message. This is not the receiver-selected FairPlay mode.
-    pub capabilities: Option<u8>,
+    /// Raw selector byte at offset 14 of phase 1. Its interpretation is deliberately
+    /// kept neutral until the target-device negotiation is independently verified.
+    pub initial_selector: Option<u8>,
     pub body: Vec<u8>,
 }
 
@@ -33,7 +34,6 @@ pub enum FairPlayParseError {
     InvalidChallengeLength(usize),
     InvalidKeyMessageLength(usize),
     InvalidAcknowledgementLength(usize),
-    UnexpectedReceiverPhase(u8),
 }
 
 impl std::fmt::Display for FairPlayParseError {
@@ -70,9 +70,6 @@ impl std::fmt::Display for FairPlayParseError {
             }
             Self::InvalidAcknowledgementLength(length) => {
                 write!(formatter, "FairPlay acknowledgement must be 32 bytes, got {length}")
-            }
-            Self::UnexpectedReceiverPhase(phase) => {
-                write!(formatter, "FairPlay receiver-originated phase {phase} cannot be accepted as a sender message")
             }
         }
     }
@@ -111,7 +108,7 @@ pub fn parse_message(body: &[u8]) -> Result<FairPlayMessage, FairPlayParseError>
             }
             Ok(FairPlayMessage {
                 phase: MessagePhase::Initial,
-                capabilities: Some(body[14]),
+                initial_selector: Some(body[14]),
                 body: body.to_vec(),
             })
         }
@@ -121,7 +118,7 @@ pub fn parse_message(body: &[u8]) -> Result<FairPlayMessage, FairPlayParseError>
             }
             Ok(FairPlayMessage {
                 phase: MessagePhase::Challenge,
-                capabilities: None,
+                initial_selector: None,
                 body: body.to_vec(),
             })
         }
@@ -180,7 +177,8 @@ pub fn build_m4(acknowledgement: &[u8; 20]) -> [u8; 32] {
 
 #[derive(Debug, Default)]
 pub struct FairPlaySession {
-    initial_capabilities: Option<u8>,
+    initial_selector: Option<u8>,
+    challenge_sent: bool,
     key_message: Option<Vec<u8>>,
 }
 
@@ -192,18 +190,21 @@ impl FairPlaySession {
     pub fn accept(&mut self, message: FairPlayMessage) -> Result<FairPlayState, String> {
         match message.phase {
             MessagePhase::Initial => {
-                if self.initial_capabilities.is_some() {
+                if self.initial_selector.is_some() {
                     return Err("FairPlay initial message was already received".to_owned());
                 }
-                self.initial_capabilities = message.capabilities;
-                Ok(FairPlayState::AwaitingKeyMessage)
+                self.initial_selector = message.initial_selector;
+                Ok(FairPlayState::AwaitingChallenge)
             }
             MessagePhase::Challenge | MessagePhase::Acknowledgement => {
                 return Err(format!("FairPlay phase {} is receiver-originated", message.phase as u8));
             }
             MessagePhase::KeyMessage => {
-                if self.initial_capabilities.is_none() {
+                if self.initial_selector.is_none() {
                     return Err("FairPlay key message received before initial message".to_owned());
+                }
+                if !self.challenge_sent {
+                    return Err("FairPlay key message received before receiver challenge".to_owned());
                 }
                 if self.key_message.is_some() {
                     return Err("FairPlay key message was already received".to_owned());
@@ -214,10 +215,22 @@ impl FairPlaySession {
         }
     }
 
-    /// Capabilities advertised by the sender in phase 1. This must not be
-    /// confused with the FairPlay mode selected by the receiver in phase 2.
-    pub fn capabilities(&self) -> Option<u8> {
-        self.initial_capabilities
+    /// Raw phase-1 selector byte. Its protocol meaning is not normalized here.
+    pub fn initial_selector(&self) -> Option<u8> {
+        self.initial_selector
+    }
+
+    /// Record that a real, negotiated phase-2 challenge has been sent.
+    /// Callers must not use this for placeholder or replayed challenge bytes.
+    pub fn mark_challenge_sent(&mut self) -> Result<(), String> {
+        if self.initial_selector.is_none() {
+            return Err("FairPlay challenge cannot be sent before initial message".to_owned());
+        }
+        if self.challenge_sent {
+            return Err("FairPlay challenge was already sent".to_owned());
+        }
+        self.challenge_sent = true;
+        Ok(())
     }
 
     pub fn has_key_message(&self) -> bool {
@@ -227,6 +240,7 @@ impl FairPlaySession {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FairPlayState {
+    AwaitingChallenge,
     AwaitingKeyMessage,
     KeyMessageReceived,
 }
@@ -291,7 +305,7 @@ mod tests {
     fn parses_initial_message_and_mode() {
         let message = parse_message(&initial_message(3)).expect("initial FairPlay message");
         assert_eq!(message.phase, MessagePhase::Initial);
-        assert_eq!(message.capabilities, Some(3));
+        assert_eq!(message.initial_selector, Some(3));
         assert_eq!(message.body.len(), 16);
     }
 
@@ -299,7 +313,7 @@ mod tests {
     fn parses_key_message() {
         let message = parse_message(&key_message()).expect("key FairPlay message");
         assert_eq!(message.phase, MessagePhase::KeyMessage);
-        assert_eq!(message.capabilities, None);
+        assert_eq!(message.initial_selector, None);
         assert_eq!(message.body.len(), 164);
     }
 
@@ -321,7 +335,7 @@ mod tests {
         body[6] = 2;
         assert_eq!(
             parse_message(&body).unwrap_err(),
-            FairPlayParseError::UnsupportedPhase(2)
+            FairPlayParseError::InvalidChallengeLength(16)
         );
 
         let mut body = initial_message(3);
@@ -366,9 +380,10 @@ mod tests {
         let initial = parse_message(&initial_message(3)).expect("initial message");
         assert_eq!(
             session.accept(initial).expect("accept initial"),
-            FairPlayState::AwaitingKeyMessage
+            FairPlayState::AwaitingChallenge
         );
-        assert_eq!(session.capabilities(), Some(3));
+        assert_eq!(session.initial_selector(), Some(3));
+        session.mark_challenge_sent().expect("send M2 challenge");
 
         let duplicate_initial = parse_message(&initial_message(3)).expect("duplicate initial");
         assert_eq!(
@@ -377,6 +392,7 @@ mod tests {
         );
 
         let key = parse_message(&key_message()).expect("key message");
+        session.mark_challenge_sent().expect("send M2 challenge");
         assert_eq!(
             session.accept(key).expect("accept key"),
             FairPlayState::KeyMessageReceived
