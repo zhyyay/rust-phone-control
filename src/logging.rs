@@ -16,7 +16,8 @@ pub fn init_logging() -> Result<()> {
 
     tracing_subscriber::fmt()
         .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info,mdns_sd=debug")),
+            EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| EnvFilter::new("info,mdns_sd=debug")),
         )
         .with_ansi(false)
         .with_writer(file)
