@@ -4,10 +4,10 @@
 //! The application only registers the AirPlay and RAOP service descriptions;
 //! it does not bind UDP 5353 itself.
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, bail};
 use std::{ffi::c_void, ptr, sync::mpsc};
 use windows_062::{
-    Win32::Foundation::{BOOL, DNS_REQUEST_PENDING},
+    Win32::Foundation::DNS_REQUEST_PENDING,
     Win32::NetworkManagement::Dns::{
         DNS_SERVICE_INSTANCE, DNS_SERVICE_REGISTER_REQUEST, DnsServiceDeRegister,
         DnsServiceFreeInstance, DnsServiceRegister,
@@ -72,7 +72,7 @@ fn submit_request(request: &DNS_SERVICE_REGISTER_REQUEST, deregister: bool) -> R
         );
     }
 
-    let completion = receiver
+    let completion: Completion = receiver
         .recv()
         .context("Windows DNS-SD completion callback channel closed")?;
     if completion.status != 0 {
@@ -187,7 +187,7 @@ impl RegisteredService {
             pServiceInstance: &mut data.instance,
             pRegisterCompletionCallback: Some(registration_complete),
             pQueryContext: ptr::null_mut(),
-            unicastEnabled: BOOL(0),
+            unicastEnabled: Default::default(),
             ..Default::default()
         };
 
