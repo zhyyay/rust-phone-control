@@ -5048,15 +5048,11 @@ fn unicast_on_intf(packet: &[u8], if_name: &str, dest: SocketAddr, socket: &PktI
     match socket.send_to(packet, &sock_addr) {
         Ok(sz) => debug!(
             "sent unicast mDNS {} bytes on interface {} to {}",
-            sz,
-            if_name,
-            dest
+            sz, if_name, dest
         ),
         Err(e) => debug!(
             "failed to send unicast mDNS to {} via {}: {}",
-            dest,
-            if_name,
-            e
+            dest, if_name, e
         ),
     }
 }
