@@ -249,25 +249,23 @@ fn pending_airplay_approval_panel(app: &PhoneControlApp) -> impl IntoElement {
                         Button::new("airplay-approve-controller")
                             .primary()
                             .label("Allow this device")
-                            .on_click(|_, _, cx| {
+                            .on_click(|_, _, _| {
                                 match crate::airplay::approve_pending_controller() {
                                     Ok(true) => tracing::info!("AirPlay device approval saved"),
                                     Ok(false) => tracing::warn!("No pending AirPlay device to approve"),
                                     Err(error) => tracing::error!(%error, "Could not approve AirPlay device"),
                                 }
-                                cx.notify();
                             }),
                     )
                     .child(
                         Button::new("airplay-reject-controller")
                             .label("Reject")
-                            .on_click(|_, _, cx| {
+                            .on_click(|_, _, _| {
                                 match crate::airplay::reject_pending_controller() {
                                     Ok(true) => tracing::info!("AirPlay device denial saved"),
                                     Ok(false) => tracing::warn!("No pending AirPlay device to reject"),
                                     Err(error) => tracing::error!(%error, "Could not persist AirPlay device denial"),
                                 }
-                                cx.notify();
                             }),
                     ),
             );
