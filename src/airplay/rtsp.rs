@@ -527,7 +527,7 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
             }
             ("POST", "/fp-setup", "RTSP/1.0") => {
                 // The first 16 bytes contain only the public FPLY record header,
-                // sequence and mode selector. Never log the full 164-byte M3.
+                // sequence and phase-1 selector bytes. Never log the full 164-byte M3.
                 let record_prefix = request
                     .body
                     .iter()
@@ -569,7 +569,7 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
                                         })?;
 
                                     let header = format!(
-                                        "RTSP/1.0 200 OK\\r\\nCSeq: {}\\r\\nServer: RustPhoneControl/0.1\\r\\nContent-Type: application/octet-stream\\r\\nContent-Length: {}\\r\\n\\r\\n",
+                                        "RTSP/1.0 200 OK\r\nCSeq: {}\r\nServer: RustPhoneControl/0.1\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\n\r\n",
                                         request.cseq,
                                         response_body.len()
                                     );
@@ -587,7 +587,7 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
                                         "AirPlay FairPlay M3 received but independent SAP verification is not implemented"
                                     );
                                     let response = format!(
-                                        "RTSP/1.0 501 Not Implemented\\r\\nCSeq: {}\\r\\nServer: RustPhoneControl/0.1\\r\\nContent-Length: 0\\r\\n\\r\\n",
+                                        "RTSP/1.0 501 Not Implemented\r\nCSeq: {}\r\nServer: RustPhoneControl/0.1\r\nContent-Length: 0\r\n\r\n",
                                         request.cseq
                                     );
                                     write_response(&mut stream, &response, 501)?;
@@ -596,7 +596,7 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
                             Err(reason) => {
                                 tracing::warn!(%reason, "AirPlay FairPlay setup message rejected by session state");
                                 let response = format!(
-                                    "RTSP/1.0 400 Bad Request\\r\\nCSeq: {}\\r\\nServer: RustPhoneControl/0.1\\r\\nContent-Length: 0\\r\\n\\r\\n",
+                                    "RTSP/1.0 400 Bad Request\r\nCSeq: {}\r\nServer: RustPhoneControl/0.1\r\nContent-Length: 0\r\n\r\n",
                                     request.cseq
                                 );
                                 write_response(&mut stream, &response, 400)?;
@@ -606,7 +606,7 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
                     Err(error) => {
                         tracing::warn!(%error, "AirPlay FairPlay setup framing rejected");
                         let response = format!(
-                            "RTSP/1.0 400 Bad Request\\r\\nCSeq: {}\\r\\nServer: RustPhoneControl/0.1\\r\\nContent-Length: 0\\r\\n\\r\\n",
+                            "RTSP/1.0 400 Bad Request\r\nCSeq: {}\r\nServer: RustPhoneControl/0.1\r\nContent-Length: 0\r\n\r\n",
                             request.cseq
                         );
                         write_response(&mut stream, &response, 400)?;
