@@ -709,9 +709,15 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
                     "RTSP/1.0 200 OK\r\nCSeq: {}\r\nServer: RustPhoneControl/0.1\r\nContent-Length: 0\r\n\r\n",
                     request.cseq
                 );
-                tracing::info!(
-                    "AirPlay RECORD request accepted; media decryption/decoding is not active"
-                );
+                if media_receiver.is_some() {
+                    tracing::info!(
+                        "AirPlay RECORD request accepted; media listener is active, but media decryption/decoding is not active"
+                    );
+                } else {
+                    tracing::warn!(
+                        "AirPlay RECORD arrived without a stream-level SETUP; no screen-mirroring media listener is active"
+                    );
+                }
                 write_response(&mut stream, &response, 200)?;
             }
             ("POST", "/feedback", "RTSP/1.0") => {
@@ -961,6 +967,16 @@ fn handle_setup_request(
                 None => None,
             };
             let timing_port = new_timing_client.as_ref().map_or(0, TimingClient::port);
+
+            tracing::info!(
+                session_uuid_present = session.session_uuid.is_some(),
+                screen_mirroring = session.screen_mirroring,
+                timing_protocol = ?session.timing_protocol,
+                sender_timing_port = ?session.timing_port,
+                event_port,
+                timing_port,
+                "AirPlay session-level SETUP accepted; awaiting stream-level SETUP"
+            );
 
             // Retain only validated key material for this RTSP session. The
             // wrapped key is not a usable AES key until FairPlay is completed.
