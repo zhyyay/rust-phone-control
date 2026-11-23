@@ -958,7 +958,30 @@ impl LatestFrameMailbox {
     }
 
     /// Publish a decoded frame, replacing the previous unconsumed frame.
+    ///
+    /// Validate dimensions, stride and backing storage before retaining bytes
+    /// from a decoder or other untrusted media source.
     pub fn publish(&self, frame: BgraFrame) -> Result<u64, FrameMailboxError> {
+        if frame.width == 0 || frame.height == 0 {
+            return Err(FrameMailboxError::ZeroDimension);
+        }
+        if frame.width > MAX_FRAME_DIMENSION || frame.height > MAX_FRAME_DIMENSION {
+            return Err(FrameMailboxError::DimensionTooLarge);
+        }
+        let row_bytes = usize::try_from(frame.width)
+            .ok()
+            .and_then(|width| width.checked_mul(4))
+            .ok_or(FrameMailboxError::InvalidStride)?;
+        if frame.stride < row_bytes {
+            return Err(FrameMailboxError::InvalidStride);
+        }
+        let required_bytes = frame
+            .stride
+            .checked_mul(usize::try_from(frame.height).map_err(|_| FrameMailboxError::InvalidStride)?)
+            .ok_or(FrameMailboxError::InvalidStride)?;
+        if frame.data.len() < required_bytes {
+            return Err(FrameMailboxError::BufferTooSmall);
+        }
         let mut slot = self.frame.lock().map_err(|_| FrameMailboxError::Poisoned)?;
         let sequence = self.sequence.fetch_add(1, Ordering::AcqRel).wrapping_add(1);
         *slot = Some((sequence, Arc::new(frame)));
@@ -989,12 +1012,20 @@ impl LatestFrameMailbox {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FrameMailboxError {
     Poisoned,
+    ZeroDimension,
+    DimensionTooLarge,
+    InvalidStride,
+    BufferTooSmall,
 }
 
 impl std::fmt::Display for FrameMailboxError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Poisoned => f.write_str("decoded-frame mailbox lock is poisoned"),
+            Self::ZeroDimension => f.write_str("decoded frame has a zero dimension"),
+            Self::DimensionTooLarge => f.write_str("decoded frame exceeds the maximum dimension"),
+            Self::InvalidStride => f.write_str("decoded frame has an invalid BGRA stride"),
+            Self::BufferTooSmall => f.write_str("decoded frame buffer is smaller than its dimensions"),
         }
     }
 }
@@ -1554,6 +1585,35 @@ mod tests {
         assert_eq!(snapshot.frame.data, vec![5, 6, 7, 8]);
         assert!(!mailbox.has_pending_frame().unwrap());
         assert!(mailbox.take_latest().unwrap().is_none());
+    }
+
+    #[test]
+    fn latest_frame_mailbox_rejects_invalid_frames() {
+        let mailbox = LatestFrameMailbox::new();
+        let frame = |width, height, stride, data: Vec<u8>| BgraFrame {
+            width,
+            height,
+            stride,
+            data,
+        };
+
+        assert_eq!(
+            mailbox.publish(frame(0, 1, 4, vec![0; 4])),
+            Err(FrameMailboxError::ZeroDimension)
+        );
+        assert_eq!(
+            mailbox.publish(frame(MAX_FRAME_DIMENSION + 1, 1, 4, vec![0; 4])),
+            Err(FrameMailboxError::DimensionTooLarge)
+        );
+        assert_eq!(
+            mailbox.publish(frame(2, 1, 4, vec![0; 8])),
+            Err(FrameMailboxError::InvalidStride)
+        );
+        assert_eq!(
+            mailbox.publish(frame(2, 2, 8, vec![0; 8])),
+            Err(FrameMailboxError::BufferTooSmall)
+        );
+        assert!(!mailbox.has_pending_frame().unwrap());
     }
 
     #[test]
