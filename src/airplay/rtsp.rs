@@ -300,6 +300,13 @@ fn process_media_packets(
                 sps_count,
                 pps_count,
             } => {
+                // A newly accepted avcC record supersedes the previous decoder
+                // configuration. Never keep decoding with stale dimensions or
+                // parameter sets if the new stream configuration is unusable.
+                frame_pipeline = None;
+                if let Err(error) = frames.clear() {
+                    tracing::warn!(%error, "Could not clear stale AirPlay preview frame");
+                }
                 tracing::info!(
                     %packet.peer_addr,
                     profile,
@@ -372,6 +379,9 @@ fn process_media_packets(
                 tracing::trace!(%packet.peer_addr, "AirPlay mirror heartbeat received");
             }
         }
+    }
+    if let Err(error) = frames.clear() {
+        tracing::warn!(%error, "Could not clear final AirPlay preview frame");
     }
     tracing::info!(received, "AirPlay media processing worker stopped");
 }
