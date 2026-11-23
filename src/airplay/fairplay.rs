@@ -185,6 +185,8 @@ pub struct FairPlaySession {
     initial_selector: Option<u8>,
     challenge_sent: bool,
     key_message: Option<Vec<u8>>,
+    challenge_mode: Option<u8>,
+    challenge: Option<[u8; 128]>,
 }
 
 impl FairPlaySession {
@@ -232,19 +234,36 @@ impl FairPlaySession {
 
     /// Record that a real, negotiated phase-2 challenge has been sent.
     /// Callers must not use this for placeholder or replayed challenge bytes.
-    pub fn mark_challenge_sent(&mut self) -> Result<(), String> {
+    pub fn mark_challenge_sent(
+        &mut self,
+        mode: u8,
+        challenge: [u8; 128],
+    ) -> Result<(), String> {
         if self.initial_selector.is_none() {
             return Err("FairPlay challenge cannot be sent before initial message".to_owned());
         }
         if self.challenge_sent {
             return Err("FairPlay challenge was already sent".to_owned());
         }
+        if mode != 3 {
+            return Err(format!("unsupported FairPlay challenge mode {mode}"));
+        }
+        self.challenge_mode = Some(mode);
+        self.challenge = Some(challenge);
         self.challenge_sent = true;
         Ok(())
     }
 
     pub fn has_key_message(&self) -> bool {
         self.key_message.is_some()
+    }
+
+    pub fn challenge_mode(&self) -> Option<u8> {
+        self.challenge_mode
+    }
+
+    pub fn challenge(&self) -> Option<&[u8; 128]> {
+        self.challenge.as_ref()
     }
 }
 
@@ -396,7 +415,12 @@ mod tests {
             session.accept(key_before_challenge).unwrap_err(),
             "FairPlay key message received before receiver challenge"
         );
-        session.mark_challenge_sent().expect("send M2 challenge");
+        let challenge = [0x5au8; 128];
+        session
+            .mark_challenge_sent(3, challenge)
+            .expect("send M2 challenge");
+        assert_eq!(session.challenge_mode(), Some(3));
+        assert_eq!(session.challenge(), Some(&challenge));
 
         let duplicate_initial = parse_message(&initial_message(3)).expect("duplicate initial");
         assert_eq!(
