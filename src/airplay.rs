@@ -40,6 +40,8 @@ mod video;
 
 #[cfg(windows)]
 use std::sync::{Arc, Mutex, OnceLock};
+#[cfg(windows)]
+use sha2::Digest;
 
 #[cfg(windows)]
 pub use video::{BgraFrame, FrameSnapshot};
@@ -57,6 +59,89 @@ static RECEIVER: OnceLock<Mutex<Option<ReceiverRuntime>>> = OnceLock::new();
 
 #[cfg(windows)]
 static PAIRING_CODE: OnceLock<String> = OnceLock::new();
+
+#[cfg(windows)]
+static PENDING_CONTROLLERS: OnceLock<Mutex<Vec<[u8; 32]>>> = OnceLock::new();
+
+#[cfg(windows)]
+fn pending_controllers() -> &'static Mutex<Vec<[u8; 32]>> {
+    PENDING_CONTROLLERS.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+/// Queue a cryptographically verified but not yet approved controller.
+#[cfg(windows)]
+pub(super) fn queue_pending_controller(public_key: [u8; 32]) -> Result<(), String> {
+    if pair_setup::is_controller_public_key_paired(&public_key)? {
+        return Ok(());
+    }
+    let mut pending = pending_controllers()
+        .lock()
+        .map_err(|_| "pending AirPlay controller lock is poisoned")?;
+    if !pending.contains(&public_key) {
+        if pending.len() >= 8 {
+            return Err("too many pending AirPlay controller approvals".into());
+        }
+        pending.push(public_key);
+        tracing::info!(
+            fingerprint = %controller_fingerprint_label(&public_key),
+            "AirPlay controller is waiting for local approval"
+        );
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn controller_fingerprint_label(public_key: &[u8; 32]) -> String {
+    let digest = sha2::Sha256::digest(public_key);
+    digest.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+#[cfg(windows)]
+pub fn pending_controller_approval() -> Option<String> {
+    let pending = pending_controllers().lock().ok()?;
+    pending.first().map(controller_fingerprint_label)
+}
+
+#[cfg(windows)]
+pub fn approve_pending_controller() -> Result<bool, String> {
+    let public_key = {
+        let pending = pending_controllers()
+            .lock()
+            .map_err(|_| "pending AirPlay controller lock is poisoned")?;
+        let Some(key) = pending.first() else {
+            return Ok(false);
+        };
+        *key
+    };
+    pair_setup::trust_legacy_controller(public_key)?;
+    let mut pending = pending_controllers()
+        .lock()
+        .map_err(|_| "pending AirPlay controller lock is poisoned")?;
+    if pending.first() == Some(&public_key) {
+        pending.remove(0);
+    }
+    tracing::info!(
+        fingerprint = %controller_fingerprint_label(&public_key),
+        "AirPlay controller approved and persisted"
+    );
+    Ok(true)
+}
+
+#[cfg(windows)]
+pub fn reject_pending_controller() -> bool {
+    let Ok(mut pending) = pending_controllers().lock() else {
+        return false;
+    };
+    if pending.is_empty() {
+        return false;
+    }
+    let rejected = pending.remove(0);
+    tracing::info!(
+        fingerprint = %controller_fingerprint_label(&rejected),
+        "AirPlay controller approval rejected"
+    );
+    true
+}
 
 #[cfg(windows)]
 fn receiver_slot() -> &'static Mutex<Option<ReceiverRuntime>> {
