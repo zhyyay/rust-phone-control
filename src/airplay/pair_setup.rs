@@ -364,6 +364,56 @@ pub fn trust_legacy_controller(public_key: [u8; 32]) -> Result<(), String> {
     Ok(())
 }
 
+/// List approved Legacy controller fingerprints for the local device-management UI.
+pub fn trusted_controller_fingerprints() -> Result<Vec<String>, String> {
+    let lock = pairing_state()?;
+    let state = lock
+        .lock()
+        .map_err(|_| "AirPlay pairing state lock poisoned")?;
+    let mut fingerprints = state
+        .controllers
+        .values()
+        .map(|public_key| {
+            Sha256::digest(public_key)
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>();
+    fingerprints.sort_unstable();
+    Ok(fingerprints)
+}
+
+/// Revoke an approved Legacy controller by its SHA-256 public-key fingerprint.
+pub fn revoke_legacy_controller(fingerprint: &str) -> Result<bool, String> {
+    if fingerprint.len() != 64 || !fingerprint.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err("invalid AirPlay controller fingerprint".into());
+    }
+    let normalized = fingerprint.to_ascii_lowercase();
+    let lock = pairing_state()?;
+    let mut state = lock
+        .lock()
+        .map_err(|_| "AirPlay pairing state lock poisoned")?;
+    let identifier = state.controllers.iter().find_map(|(identifier, public_key)| {
+        let candidate = Sha256::digest(public_key)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        (candidate == normalized).then(|| identifier.clone())
+    });
+    let Some(identifier) = identifier else {
+        return Ok(false);
+    };
+    let Some(public_key) = state.controllers.remove(&identifier) else {
+        return Ok(false);
+    };
+    if let Err(error) = state.persist() {
+        state.controllers.insert(identifier, public_key);
+        return Err(error);
+    }
+    Ok(true)
+}
+
 /// Look up a paired controller's long-term Ed25519 public key.
 pub fn paired_controller_public_key(identifier: &[u8]) -> Result<Option<[u8; 32]>, String> {
     let lock = pairing_state()?;
