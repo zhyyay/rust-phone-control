@@ -1032,7 +1032,7 @@ impl std::fmt::Display for FrameMailboxError {
             Self::InvalidStride => f.write_str("decoded frame has an invalid BGRA stride"),
             Self::BufferTooSmall => {
                 f.write_str("decoded frame buffer is smaller than its dimensions")
-            },
+            }
         }
     }
 }
