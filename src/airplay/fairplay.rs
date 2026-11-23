@@ -371,7 +371,8 @@ impl FairPlaySession {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FairPlayState {
     AwaitingChallenge,
-    KeyMessageReceived,
+    /// M3 passed structural and mode checks, but SAP authentication is pending.
+    KeyMessageReceivedUnverified,
 }
 
 #[cfg(test)]
@@ -454,7 +455,9 @@ mod tests {
     #[test]
     fn rejects_duplicate_m1_and_challenge_transitions() {
         let mut session = FairPlaySession::new();
-        session.accept(parse_message(&initial_message(3)).unwrap()).unwrap();
+        session
+            .accept(parse_message(&initial_message(3)).unwrap())
+            .unwrap();
         assert!(session
             .accept(parse_message(&initial_message(3)).unwrap())
             .unwrap_err()
@@ -465,8 +468,12 @@ mod tests {
             .mark_challenge_sent(3, [0x11; 128])
             .unwrap_err()
             .contains("before initial"));
-        empty.accept(parse_message(&initial_message(3)).unwrap()).unwrap();
-        empty.mark_challenge_sent(3, [0x11; 128]).unwrap();
+        empty
+            .accept(parse_message(&initial_message(3)).unwrap())
+            .unwrap();
+        empty
+            .mark_challenge_sent(3, [0x11; 128])
+            .unwrap();
         assert!(empty
             .mark_challenge_sent(3, [0x22; 128])
             .unwrap_err()
