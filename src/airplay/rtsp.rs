@@ -920,7 +920,7 @@ fn handle_setup_request(
     let setup = setup::parse_setup_request(body).map_err(|reason| (400, reason))?;
     match setup {
         SetupRequest::Session(session) => {
-            let channel = EventChannel::bind()
+            let channel = EventChannel::bind(peer_ip)
                 .map_err(|error| (503, format!("could not bind event channel: {error}")))?;
             let event_port = channel.port();
             let new_timing_client = match session.timing_protocol.as_deref() {
