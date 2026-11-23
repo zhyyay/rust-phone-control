@@ -3,8 +3,8 @@
 //! Legacy AirPlay uses a 68-byte binary ECDH/Ed25519 exchange with AES-CTR;
 //! HAP Pair-Verify uses the TLV8/ChaCha20-Poly1305 exchange.
 
-use aes::cipher::{BlockEncrypt, KeyInit, generic_array::GenericArray};
 use aes::Aes128;
+use aes::cipher::{BlockEncrypt, KeyInit, generic_array::GenericArray};
 use chacha20poly1305::aead::Aead;
 use chacha20poly1305::{ChaCha20Poly1305, Nonce};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
@@ -64,11 +64,21 @@ impl PairVerifySession {
     pub fn start(body: &[u8]) -> Result<(Self, Vec<u8>), String> {
         if body.len() == 68 && body[..4] == [1, 0, 0, 0] {
             let (session, response) = LegacyPairVerifySession::start(body)?;
-            return Ok((Self { mode: PairVerifyMode::Legacy(session) }, response));
+            return Ok((
+                Self {
+                    mode: PairVerifyMode::Legacy(session),
+                },
+                response,
+            ));
         }
 
         let (session, response) = HapPairVerifySession::start(body)?;
-        Ok((Self { mode: PairVerifyMode::Hap(session) }, response))
+        Ok((
+            Self {
+                mode: PairVerifyMode::Hap(session),
+            },
+            response,
+        ))
     }
 
     /// Complete the matching wire protocol's second message.
@@ -138,8 +148,7 @@ impl LegacyPairVerifySession {
         }
         // UxPlay's legacy implementation advances the AES-CTR stream by
         // one 64-byte signature block after M2 before processing M3.
-        let signature =
-            legacy_aes_ctr_at_offset(&self.aes_key, &self.aes_iv, &body[4..], 64)?;
+        let signature = legacy_aes_ctr_at_offset(&self.aes_key, &self.aes_iv, &body[4..], 64)?;
         let verifying_key = VerifyingKey::from_bytes(&self.controller_public_key)
             .map_err(|_| "invalid legacy Pair-Verify controller Ed25519 public key")?;
         let signature = Signature::from_slice(&signature)
