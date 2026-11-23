@@ -356,6 +356,16 @@ fn process_media_packets(
                 }
             }
             super::video::MirrorPacketOutcome::InvalidCodecConfiguration(error) => {
+                // An invalid replacement configuration must not leave the
+                // previous decoder or its last frame visible as if it still
+                // represented the active sender stream.
+                frame_pipeline = None;
+                if let Err(clear_error) = frames.clear() {
+                    tracing::warn!(
+                        %clear_error,
+                        "Could not clear preview after invalid codec reconfiguration"
+                    );
+                }
                 tracing::warn!(
                     %packet.peer_addr,
                     %error,
