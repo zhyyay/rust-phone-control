@@ -138,7 +138,7 @@ pub fn parse_message(body: &[u8]) -> Result<FairPlayMessage, FairPlayParseError>
             }
             Ok(FairPlayMessage {
                 phase: MessagePhase::Acknowledgement,
-                capabilities: None,
+                initial_selector: None,
                 body: body.to_vec(),
             })
         }
