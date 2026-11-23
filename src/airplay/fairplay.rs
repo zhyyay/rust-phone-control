@@ -645,7 +645,7 @@ mod tests {
         let key = parse_message(&key_message()).expect("key message");
         assert_eq!(
             session.accept(key).expect("accept key"),
-            FairPlayState::KeyMessageReceived
+            FairPlayState::KeyMessageReceivedUnverified
         );
         assert!(session.has_key_message());
 
