@@ -39,9 +39,9 @@ mod tlv8;
 mod video;
 
 #[cfg(windows)]
-use std::sync::{Arc, Mutex, OnceLock};
-#[cfg(windows)]
 use sha2::Digest;
+#[cfg(windows)]
+use std::sync::{Arc, Mutex, OnceLock};
 
 #[cfg(windows)]
 pub use video::{BgraFrame, FrameSnapshot};
