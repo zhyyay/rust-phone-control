@@ -227,7 +227,7 @@ impl RegisteredService {
             pServiceInstance: self.instance as *mut DNS_SERVICE_INSTANCE,
             pRegisterCompletionCallback: Some(registration_complete),
             pQueryContext: ptr::null_mut(),
-            unicastEnabled: BOOL(0),
+            unicastEnabled: Default::default(),
             ..Default::default()
         };
 
