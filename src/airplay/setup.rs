@@ -42,6 +42,30 @@ pub(super) fn parse_setup_request(bytes: &[u8]) -> Result<SetupRequest, String> 
         .as_dictionary()
         .ok_or_else(|| "SETUP plist root must be a dictionary".to_owned())?;
 
+    // Log only plist field names and value kinds. SETUP contains wrapped
+    // FairPlay key material, so never log field values or raw plist bytes.
+    let top_level_fields = dictionary
+        .iter()
+        .map(|(key, value)| {
+            let kind = match value {
+                Value::Array(_) => "array",
+                Value::Data(_) => "data",
+                Value::Dictionary(_) => "dictionary",
+                Value::Boolean(_) => "boolean",
+                Value::Integer(_) => "integer",
+                Value::Real(_) => "real",
+                Value::String(_) => "string",
+                Value::Date(_) => "date",
+                Value::Uid(_) => "uid",
+            };
+            format!("{key}:{kind}")
+        })
+        .collect::<Vec<_>>();
+    tracing::info!(
+        fields = ?top_level_fields,
+        "AirPlay SETUP plist fields inspected"
+    );
+
     if let Some(streams_value) = dictionary.get("streams") {
         let streams = streams_value
             .as_array()
