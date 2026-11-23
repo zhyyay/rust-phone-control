@@ -384,6 +384,56 @@ pub fn trusted_controller_fingerprints() -> Result<Vec<String>, String> {
     Ok(fingerprints)
 }
 
+/// List denied Legacy controller fingerprints for the local device-management UI.
+pub fn denied_controller_fingerprints() -> Result<Vec<String>, String> {
+    let lock = pairing_state()?;
+    let state = lock
+        .lock()
+        .map_err(|_| "AirPlay pairing state lock poisoned")?;
+    let mut fingerprints = state
+        .denied_controllers
+        .values()
+        .map(|public_key| {
+            Sha256::digest(public_key)
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>();
+    fingerprints.sort_unstable();
+    Ok(fingerprints)
+}
+
+/// Remove a denial by fingerprint so the next connection can request approval again.
+pub fn clear_legacy_denial(fingerprint: &str) -> Result<bool, String> {
+    if fingerprint.len() != 64 || !fingerprint.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err("invalid AirPlay controller fingerprint".into());
+    }
+    let normalized = fingerprint.to_ascii_lowercase();
+    let lock = pairing_state()?;
+    let mut state = lock
+        .lock()
+        .map_err(|_| "AirPlay pairing state lock poisoned")?;
+    let identifier = state.denied_controllers.iter().find_map(|(identifier, public_key)| {
+        let candidate = Sha256::digest(public_key)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        (candidate == normalized).then(|| identifier.clone())
+    });
+    let Some(identifier) = identifier else {
+        return Ok(false);
+    };
+    let Some(public_key) = state.denied_controllers.remove(&identifier) else {
+        return Ok(false);
+    };
+    if let Err(error) = state.persist() {
+        state.denied_controllers.insert(identifier, public_key);
+        return Err(error);
+    }
+    Ok(true)
+}
+
 /// Revoke an approved Legacy controller by its SHA-256 public-key fingerprint.
 pub fn revoke_legacy_controller(fingerprint: &str) -> Result<bool, String> {
     if fingerprint.len() != 64 || !fingerprint.bytes().all(|byte| byte.is_ascii_hexdigit()) {
