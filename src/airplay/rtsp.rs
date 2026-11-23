@@ -553,7 +553,7 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
                             // implemented yet, so fail closed until it can produce
                             // a session-aware, independently verified response.
                             tracing::error!(
-                                sender_phase1_selector = ?message.initial_selector,
+                                sender_phase1_parameters = ?message.initial_parameters,
                                 "FairPlay SAP unavailable: refusing placeholder M2"
                             );
                             let response = fairplay_error_response(
