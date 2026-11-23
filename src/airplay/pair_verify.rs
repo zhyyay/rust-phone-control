@@ -1,15 +1,17 @@
-//! HAP Pair-Verify M1-M4 authenticated ephemeral key exchange.
+//! AirPlay Legacy and HAP Pair-Verify exchanges.
 //!
-//! This implements the cryptographic Pair-Verify exchange only. It does not
-//! establish the encrypted AirPlay media transport.
+//! Legacy AirPlay uses a 68-byte binary ECDH/Ed25519 exchange with AES-CTR;
+//! HAP Pair-Verify uses the TLV8/ChaCha20-Poly1305 exchange.
 
+use aes::cipher::{BlockEncrypt, KeyInit as AesKeyInit, generic_array::GenericArray};
+use aes::Aes128;
 use chacha20poly1305::aead::{Aead, KeyInit};
 use chacha20poly1305::{ChaCha20Poly1305, Nonce};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use hkdf::Hkdf;
 use rand::RngCore;
 use rand::rngs::OsRng;
-use sha2::Sha512;
+use sha2::{Digest, Sha512};
 use x25519_dalek::{PublicKey, StaticSecret};
 
 use super::{
@@ -26,7 +28,7 @@ const ERROR: u8 = 0x07;
 const NONCE_M2: &[u8; 12] = b"PV-Msg02\0\0\0\0";
 const NONCE_M3: &[u8; 12] = b"PV-Msg03\0\0\0\0";
 
-pub struct PairVerifySession {
+struct HapPairVerifySession {
     controller_ephemeral: [u8; 32],
     accessory_ephemeral: [u8; 32],
     shared_secret: [u8; 32],
@@ -39,7 +41,167 @@ pub(super) struct PairVerifyCompletion {
     pub(super) shared_secret: [u8; 32],
 }
 
+enum PairVerifyMode {
+    Hap(HapPairVerifySession),
+    Legacy(LegacyPairVerifySession),
+}
+
+struct LegacyPairVerifySession {
+    controller_ephemeral: [u8; 32],
+    controller_public_key: [u8; 32],
+    accessory_ephemeral: [u8; 32],
+    shared_secret: [u8; 32],
+    aes_key: [u8; 16],
+    aes_iv: [u8; 16],
+}
+
+pub struct PairVerifySession {
+    mode: PairVerifyMode,
+}
+
+/// Values made available only after the controller's signature is verified.
+pub(super) struct PairVerifyCompletion {
+    pub(super) response: Vec<u8>,
+    pub(super) shared_secret: [u8; 32],
+}
+
 impl PairVerifySession {
+    /// Select the wire protocol from the request envelope.
+    pub fn start(body: &[u8]) -> Result<(Self, Vec<u8>), String> {
+        if body.len() == 68 && body[..4] == [1, 0, 0, 0] {
+            let (session, response) = LegacyPairVerifySession::start(body)?;
+            return Ok((Self { mode: PairVerifyMode::Legacy(session) }, response));
+        }
+
+        let (session, response) = HapPairVerifySession::start(body)?;
+        Ok((Self { mode: PairVerifyMode::Hap(session) }, response))
+    }
+
+    /// Complete the matching wire protocol's second message.
+    pub fn finish(self, body: &[u8]) -> Result<PairVerifyCompletion, String> {
+        match self.mode {
+            PairVerifyMode::Hap(session) => session.finish(body),
+            PairVerifyMode::Legacy(session) => session.finish(body),
+        }
+    }
+}
+
+impl LegacyPairVerifySession {
+    fn start(body: &[u8]) -> Result<(Self, Vec<u8>), String> {
+        if body.len() != 68 || body[..4] != [1, 0, 0, 0] {
+            return Err("invalid legacy Pair-Verify M1 envelope".into());
+        }
+        let controller_ephemeral: [u8; 32] = body[4..36]
+            .try_into()
+            .map_err(|_| "invalid legacy Pair-Verify ECDH public key")?;
+        let controller_public_key: [u8; 32] = body[36..68]
+            .try_into()
+            .map_err(|_| "invalid legacy Pair-Verify Ed25519 public key")?;
+
+        let mut secret_bytes = [0u8; 32];
+        OsRng.fill_bytes(&mut secret_bytes);
+        let accessory_secret = StaticSecret::from(secret_bytes);
+        secret_bytes.fill(0);
+
+        let accessory_public = PublicKey::from(&accessory_secret);
+        let shared = accessory_secret.diffie_hellman(&PublicKey::from(controller_ephemeral));
+        if shared.as_bytes().iter().all(|byte| *byte == 0) {
+            return Err("legacy Pair-Verify rejected an all-zero ECDH shared secret".into());
+        }
+        let shared_secret = *shared.as_bytes();
+        let accessory_ephemeral = accessory_public.to_bytes();
+        let (aes_key, aes_iv) = legacy_aes_material(&shared_secret);
+
+        let mut signed = Vec::with_capacity(64);
+        signed.extend_from_slice(&accessory_ephemeral);
+        signed.extend_from_slice(&controller_ephemeral);
+        let signature = pair_setup::sign_accessory_identity_message(&signed)?;
+        if signature.len() != 64 {
+            return Err("accessory Ed25519 signature must be 64 bytes".into());
+        }
+        let encrypted_signature = legacy_aes_ctr(&aes_key, &aes_iv, &signature)?;
+
+        let mut response = Vec::with_capacity(96);
+        response.extend_from_slice(&accessory_ephemeral);
+        response.extend_from_slice(&encrypted_signature);
+
+        Ok((Self {
+            controller_ephemeral,
+            controller_public_key,
+            accessory_ephemeral,
+            shared_secret,
+            aes_key,
+            aes_iv,
+        }, response))
+    }
+
+    fn finish(self, body: &[u8]) -> Result<PairVerifyCompletion, String> {
+        if body.len() != 68 || body[..4] != [0, 0, 0, 0] {
+            return Err("invalid legacy Pair-Verify M3 envelope".into());
+        }
+        let signature = legacy_aes_ctr(&self.aes_key, &self.aes_iv, &body[4..])?;
+        let verifying_key = VerifyingKey::from_bytes(&self.controller_public_key)
+            .map_err(|_| "invalid legacy Pair-Verify controller Ed25519 public key")?;
+        let signature = Signature::from_slice(&signature)
+            .map_err(|_| "invalid legacy Pair-Verify controller signature length")?;
+
+        let mut signed = Vec::with_capacity(64);
+        signed.extend_from_slice(&self.controller_ephemeral);
+        signed.extend_from_slice(&self.accessory_ephemeral);
+        verifying_key
+            .verify(&signed, &signature)
+            .map_err(|_| "legacy Pair-Verify controller signature verification failed")?;
+
+        Ok(PairVerifyCompletion {
+            response: Vec::new(),
+            shared_secret: self.shared_secret,
+        })
+    }
+}
+
+fn legacy_aes_material(shared_secret: &[u8; 32]) -> ([u8; 16], [u8; 16]) {
+    let mut key_hash = Sha512::new();
+    key_hash.update(b"Pair-Verify-AES-Key");
+    key_hash.update(shared_secret);
+    let key_digest = key_hash.finalize();
+
+    let mut iv_hash = Sha512::new();
+    iv_hash.update(b"Pair-Verify-AES-IV");
+    iv_hash.update(shared_secret);
+    let iv_digest = iv_hash.finalize();
+
+    let mut key = [0u8; 16];
+    let mut iv = [0u8; 16];
+    key.copy_from_slice(&key_digest[..16]);
+    iv.copy_from_slice(&iv_digest[..16]);
+    (key, iv)
+}
+
+/// Apply AES-128-CTR. CTR encryption and decryption are the same operation.
+fn legacy_aes_ctr(key: &[u8; 16], iv: &[u8; 16], input: &[u8]) -> Result<Vec<u8>, String> {
+    let cipher = Aes128::new_from_slice(key)
+        .map_err(|_| "invalid legacy Pair-Verify AES key")?;
+    let mut counter = *iv;
+    let mut output = Vec::with_capacity(input.len());
+
+    for chunk in input.chunks(16) {
+        let mut block = GenericArray::clone_from_slice(&counter);
+        cipher.encrypt_block(&mut block);
+        output.extend(chunk.iter().zip(block.iter()).map(|(byte, mask)| byte ^ mask));
+
+        for byte in counter.iter_mut().rev() {
+            let (next, carry) = byte.overflowing_add(1);
+            *byte = next;
+            if !carry {
+                break;
+            }
+        }
+    }
+
+    Ok(output)
+}
+
+impl HapPairVerifySession {
     /// Validate Pair-Verify M1 and create the M2 response.
     pub fn start(body: &[u8]) -> Result<(Self, Vec<u8>), String> {
         let fields = tlv8::decode(body).map_err(|error| error.to_string())?;
