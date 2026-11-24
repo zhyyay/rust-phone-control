@@ -116,11 +116,13 @@ impl LegacyPairVerifySession {
         if shared.as_bytes().iter().all(|byte| *byte == 0) {
             return Err("legacy Pair-Verify rejected an all-zero ECDH shared secret".into());
         }
-        let shared_secret = *shared.as_bytes();
+        let shared_secret = Zeroizing::new(*shared.as_bytes());
         let accessory_ephemeral = accessory_public.to_bytes();
-        let (aes_key, aes_iv) = legacy_aes_material(&shared_secret);
+        let aes_material = legacy_aes_material(&shared_secret);
+        let aes_key = Zeroizing::new(aes_material.0);
+        let aes_iv = Zeroizing::new(aes_material.1);
 
-        let mut signed = Vec::with_capacity(64);
+        let mut signed = Zeroizing::new(Vec::with_capacity(64));
         signed.extend_from_slice(&accessory_ephemeral);
         signed.extend_from_slice(&controller_ephemeral);
         let signature = pair_setup::sign_accessory_identity_message(&signed)?;
@@ -152,17 +154,17 @@ impl LegacyPairVerifySession {
         }
         // UxPlay's legacy implementation advances the AES-CTR stream by
         // one 64-byte signature block after M2 before processing M3.
-        let signature = legacy_aes_ctr_at_offset(&self.aes_key, &self.aes_iv, &body[4..], 64)?;
+        let signature = Zeroizing::new(legacy_aes_ctr_at_offset(&self.aes_key, &self.aes_iv, &body[4..], 64)?);
         let verifying_key = VerifyingKey::from_bytes(&self.controller_public_key)
             .map_err(|_| "invalid legacy Pair-Verify controller Ed25519 public key")?;
-        let signature = Signature::from_slice(&signature)
+        let signature = Signature::from_slice(signature.as_slice())
             .map_err(|_| "invalid legacy Pair-Verify controller signature length")?;
 
         let mut signed = Vec::with_capacity(64);
         signed.extend_from_slice(&self.controller_ephemeral);
         signed.extend_from_slice(&self.accessory_ephemeral);
         verifying_key
-            .verify(&signed, &signature)
+            .verify(signed.as_slice(), &signature)
             .map_err(|_| "legacy Pair-Verify controller signature verification failed")?;
 
         Ok(PairVerifyCompletion {
@@ -274,27 +276,27 @@ impl HapPairVerifySession {
         if shared.as_bytes().iter().all(|byte| *byte == 0) {
             return Err("Pair-Verify rejected an all-zero X25519 shared secret".into());
         }
-        let shared_secret = *shared.as_bytes();
+        let shared_secret = Zeroizing::new(*shared.as_bytes());
 
-        let encryption_key = derive_key(
+        let encryption_key = Zeroizing::new(derive_key(
             &shared_secret,
             b"Pair-Verify-Encrypt-Salt",
             b"Pair-Verify-Encrypt-Info",
-        )?;
-        let accessory_x = derive_key(
+        )?);
+        let accessory_x = Zeroizing::new(derive_key(
             &shared_secret,
             b"Pair-Verify-Accessory-Sign-Salt",
             b"Pair-Verify-Accessory-Sign-Info",
-        )?;
+        )?);
 
         let accessory_ephemeral = accessory_public.to_bytes();
         let accessory_identifier = pair_setup::accessory_identifier()?;
-        let mut signed = Vec::with_capacity(
+        let mut signed = Zeroizing::new(Vec::with_capacity(
             accessory_x.len()
                 + accessory_ephemeral.len()
                 + accessory_identifier.len()
                 + controller_ephemeral.len(),
-        );
+        ));
         signed.extend_from_slice(&accessory_x);
         signed.extend_from_slice(&accessory_ephemeral);
         signed.extend_from_slice(&accessory_identifier);
@@ -311,7 +313,7 @@ impl HapPairVerifySession {
                 value: signature,
             },
         ]);
-        let cipher = ChaCha20Poly1305::new_from_slice(&encryption_key)
+        let cipher = ChaCha20Poly1305::new_from_slice(encryption_key.as_slice())
             .map_err(|_| "invalid Pair-Verify encryption key")?;
         let encrypted = cipher
             .encrypt(Nonce::from_slice(NONCE_M2), encrypted_inner.as_ref())
@@ -336,8 +338,8 @@ impl HapPairVerifySession {
             Self {
                 controller_ephemeral,
                 accessory_ephemeral,
-                shared_secret,
-                encryption_key,
+                shared_secret: *shared_secret,
+                encryption_key: *encryption_key,
             },
             response,
         ))
@@ -350,9 +352,9 @@ impl HapPairVerifySession {
         let encrypted = unique_field(&fields, ENCRYPTED_DATA)?;
         let cipher = ChaCha20Poly1305::new_from_slice(&self.encryption_key)
             .map_err(|_| "invalid Pair-Verify encryption key")?;
-        let plaintext = cipher
+        let plaintext = Zeroizing::new(cipher
             .decrypt(Nonce::from_slice(NONCE_M3), encrypted)
-            .map_err(|_| "Pair-Verify M3 authentication tag verification failed")?;
+            .map_err(|_| "Pair-Verify M3 authentication tag verification failed")?);
         let inner = tlv8::decode(&plaintext).map_err(|error| error.to_string())?;
         let controller_identifier = unique_field(&inner, IDENTIFIER)?;
         let controller_signature = unique_field(&inner, SIGNATURE)?;
@@ -364,17 +366,17 @@ impl HapPairVerifySession {
         let controller_public_key =
             pair_setup::paired_controller_public_key(controller_identifier)?
                 .ok_or_else(|| "Pair-Verify controller is not paired".to_owned())?;
-        let controller_x = derive_key(
+        let controller_x = Zeroizing::new(derive_key(
             &self.shared_secret,
             b"Pair-Verify-Controller-Sign-Salt",
             b"Pair-Verify-Controller-Sign-Info",
-        )?;
-        let mut signed = Vec::with_capacity(
+        )?);
+        let mut signed = Zeroizing::new(Vec::with_capacity(
             controller_x.len()
                 + self.controller_ephemeral.len()
                 + controller_identifier.len()
                 + self.accessory_ephemeral.len(),
-        );
+        ));
         signed.extend_from_slice(&controller_x);
         signed.extend_from_slice(&self.controller_ephemeral);
         signed.extend_from_slice(controller_identifier);
