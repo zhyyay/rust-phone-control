@@ -1584,13 +1584,23 @@ fn handle_pair_setup(
     session_key: &mut Option<Zeroizing<[u8; 64]>>,
     setup_code: Option<&str>,
 ) -> Result<Vec<u8>, PairSetupFailure> {
-    let fields =
-        tlv8::decode(body).map_err(|error| PairSetupFailure::bad_request(error.to_string()))?;
+    let fields = match tlv8::decode(body) {
+        Ok(fields) => fields,
+        Err(error) => {
+            *srp_state = None;
+            *session_key = None;
+            return Err(PairSetupFailure::bad_request(error.to_string()));
+        }
+    };
     let mut states = fields.iter().filter(|field| field.kind == 0x06);
-    let state = states
-        .next()
-        .ok_or_else(|| PairSetupFailure::bad_request("missing Pair-Setup State"))?;
+    let Some(state) = states.next() else {
+        *srp_state = None;
+        *session_key = None;
+        return Err(PairSetupFailure::bad_request("missing Pair-Setup State"));
+    };
     if states.next().is_some() || state.value.len() != 1 {
+        *srp_state = None;
+        *session_key = None;
         return Err(PairSetupFailure::bad_request(
             "invalid Pair-Setup State field",
         ));
@@ -1598,6 +1608,10 @@ fn handle_pair_setup(
 
     match state.value[0] {
         1 => {
+            // A fresh M1 always replaces any abandoned exchange, even when
+            // the new request later fails validation.
+            *srp_state = None;
+            *session_key = None;
             pairing::parse_m1(body)
                 .map_err(|error| PairSetupFailure::bad_request(error.to_string()))?;
             let code = setup_code.ok_or_else(|| {
@@ -1672,11 +1686,14 @@ fn handle_pair_setup(
             }
         }
         3 => {
-            let message = pairing::parse_m3(body)
-                .map_err(|error| PairSetupFailure::bad_request(error.to_string()))?;
+            // Consume the pending exchange before parsing M3 so malformed or
+            // unauthenticated retries cannot reuse its SRP state or session key.
+            *session_key = None;
             let server = srp_state.take().ok_or_else(|| {
                 PairSetupFailure::bad_request("Pair-Setup M3 received without an M1 exchange")
             })?;
+            let message = pairing::parse_m3(body)
+                .map_err(|error| PairSetupFailure::bad_request(error.to_string()))?;
 
             match server.verify_client(&message.public_key, &message.proof) {
                 Ok(result) => {
@@ -1709,9 +1726,13 @@ fn handle_pair_setup(
                 }
             }
         }
-        other => Err(PairSetupFailure::bad_request(format!(
-            "unsupported Pair-Setup state {other}"
-        ))),
+        other => {
+            *srp_state = None;
+            *session_key = None;
+            Err(PairSetupFailure::bad_request(format!(
+                "unsupported Pair-Setup state {other}"
+            )))
+        },
     }
 }
 
@@ -3051,6 +3072,52 @@ mod tests {
             .expect_err("missing code must not start pairing");
         assert_eq!(error.status, 503);
         assert!(srp.is_none());
+    }
+
+    #[test]
+    fn malformed_pair_setup_messages_discard_pending_exchange_material() {
+        let mut srp = Some(SrpServer::new("518-08-582").expect("create SRP server"));
+        let mut session_key = Some(Zeroizing::new([0xA5; 64]));
+        let malformed_tlv = [0x06, 0x02, 0x01];
+        let error = handle_pair_setup(
+            &malformed_tlv,
+            &mut srp,
+            &mut session_key,
+            Some("518-08-582"),
+        )
+        .expect_err("malformed TLV must be rejected");
+        assert_eq!(error.status, 400);
+        assert!(srp.is_none());
+        assert!(session_key.is_none());
+
+        let m1 = tlv8::encode(&[
+            Tlv {
+                kind: 0x06,
+                value: vec![0x01],
+            },
+            Tlv {
+                kind: 0x00,
+                value: vec![0x00],
+            },
+        ]);
+        handle_pair_setup(&m1, &mut srp, &mut session_key, Some("518-08-582"))
+            .expect("valid M1 starts a new exchange");
+        assert!(srp.is_some());
+
+        let malformed_m3 = tlv8::encode(&[Tlv {
+            kind: 0x06,
+            value: vec![0x03],
+        }]);
+        let error = handle_pair_setup(
+            &malformed_m3,
+            &mut srp,
+            &mut session_key,
+            Some("518-08-582"),
+        )
+        .expect_err("malformed M3 must be rejected");
+        assert_eq!(error.status, 400);
+        assert!(srp.is_none());
+        assert!(session_key.is_none());
     }
 
     #[test]
