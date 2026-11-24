@@ -17,7 +17,12 @@ mod discovery;
 mod event;
 #[allow(dead_code)]
 mod fairplay;
-pub use fairplay::{\n    FairPlayChallenge, FairPlayKeys, FairPlayMessage, FairPlayParseError, FairPlayProviderError,\n    FairPlaySapProvider, MessagePhase,\n    parse_message as parse_fairplay_message,\n};\n#[allow(dead_code)]
+pub use fairplay::{
+    FairPlayChallenge, FairPlayKeys, FairPlayMessage, FairPlayParseError, FairPlayProviderError,
+    FairPlaySapProvider, MessagePhase,
+    parse_message as parse_fairplay_message,
+};
+#[allow(dead_code)]
 mod media;
 #[allow(dead_code)]
 mod mirror_crypto;
@@ -259,7 +264,10 @@ fn start_inner(
         }
     }
     let video_frames = Arc::new(video::LatestFrameMailbox::new());
-    let server = match fairplay_provider {\n        Some(provider) => server::ControlServer::start_with_fairplay_provider(provider)?,\n        None => server::ControlServer::start()?,\n    };
+    let server = match fairplay_provider {
+        Some(provider) => server::ControlServer::start_with_fairplay_provider(provider)?,
+        None => server::ControlServer::start()?,
+    };
     let advertisement = discovery::Advertisement::start()?;
 
     let mut runtime = receiver_slot()
