@@ -206,15 +206,19 @@ pub fn start() -> anyhow::Result<()> {
     let _lifecycle = receiver_lifecycle()
         .lock()
         .map_err(|_| anyhow::anyhow!("AirPlay lifecycle lock is poisoned"))?;
-    let mut runtime = receiver_slot()
-        .lock()
-        .map_err(|_| anyhow::anyhow!("AirPlay runtime lock is poisoned"))?;
-
-    if runtime.is_some() {
-        tracing::info!("Built-in AirPlay control endpoint is already running");
-        return Ok(());
+    {
+        let runtime = receiver_slot()
+            .lock()
+            .map_err(|_| anyhow::anyhow!("AirPlay runtime lock is poisoned"))?;
+        if runtime.is_some() {
+            tracing::info!("Built-in AirPlay control endpoint is already running");
+            return Ok(());
+        }
     }
 
+    // Do slow platform initialization and start worker-owning services without
+    // holding the runtime data lock. A newly accepted RTSP client may need to
+    // inspect the runtime while startup is still completing.
     let _pairing_code = setup_code();
     let media_foundation = match decoder::MediaFoundationRuntime::startup() {
         Ok(runtime) => Some(Arc::new(runtime)),
@@ -240,6 +244,10 @@ pub fn start() -> anyhow::Result<()> {
     let video_frames = Arc::new(video::LatestFrameMailbox::new());
     let server = server::ControlServer::start()?;
     let advertisement = discovery::Advertisement::start()?;
+
+    let mut runtime = receiver_slot()
+        .lock()
+        .map_err(|_| anyhow::anyhow!("AirPlay runtime lock is poisoned"))?;
     *runtime = Some(ReceiverRuntime {
         server,
         advertisement,
