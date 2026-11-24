@@ -256,17 +256,17 @@ mod tests {
         let root = value.as_dictionary().expect("root dictionary");
         assert_eq!(
             root.get("top_level_key").and_then(Value::as_data),
-            Some(&[0; 8][..])
+            Some(&[][..])
         );
         let payloads = root
             .get("payloads")
             .and_then(Value::as_array)
             .expect("payload array");
-        assert_eq!(payloads[0].as_data(), Some(&[0; 16][..]));
+        assert_eq!(payloads[0].as_data(), Some(&[][..]));
         let nested = payloads[1].as_dictionary().expect("nested dictionary");
         assert_eq!(
             nested.get("nested_key").and_then(Value::as_data),
-            Some(&[0; 32][..])
+            Some(&[][..])
         );
     }
 
