@@ -108,6 +108,74 @@ impl std::fmt::Display for FairPlayParseError {
 
 impl std::error::Error for FairPlayParseError {}
 
+
+/// Output from an authenticated SAP provider after processing an M1 record.
+///
+/// The provider must generate this challenge from the negotiated SAP exchange;
+/// callers must never fill it with random bytes, captured responses, or a
+/// placeholder value.
+#[derive(Debug)]
+pub struct FairPlayChallenge {
+    pub mode: u8,
+    pub challenge: Zeroizing<[u8; 128]>,
+}
+
+/// Session media keys returned only after the provider authenticates M3.
+///
+/// These values are deliberately zeroized on drop and must remain scoped to
+/// the RTSP connection that completed the exchange.
+#[derive(Debug)]
+pub struct FairPlayKeys {
+    pub ekey: Zeroizing<[u8; 72]>,
+    pub eiv: Zeroizing<[u8; 16]>,
+    pub acknowledgement: Zeroizing<[u8; 20]>,
+}
+
+/// Integration boundary for a legitimately licensed/authorized FairPlay SAP
+/// implementation. This crate intentionally does not implement Apple's
+/// proprietary SAP transform or derive media keys from unauthenticated input.
+pub trait FairPlaySapProvider: Send + Sync {
+    /// Process the sender's initial FPLY record and return an authenticated
+    /// receiver challenge. Implementations must reject unsupported modes.
+    fn begin(
+        &self,
+        initial: &FairPlayMessage,
+    ) -> Result<FairPlayChallenge, FairPlayProviderError>;
+
+    /// Authenticate the sender's key message against the exact M1/M2 exchange.
+    /// Returning keys is an authorization boundary: implementations must not
+    /// return media keys unless SAP authentication succeeded.
+    fn finish(
+        &self,
+        initial: &FairPlayMessage,
+        challenge: &FairPlayChallenge,
+        key_message: &FairPlayMessage,
+    ) -> Result<FairPlayKeys, FairPlayProviderError>;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FairPlayProviderError {
+    Unavailable,
+    UnsupportedMode(u8),
+    InvalidMessage,
+    AuthenticationFailed,
+    Internal(String),
+}
+
+impl std::fmt::Display for FairPlayProviderError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Unavailable => write!(formatter, "no authorized FairPlay SAP provider is configured"),
+            Self::UnsupportedMode(mode) => write!(formatter, "FairPlay SAP mode {mode} is unsupported"),
+            Self::InvalidMessage => write!(formatter, "FairPlay SAP message is invalid"),
+            Self::AuthenticationFailed => write!(formatter, "FairPlay SAP authentication failed"),
+            Self::Internal(reason) => write!(formatter, "FairPlay SAP provider error: {reason}"),
+        }
+    }
+}
+
+impl std::error::Error for FairPlayProviderError {}
+
 pub fn parse_message(body: &[u8]) -> Result<FairPlayMessage, FairPlayParseError> {
     if body.len() < 16 {
         return Err(FairPlayParseError::TooShort);
