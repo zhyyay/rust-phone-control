@@ -3109,6 +3109,68 @@ mod tests {
     }
 
     #[test]
+    fn pair_setup_fresh_m1_replaces_abandoned_exchange_before_validation() {
+        let old_server = SrpServer::new("518-08-582").expect("create abandoned SRP server");
+        let old_public_key = old_server.public_key().expect("read abandoned SRP public key");
+        let mut srp = Some(old_server);
+        let mut session_key = Some(Zeroizing::new([0xA5; 64]));
+        let invalid_m1 = tlv8::encode(&[Tlv {
+            kind: 0x06,
+            value: vec![0x01],
+        }]);
+
+        let error = handle_pair_setup(
+            &invalid_m1,
+            &mut srp,
+            &mut session_key,
+            Some("518-08-582"),
+        )
+        .expect_err("M1 without method must be rejected");
+        assert_eq!(error.status, 400);
+        assert!(srp.is_none(), "invalid fresh M1 must discard the old SRP exchange");
+        assert!(
+            session_key.is_none(),
+            "invalid fresh M1 must discard the old session key"
+        );
+
+        let valid_m1 = tlv8::encode(&[
+            Tlv {
+                kind: 0x06,
+                value: vec![0x01],
+            },
+            Tlv {
+                kind: 0x00,
+                value: vec![0x00],
+            },
+        ]);
+        handle_pair_setup(&valid_m1, &mut srp, &mut session_key, Some("518-08-582"))
+            .expect("valid M1 starts a fresh exchange");
+        let new_public_key = srp
+            .as_ref()
+            .expect("fresh SRP exchange exists")
+            .public_key()
+            .expect("read fresh SRP public key");
+        assert_ne!(new_public_key, old_public_key);
+        assert!(session_key.is_none());
+    }
+
+    #[test]
+    fn pair_setup_missing_state_discards_pending_exchange_material() {
+        let request = tlv8::encode(&[Tlv {
+            kind: 0x00,
+            value: vec![0x00],
+        }]);
+        let mut srp = Some(SrpServer::new("518-08-582").expect("create SRP server"));
+        let mut session_key = Some(Zeroizing::new([0xA5; 64]));
+
+        let error = handle_pair_setup(&request, &mut srp, &mut session_key, Some("518-08-582"))
+            .expect_err("missing State must be rejected");
+        assert_eq!(error.status, 400);
+        assert!(srp.is_none());
+        assert!(session_key.is_none());
+    }
+
+    #[test]
     fn malformed_pair_setup_messages_discard_pending_exchange_material() {
         let mut srp = Some(SrpServer::new("518-08-582").expect("create SRP server"));
         let mut session_key = Some(Zeroizing::new([0xA5; 64]));
@@ -3142,6 +3204,7 @@ mod tests {
             kind: 0x06,
             value: vec![0x03],
         }]);
+        session_key = Some(Zeroizing::new([0x5A; 64]));
         let error = handle_pair_setup(
             &malformed_m3,
             &mut srp,
@@ -3241,6 +3304,7 @@ mod tests {
                 .any(|field| field.kind == 0x07 && field.value == [0x02])
         );
         assert!(session_key.is_none());
+        assert!(srp.is_none(), "failed SRP proof must consume the exchange state");
     }
 
     #[test]
