@@ -163,161 +163,94 @@ impl Render for PhoneControlApp {
             }));
         }
 
+        // MirrorDeck three-column workspace; live frames still come from the existing AirPlay poller.
         div()
-            .flex()
-            .flex_col()
-            .size_full()
-            .p_3()
-            .gap_2()
-            .bg(cx.theme().background)
-            .text_color(cx.theme().foreground)
+            .flex().flex_col().size_full().p_2().gap_2()
+            .bg(gpui_kit::rgb(0xF4F5F8))
+            .text_color(gpui_kit::rgb(0x253047))
             .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .child(Label::new("Rust Phone Control"))
-                    .child(Label::new("Phase 1 · BLE HID")),
+                div().flex().items_center().justify_between().h(px(42.)).p_2()
+                    .rounded_lg().bg(gpui_kit::rgb(0xFFFFFF))
+                    .border_1().border_color(gpui_kit::rgb(0xE1E5ED))
+                    .child(div().flex().items_center().gap_2()
+                        .child(Label::new("🔵")).child(Label::new("MirrorDeck")))
+                    .child(Label::new(if self.airplay_status.contains("Running") { "● 已连接 · AirPlay" } else { "● 等待连接" }))
+                    .child(Label::new("⚙")),
             )
-            .child(Label::new("iPhone wireless control"))
             .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .p_2()
-                    .rounded_lg()
-                    .border_1()
-                    .border_color(cx.theme().border)
-                    .child(Label::new("AirPlay screen mirror"))
+                div().flex().flex_1().gap_2()
                     .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .child(Label::new(airplay_pairing_code_label()))
-                            .child(
-                                Button::new("airplay-copy-code")
-                                    .label("Copy code")
-                                    .on_click(|_, _, cx| copy_airplay_pairing_code(cx)),
-                            ),
+                        div().flex().flex_col().w(px(205.)).p_2().gap_2()
+                            .rounded_lg().bg(gpui_kit::rgb(0xFFFFFF))
+                            .border_1().border_color(gpui_kit::rgb(0xE1E5ED))
+                            .child(Button::new("connect-new-device").primary().label("+ 连接新设备")
+                                .on_click(|_,_,_| tracing::info!("Connect-new-device entry selected")))
+                            .child(Label::new("我的设备"))
+                            .child(div().flex().flex_col().gap_1().p_2().rounded_lg()
+                                .bg(gpui_kit::rgb(0xEEF0FF)).border_1().border_color(gpui_kit::rgb(0xC9CCFF))
+                                .child(Label::new("📱  iPhone")).child(Label::new(if self.airplay_status.contains("Running") { "投屏中 · AirPlay" } else { "等待连接" })))
+                            .child(div().flex().flex_col().gap_1().p_2().rounded_lg()
+                                .bg(gpui_kit::rgb(0xF7F8FA)).border_1().border_color(gpui_kit::rgb(0xE8EBF1))
+                                .child(Label::new("  iPhone · BLE")).child(Label::new("蓝牙控制设备")))
+                            .child(Label::new("连接方式"))
+                            .child(div().flex().gap_1()
+                                .child(Button::new("connection-wireless").primary().label("无线")
+                                    .on_click(cx.listener(|this,_,_,cx| { this.airplay_status=start_airplay_status(); cx.notify(); })))
+                                .child(Button::new("connection-usb").label("USB")
+                                    .on_click(|_,_,_| tracing::info!("USB transport adapter is not wired yet")))
+                                .child(Button::new("connection-qr").label("扫码")
+                                    .on_click(|_,_,_| tracing::info!("QR pairing entry selected"))))
+                            .child(div().flex_1())
+                            .child(div().flex().flex_col().gap_1().p_2().rounded_lg().bg(gpui_kit::rgb(0xF7F8FA))
+                                .child(Label::new("设备状态")).child(Label::new("电量  —")).child(Label::new("存储  —"))),
                     )
                     .child(
-                        Button::new("airplay-start")
-                            .primary()
-                            .label("Start mirror")
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.airplay_status = start_airplay_status();
-                                cx.notify();
-                            })),
+                        div().flex().flex_col().flex_1().gap_2().rounded_lg()
+                            .bg(gpui_kit::rgb(0xFFFFFF)).border_1().border_color(gpui_kit::rgb(0xE1E5ED))
+                            .child(div().flex().items_center().justify_center().gap_2().p_2()
+                                .child(Button::new("mirror-refresh").label("⟳").on_click(cx.listener(|this,_,_,cx| { this.airplay_status=start_airplay_status(); cx.notify(); })))
+                                .child(Button::new("mirror-screenshot").label("▣").on_click(|_,_,_| tracing::info!("Screenshot action requested")))
+                                .child(Button::new("mirror-start").primary().label("●").on_click(cx.listener(|this,_,_,cx| { this.airplay_status=start_airplay_status(); cx.notify(); })))
+                                .child(Button::new("mirror-stop").label("Ⅱ").on_click(cx.listener(|this,_,_,cx| { this.airplay_status=stop_airplay_status(); cx.notify(); })))
+                                .child(Button::new("mirror-copy-code").label("配对码").on_click(|_,_,cx| copy_airplay_pairing_code(cx))))
+                            .child(div().flex().flex_1().items_center().justify_center().p_2().child(preview_panel_for_app(self)))
+                            .child(Label::new(if self.preview_status.is_empty() { "等待手机画面 · AirPlay" } else { self.preview_status.as_str() })),
                     )
                     .child(
-                        Button::new("airplay-stop")
-                            .label("Stop mirror")
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.airplay_status = stop_airplay_status();
-                                cx.notify();
-                            })),
-                    )
-                    .child(Label::new(if self.airplay_status.is_empty() {
-                        "AirPlay status: stopped".to_owned()
-                    } else {
-                        format!("AirPlay status: {}", self.airplay_status)
-                    })),
-            )
-            .child(pending_airplay_approval_panel(self, cx))
-            .child(preview_panel_for_app(self))
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_2()
-                    .p_2()
-                    .rounded_lg()
-                    .border_1()
-                    .border_color(cx.theme().border)
-                    .child(Label::new("Bluetooth · connect iPhone AssistiveTouch to danna"))
-                    .child(
-                        div()
-                            .flex()
-                            .gap_2()
-                            .child(
-                                Button::new("ble-start")
-                                    .primary()
-                                    .label("Start BLE")
-                                    .on_click(|_, _, _| start_ble()),
-                            )
-                            .child(
-                                Button::new("ble-stop")
-                                    .label("Stop BLE")
-                                    .on_click(|_, _, _| stop_ble()),
-                            ),
+                        div().flex().flex_col().w(px(250.)).p_2().gap_2().rounded_lg()
+                            .bg(gpui_kit::rgb(0xFFFFFF)).border_1().border_color(gpui_kit::rgb(0xE1E5ED))
+                            .child(Label::new("导航按键"))
+                            .child(div().flex().gap_1()
+                                .child(Button::new("nav-back").label("‹ 返回"))
+                                .child(Button::new("nav-home").label("○ 主页"))
+                                .child(Button::new("nav-apps").label("□ 多任务")))
+                            .child(div().flex().gap_1()
+                                .child(Button::new("nav-volume-up").label("音量 +"))
+                                .child(Button::new("nav-volume-down").label("音量 −"))
+                                .child(Button::new("nav-notifications").label("通知栏")))
+                            .child(Label::new("电脑键盘输入到手机"))
+                            .child(div().flex().flex_col().gap_1().p_2().rounded_lg()
+                                .bg(gpui_kit::rgb(0xF6F7FB)).border_1().border_color(gpui_kit::rgb(0xE5E8F0))
+                                .child(Label::new("输入文字并发送到手机…"))
+                                .child(Button::new("keyboard-send-sample").primary().label("发送测试文字")
+                                    .on_click(|_,_,_| type_sample_ble())))
+                            .child(Label::new("文件传输"))
+                            .child(div().flex().flex_col().items_center().justify_center().h(px(88.)).p_2().rounded_lg()
+                                .bg(gpui_kit::rgb(0xF5F5FF)).border_1().border_color(gpui_kit::rgb(0xDCDFFF))
+                                .child(Label::new("☁")).child(Label::new("拖拽文件到此处发送到手机")))
+                            .child(Label::new("控制选项"))
+                            .child(Label::new("鼠标控制手机"))
+                            .child(Label::new("同步剪贴板"))
+                            .child(Label::new("投屏时熄灭手机屏幕"))
+                            .child(Label::new("显示触控点"))
+                            .child(Button::new("airplay-disconnect").label("断开连接")
+                                .on_click(cx.listener(|this,_,_,cx| { this.airplay_status=stop_airplay_status(); cx.notify(); }))),
                     ),
             )
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_2()
-                    .p_2()
-                    .rounded_lg()
-                    .border_1()
-                    .border_color(cx.theme().border)
-                    .child(Label::new("Mouse · relative pointer movement"))
-                    .child(
-                        div()
-                            .flex()
-                            .gap_2()
-                            .child(move_button("mouse-up", "↑", 0, -35))
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .gap_2()
-                            .child(move_button("mouse-left", "←", -35, 0))
-                            .child(move_button("mouse-down", "↓", 0, 35))
-                            .child(move_button("mouse-right", "→", 35, 0))
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .gap_2()
-                            .child(
-                                Button::new("mouse-click")
-                                    .primary()
-                                    .label("Left click")
-                                    .on_click(|_, _, _| left_click_ble()),
-                            )
-                            .child(
-                                Button::new("mouse-scroll-up")
-                                    .label("Scroll up")
-                                    .on_click(|_, _, _| scroll_ble(-3)),
-                            )
-                            .child(
-                                Button::new("mouse-scroll-down")
-                                    .label("Scroll down")
-                                    .on_click(|_, _, _| scroll_ble(3)),
-                            ),
-                    ),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_2()
-                    .p_2()
-                    .rounded_lg()
-                    .border_1()
-                    .border_color(cx.theme().border)
-                    .child(Label::new("Keyboard · type into the focused iPhone field"))
-                    .child(
-                        Button::new("keyboard-test")
-                            .primary()
-                            .label("Type BLE OK")
-                            .on_click(|_, _, _| type_sample_ble()),
-                    ),
-            )
-            .child(Label::new("AirPlay discovery and RTSP control · waiting for FairPlay media-key recovery before video packets can be decrypted and decoded into the preview."))
+            .child(div().flex().items_center().justify_center().gap_3().h(px(28.)).rounded_lg()
+                .bg(gpui_kit::rgb(0xFFFFFF)).border_1().border_color(gpui_kit::rgb(0xE1E5ED))
+                .child(Label::new("◉ 延迟 —")).child(Label::new("▦ FPS —"))
+                .child(Label::new("▥ 码率 —")).child(Label::new("🔒 本地加密")))
     }
 }
 
@@ -467,36 +400,22 @@ fn preview_panel_for_app(_: &PhoneControlApp) -> impl IntoElement {
 
 #[cfg(windows)]
 fn preview_panel(image: Option<Arc<Image>>, status: String) -> impl IntoElement {
-    let mut panel = div()
-        .flex()
-        .flex_col()
-        .gap_2()
-        .p_2()
-        .rounded_lg()
-        .border_1()
-        .border_color(gpui_kit::rgb(0x555555))
-        .child(Label::new("AirPlay live preview"));
-
-    let surface = if let Some(image) = image {
-        div()
-            .w_full()
-            .h(px(360.))
+    let mut shell = div().flex().flex_col().items_center().justify_center()
+        .w(px(248.)).h(px(500.)).p_2().rounded_lg()
+        .bg(gpui_kit::rgb(0x11131A)).border_1().border_color(gpui_kit::rgb(0x090A0E));
+    let screen = if let Some(image) = image {
+        div().flex().items_center().justify_center().w_full().h_full().rounded_lg()
+            .bg(gpui_kit::rgb(0x171923))
             .child(img(image).w_full().h_full().object_fit(ObjectFit::Contain))
     } else {
-        div()
-            .w_full()
-            .h(px(180.))
-            .flex()
-            .items_center()
-            .justify_center()
-            .child(Label::new(if status.is_empty() {
-                "Waiting for decoded video frames".to_owned()
-            } else {
-                status
-            }))
+        div().flex().flex_col().items_center().justify_center().w_full().h_full().gap_2()
+            .rounded_lg().bg(gpui_kit::rgb(0x24283A))
+            .child(Label::new("MirrorDeck"))
+            .child(Label::new("等待手机投屏"))
+            .child(Label::new(if status.is_empty() { "启动 AirPlay 后连接 iPhone" } else { status.as_str() }))
     };
-    panel = panel.child(surface);
-    panel
+    shell = shell.child(screen);
+    shell
 }
 
 #[cfg(windows)]

@@ -15,7 +15,7 @@ fn main() -> Result<()> {
     application().with_assets(assets::Assets).run(|cx| {
         init(cx);
         let options = WindowOptions {
-            window_bounds: Some(WindowBounds::centered(size(px(680.), px(700.)), cx)),
+            window_bounds: Some(WindowBounds::centered(size(px(1180.), px(760.)), cx)),
             ..Default::default()
         };
         open_window(options, cx, |_, cx| {
