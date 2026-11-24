@@ -348,7 +348,25 @@ fn process_media_packets(
     let mut processor = super::video::MirrorStreamProcessor::new();
     while let Ok(packet) = packets.recv() {
         received = received.saturating_add(1);
-        match processor.process_packet(packet.packet_type, &packet.payload) {
+        let previous_configuration = processor.configuration().cloned();
+        let outcome = processor.process_packet(packet.packet_type, &packet.payload);
+        if matches!(
+            outcome,
+            super::video::MirrorPacketOutcome::CodecConfigurationUpdated { .. }
+        ) && previous_configuration.as_ref() == processor.configuration()
+        {
+            // Senders may repeat the same avcC record during a stream. Treat
+            // identical configuration as a keepalive for decoder state rather
+            // than destroying and reactivating the MFT on every repetition.
+            tracing::trace!(
+                %packet.peer_addr,
+                timestamp = packet.timestamp,
+                received,
+                "Ignoring duplicate AirPlay H.264 codec configuration"
+            );
+            continue;
+        }
+        match outcome {
             super::video::MirrorPacketOutcome::CodecConfigurationUpdated {
                 profile,
                 level,
