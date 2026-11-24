@@ -351,7 +351,9 @@ fn process_media_packets(
     let frames = stream_context.frames;
     let mut mirror_cipher = match (fairplay_video_key.as_ref(), stream_connection_id) {
         (Some(video_key), Some(connection_id)) => {
-            let pair_secret = pair_verify_shared_secret.as_ref().map(|secret| secret.as_ref());
+            let pair_secret = pair_verify_shared_secret
+                .as_ref()
+                .map(|secret| secret.as_ref());
             match super::mirror_crypto::derive_mirror_stream_keys(
                 video_key.as_ref(),
                 pair_secret,
@@ -376,7 +378,9 @@ fn process_media_packets(
             None
         }
         (None, _) => {
-            tracing::debug!("FairPlay video key unavailable; encrypted mirror packets will be held");
+            tracing::debug!(
+                "FairPlay video key unavailable; encrypted mirror packets will be held"
+            );
             None
         }
     };
@@ -590,7 +594,7 @@ fn process_media_packets(
                         "AirPlay video packet received; waiting for FairPlay media key"
                     );
                 }
-            },
+            }
             super::video::MirrorPacketOutcome::Heartbeat => {
                 tracing::trace!(%packet.peer_addr, "AirPlay mirror heartbeat received");
             }
