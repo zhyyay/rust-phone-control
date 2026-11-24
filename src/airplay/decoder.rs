@@ -618,12 +618,12 @@ impl<'runtime> H264Decoder<'runtime> {
                 .map_err(MediaFoundationError::FrameConversion)?;
             }
 
-            Ok(Some(DecodedNv12Frame {
+            return Ok(Some(DecodedNv12Frame {
                 width: self.width,
                 height: self.height,
                 stride,
                 data,
-            }))
+            }));
         }
     }
 }
