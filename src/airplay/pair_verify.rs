@@ -1086,5 +1086,4 @@ mod tests {
             .expect("reject duplicate encrypted data");
         assert!(error.contains("duplicate TLV"));
     }
-
 }
