@@ -9,6 +9,14 @@ pub struct Tlv {
     pub value: Vec<u8>,
 }
 
+impl Drop for Tlv {
+    fn drop(&mut self) {
+        // Pairing TLVs can carry SRP proofs, encrypted key material, and
+        // controller signatures. Wipe the owned payload before releasing it.
+        self.value.zeroize();
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Tlv8Error {
     TruncatedHeader {
