@@ -67,25 +67,26 @@ impl Render for PhoneControlApp {
             );
             self.quit_subscription = Some(cx.on_app_quit(|this, _cx| {
                 tracing::info!("GPUI application-quit cleanup: begin");
-                // Move owned resources out while the model borrow is active;
-                // the returned future must not retain GPUI's borrowed model.
-                let task = this.frame_poll_task.take();
-                let image = this.preview_image.take();
-                async move {
-                    if let Some(task) = task {
-                        tracing::debug!(
-                            "GPUI application-quit cleanup: cancelling frame poll task"
-                        );
-                        drop(task);
-                        tracing::debug!("GPUI application-quit cleanup: frame poll task cancelled");
-                    }
-                    if let Some(image) = image {
-                        tracing::debug!("GPUI application-quit cleanup: releasing preview image");
-                        drop(image);
-                        tracing::debug!("GPUI application-quit cleanup: preview image released");
-                    }
-                    tracing::info!("GPUI application-quit cleanup: complete");
+
+                // GPUI invokes quit observers before clearing its window map,
+                // but awaits their returned futures only after the windows have
+                // been cleared. Release window-backed preview resources now,
+                // synchronously in the observer, rather than in the future.
+                if let Some(task) = this.frame_poll_task.take() {
+                    tracing::debug!(
+                        "GPUI application-quit cleanup: cancelling frame poll task"
+                    );
+                    drop(task);
+                    tracing::debug!("GPUI application-quit cleanup: frame poll task cancelled");
                 }
+                if let Some(image) = this.preview_image.take() {
+                    tracing::debug!("GPUI application-quit cleanup: releasing preview image");
+                    drop(image);
+                    tracing::debug!("GPUI application-quit cleanup: preview image released");
+                }
+
+                tracing::info!("GPUI application-quit cleanup: complete");
+                async {}
             }));
             crate::logging::startup_checkpoint("render: quit subscription registered");
         }
