@@ -393,14 +393,14 @@ fn render_preview_column(
                                     .items_center()
                                     .justify_center()
                                     .p_2()
-                                    .child(preview_panel_for_app(self)),
+                                    .child(preview_panel_for_app(app)),
                             )
                             .child(Label::new(if app.preview_status.is_empty() {
                                 "等待手机画面 · AirPlay"
                             } else {
                                 app.preview_status.as_str()
                             }))
-                            .child(pending_airplay_approval_panel(self, cx)),
+                            .child(pending_airplay_approval_panel(app, cx)),
 }
 
 fn render_right_controls(
