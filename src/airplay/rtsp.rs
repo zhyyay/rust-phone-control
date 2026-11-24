@@ -15,7 +15,7 @@ use std::sync::{
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use zeroize::Zeroizing;
+use zeroize::{Zeroize, Zeroizing};
 
 use super::{
     config,
@@ -528,7 +528,7 @@ struct Request {
     cseq: String,
     connection_close: bool,
     headers: Vec<(String, String)>,
-    body: Vec<u8>,
+    body: Zeroizing<Vec<u8>>,
 }
 
 impl Request {
@@ -1047,7 +1047,10 @@ fn read_request(stream: &mut TcpStream, pending: &mut Vec<u8>) -> std::io::Resul
         pending.extend_from_slice(&chunk[..count]);
     }
 
-    let body = pending[header_end..request_end].to_vec();
+    // Keep the owned request body in a zeroizing allocation, then erase the
+    // consumed bytes from the reusable connection buffer before draining it.
+    let body = Zeroizing::new(pending[header_end..request_end].to_vec());
+    pending[header_end..request_end].zeroize();
     pending.drain(..request_end);
 
     Ok(Some(Request {
