@@ -217,7 +217,7 @@ fn render_header(app: &PhoneControlApp) -> impl IntoElement {
                 .child(Label::new("MirrorDeck")),
         )
         .child(Label::new(if app.airplay_status.contains("Running") {
-            "● 接收服务运行中 · AirPlay"
+            "● 发现服务运行中 · 安全镜像未就绪"
         } else {
             "● 接收服务未启动"
         }))
@@ -274,7 +274,7 @@ fn render_left_sidebar(app: &PhoneControlApp, cx: &Context<PhoneControlApp>) -> 
                 .border_color(gpui_kit::rgb(0xC9CCFF))
                 .child(Label::new("📱  iPhone"))
                 .child(Label::new(if app.airplay_status.contains("Running") {
-                    "接收服务运行中 · AirPlay"
+                    "发现服务运行中 · 等待镜像握手"
                 } else {
                     "等待手机连接"
                 })),
@@ -411,7 +411,7 @@ fn render_preview_column(app: &PhoneControlApp, cx: &Context<PhoneControlApp>) -
                 .child(preview_panel_for_app(app)),
         )
         .child(Label::new(if app.preview_status.is_empty() {
-            "等待手机画面 · AirPlay"
+            "等待手机画面 · FairPlay 尚未配置，当前无法完成安全镜像"
         } else {
             app.preview_status.as_str()
         }))
@@ -871,7 +871,7 @@ fn start_airplay_status() -> String {
     match crate::airplay::start() {
         Ok(()) => {
             tracing::info!("AirPlay start button completed successfully");
-            "Running · TCP 7000 · AirPlay + RAOP discovery queued".to_owned()
+            "Running · TCP 7000 · AirPlay discovery active · FairPlay provider unavailable".to_owned()
         }
         Err(error) => {
             let message = format!("{error:#}");
