@@ -348,12 +348,20 @@ fn process_media_packets(
     let mut processor = super::video::MirrorStreamProcessor::new();
     while let Ok(packet) = packets.recv() {
         received = received.saturating_add(1);
-        let previous_configuration = processor.configuration().cloned();
+        // Video packets are the hot path; only clone codec metadata when
+        // the packet can actually replace that metadata.
+        let is_codec_configuration =
+            packet.packet_type == super::media::ScreenMirrorPacketType::CodecConfiguration;
+        let previous_configuration = is_codec_configuration
+            .then(|| processor.configuration().cloned())
+            .flatten();
         let outcome = processor.process_packet(packet.packet_type, &packet.payload);
-        if matches!(
-            outcome,
-            super::video::MirrorPacketOutcome::CodecConfigurationUpdated { .. }
-        ) && previous_configuration.as_ref() == processor.configuration()
+        if is_codec_configuration
+            && matches!(
+                outcome,
+                super::video::MirrorPacketOutcome::CodecConfigurationUpdated { .. }
+            )
+            && previous_configuration.as_ref() == processor.configuration()
         {
             // Senders may repeat the same avcC record during a stream. Treat
             // identical configuration as a keepalive for decoder state rather
