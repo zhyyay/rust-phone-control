@@ -163,7 +163,15 @@ impl Render for PhoneControlApp {
             }));
         }
 
-        // MirrorDeck three-column workspace; live frames still come from the existing AirPlay poller.
+        // Build each major region in its own function. Keeping the opaque GPUI
+        // element types shallow avoids a single enormous nested builder tree.
+        let header = render_header(self);
+        crate::logging::startup_checkpoint("render: header built");
+        let workspace = render_workspace(self, cx);
+        crate::logging::startup_checkpoint("render: workspace built");
+        let footer = render_footer();
+        crate::logging::startup_checkpoint("render: footer built");
+
         let root = div()
             .flex()
             .flex_col()
@@ -172,7 +180,15 @@ impl Render for PhoneControlApp {
             .gap_2()
             .bg(gpui_kit::rgb(0xF4F5F8))
             .text_color(gpui_kit::rgb(0x253047))
-            .child(
+            .child(header)
+            .child(workspace)
+            .child(footer);
+        crate::logging::startup_checkpoint("render: element tree built");
+        root
+    }
+}
+
+fn render_header(app: &PhoneControlApp) -> impl IntoElement {
                 div()
                     .flex()
                     .items_center()
@@ -197,13 +213,25 @@ impl Render for PhoneControlApp {
                         "● 等待连接"
                     }))
                     .child(Label::new("⚙")),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_1()
-                    .gap_2()
-                    .child(
+}
+
+fn render_workspace(
+    app: &PhoneControlApp,
+    cx: &Context<PhoneControlApp>,
+) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_1()
+        .gap_2()
+        .child(render_left_sidebar(app, cx))
+        .child(render_preview_column(app, cx))
+        .child(render_right_controls(cx))
+}
+
+fn render_left_sidebar(
+    app: &PhoneControlApp,
+    cx: &Context<PhoneControlApp>,
+) -> impl IntoElement {
                         div()
                             .flex()
                             .flex_col()
@@ -307,8 +335,12 @@ impl Render for PhoneControlApp {
                                     .child(Label::new("电量  —"))
                                     .child(Label::new("存储  —")),
                             ),
-                    )
-                    .child(
+}
+
+fn render_preview_column(
+    app: &PhoneControlApp,
+    cx: &Context<PhoneControlApp>,
+) -> impl IntoElement {
                         div()
                             .flex()
                             .flex_col()
@@ -369,8 +401,11 @@ impl Render for PhoneControlApp {
                                 self.preview_status.as_str()
                             }))
                             .child(pending_airplay_approval_panel(self, cx)),
-                    )
-                    .child(
+}
+
+fn render_right_controls(
+    cx: &Context<PhoneControlApp>,
+) -> impl IntoElement {
                         div()
                             .flex()
                             .flex_col()
@@ -475,8 +510,9 @@ impl Render for PhoneControlApp {
                                     })),
                             ),
                     ),
-            )
-            .child(
+}
+
+fn render_footer() -> impl IntoElement {
                 div()
                     .flex()
                     .items_center()
@@ -491,10 +527,6 @@ impl Render for PhoneControlApp {
                     .child(Label::new("▦ FPS —"))
                     .child(Label::new("▥ 码率 —"))
                     .child(Label::new("🔒 本地加密")),
-            );
-        crate::logging::startup_checkpoint("render: element tree built");
-        root
-    }
 }
 
 #[cfg(windows)]
