@@ -478,7 +478,7 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
     let peer_ip = stream.peer_addr()?.ip();
     let mut pending = Vec::with_capacity(READ_CHUNK_BYTES);
     let mut pair_setup_srp: Option<SrpServer> = None;
-    let mut pair_setup_session_key: Option<[u8; 64]> = None;
+    let mut pair_setup_session_key: Option<Zeroizing<[u8; 64]>> = None;
     let mut pair_verify_session: Option<PairVerifySession> = None;
     let mut pair_verify_shared_secret: Option<Zeroizing<[u8; 32]>> = None;
     let mut fairplay_ekey: Option<[u8; 72]> = None;
@@ -1185,7 +1185,7 @@ impl PairSetupFailure {
 fn handle_pair_setup(
     body: &[u8],
     srp_state: &mut Option<SrpServer>,
-    session_key: &mut Option<[u8; 64]>,
+    session_key: &mut Option<Zeroizing<[u8; 64]>>,
     setup_code: Option<&str>,
 ) -> Result<Vec<u8>, PairSetupFailure> {
     let fields =
@@ -1294,7 +1294,7 @@ fn handle_pair_setup(
                             value: result.proof.to_vec(),
                         },
                     ]);
-                    *session_key = Some(result.session_key);
+                    *session_key = Some(Zeroizing::new(result.session_key));
                     Ok(response)
                 }
                 Err(error) => {
