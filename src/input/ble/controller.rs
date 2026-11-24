@@ -86,10 +86,12 @@ impl BleInputController {
     /// Types basic ASCII text. Unsupported non-ASCII characters return an error instead of
     /// silently producing incorrect input. Unicode text injection can be added separately.
     pub async fn type_text(&self, text: &str) -> Result<()> {
-        for character in text.chars() {
-            let (usage, shifted) = ascii_key(character).ok_or_else(|| {
-                anyhow::anyhow!("unsupported character for BLE HID typing: {character:?}")
-            })?;
+        // Validate the complete payload before sending the first HID report. This avoids
+        // partially typing a message when a later character (for example, CJK text) is
+        // unsupported by the current keyboard layout mapper.
+        let keys = validate_text(text)?;
+
+        for (usage, shifted) in keys {
             let modifiers = if shifted {
                 KeyModifiers::LEFT_SHIFT
             } else {
@@ -120,6 +122,19 @@ impl BleInputController {
     pub fn advertising_status(&self) -> Result<String> {
         self.service.advertising_status()
     }
+}
+
+/// Validates and maps an entire message before any HID reports are sent.
+fn validate_text(text: &str) -> Result<Vec<(u8, bool)>> {
+    text.chars()
+        .map(|character| {
+            ascii_key(character).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "unsupported character for BLE HID typing: {character:?}; only basic ASCII is supported"
+                )
+            })
+        })
+        .collect()
 }
 
 /// Maps a printable/basic control ASCII character to (USB HID usage, Shift required).
@@ -171,7 +186,7 @@ fn ascii_key(character: char) -> Option<(u8, bool)> {
 
 #[cfg(test)]
 mod tests {
-    use super::ascii_key;
+    use super::{ascii_key, validate_text};
 
     #[test]
     fn maps_letters_and_uppercase_shift() {
@@ -187,7 +202,15 @@ mod tests {
     }
 
     #[test]
-    fn rejects_non_ascii_text() {
+    fn rejects_non_ascii_text_before_typing_anything() {
         assert_eq!(ascii_key('中'), None);
+        assert!(validate_text("hello 中 world").is_err());
+    }
+
+    #[test]
+    fn validates_complete_ascii_messages() {
+        assert_eq!(validate_text("Hello, World! 123").unwrap().len(), 17);
+        assert!(validate_text("").unwrap().is_empty());
+        assert!(validate_text("line 1\\nline 2").is_ok());
     }
 }
