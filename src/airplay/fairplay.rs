@@ -108,7 +108,6 @@ impl std::fmt::Display for FairPlayParseError {
 
 impl std::error::Error for FairPlayParseError {}
 
-
 /// Output from an authenticated SAP provider after processing an M1 record.
 ///
 /// The provider must generate this challenge from the negotiated SAP exchange;
