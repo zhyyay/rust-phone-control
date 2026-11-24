@@ -255,6 +255,13 @@ pub fn test_register_controller(identifier: &[u8], public_key: [u8; 32]) {
 }
 
 #[cfg(test)]
+pub fn test_unregister_controller(identifier: &[u8]) {
+    let lock = pairing_state().expect("pairing state");
+    let mut state = lock.lock().expect("pairing state lock");
+    state.controllers.remove(identifier);
+}
+
+#[cfg(test)]
 pub fn test_accessory_public_key() -> [u8; 32] {
     let lock = pairing_state().expect("pairing state");
     let state = lock.lock().expect("pairing state lock");
