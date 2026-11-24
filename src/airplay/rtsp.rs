@@ -984,7 +984,11 @@ pub fn serve_with_fairplay_provider(
                 // context. Do not tear it down again when the matching M3 arrives.
                 if pair_verify_session.is_none() {
                     tracing::info!("Pair-Verify starting a new authentication context");
-                    stop_session_channels(&mut event_channel, &mut timing_client, &mut media_receiver);
+                    stop_session_channels(
+                        &mut event_channel,
+                        &mut timing_client,
+                        &mut media_receiver,
+                    );
                     pair_verify_shared_secret = None;
                     fairplay_ekey = None;
                     fairplay_eiv = None;
