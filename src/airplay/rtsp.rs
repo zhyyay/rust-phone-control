@@ -870,6 +870,7 @@ fn read_request(stream: &mut TcpStream, pending: &mut Vec<u8>) -> std::io::Resul
             if value.is_empty()
                 || value.len() > 10
                 || !value.bytes().all(|byte| byte.is_ascii_digit())
+                || value.parse::<u32>().is_err()
             {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
@@ -1453,6 +1454,13 @@ mod tests {
 
         let malformed = b"OPTIONS * RTSP/1.0\\r\\nCSeq: one\\r\\n\\r\\n";
         let error = read_request_from_bytes(malformed).expect_err("non-numeric CSeq rejected");
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn rejects_cseq_values_outside_rfc_integer_range() {
+        let request = b"OPTIONS * RTSP/1.0\\r\\nCSeq: 4294967296\\r\\n\\r\\n";
+        let error = read_request_from_bytes(request).expect_err("overflowing CSeq rejected");
         assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
     }
 
