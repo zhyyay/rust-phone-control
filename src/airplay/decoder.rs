@@ -515,7 +515,11 @@ impl<'runtime> H264Decoder<'runtime> {
 
     /// Retrieve one decoded NV12 frame, or None when more input is required.
     pub fn try_get_frame(&mut self) -> Result<Option<DecodedNv12Frame>, MediaFoundationError> {
-        let stream_info = unsafe { self.transform.GetOutputStreamInfo(self.output_stream) }
+        const MAX_STREAM_CHANGE_RETRIES: usize = 4;
+        let mut stream_change_retries = 0;
+
+        loop {
+            let stream_info = unsafe { self.transform.GetOutputStreamInfo(self.output_stream) }
             .map_err(|error| MediaFoundationError::OutputInfoFailed(error.code().0))?;
         let caller_allocates =
             stream_info.dwFlags & (MFT_OUTPUT_STREAM_PROVIDES_SAMPLES.0 as u32) == 0;
@@ -564,8 +568,13 @@ impl<'runtime> H264Decoder<'runtime> {
                 return Ok(None);
             }
             if error.code().0 == MF_E_TRANSFORM_STREAM_CHANGE_HR {
+                drop(sample);
+                stream_change_retries += 1;
+                if stream_change_retries > MAX_STREAM_CHANGE_RETRIES {
+                    return Err(MediaFoundationError::RepeatedOutputStreamChange);
+                }
                 self.refresh_output_type()?;
-                return Ok(None);
+                continue;
             }
             return Err(MediaFoundationError::ProcessOutputFailed(error.code().0));
         }
@@ -609,12 +618,13 @@ impl<'runtime> H264Decoder<'runtime> {
             .map_err(MediaFoundationError::FrameConversion)?;
         }
 
-        Ok(Some(DecodedNv12Frame {
-            width: self.width,
-            height: self.height,
-            stride,
-            data,
-        }))
+            Ok(Some(DecodedNv12Frame {
+                width: self.width,
+                height: self.height,
+                stride,
+                data,
+            }))
+        }
     }
 }
 
@@ -756,6 +766,7 @@ pub enum MediaFoundationError {
     FrameConversion(crate::airplay::video::FrameConversionError),
     FrameMailbox(crate::airplay::video::FrameMailboxError),
     ProcessOutputFailed(i32),
+    RepeatedOutputStreamChange,
 }
 
 impl fmt::Display for MediaFoundationError {
@@ -854,6 +865,9 @@ impl fmt::Display for MediaFoundationError {
                 "H.264 decoder output failed (HRESULT 0x{:08X})",
                 *hr as u32
             ),
+            Self::RepeatedOutputStreamChange => {
+                f.write_str("H.264 decoder repeatedly changed its output type")
+            }
         }
     }
 }
@@ -863,6 +877,14 @@ impl std::error::Error for MediaFoundationError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn repeated_output_stream_change_has_a_clear_error_message() {
+        assert_eq!(
+            MediaFoundationError::RepeatedOutputStreamChange.to_string(),
+            "H.264 decoder repeatedly changed its output type"
+        );
+    }
 
     #[test]
     fn startup_error_contains_hresult() {
