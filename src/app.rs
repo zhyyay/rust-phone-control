@@ -871,7 +871,8 @@ fn start_airplay_status() -> String {
     match crate::airplay::start() {
         Ok(()) => {
             tracing::info!("AirPlay start button completed successfully");
-            "Running · TCP 7000 · AirPlay discovery active · FairPlay provider unavailable".to_owned()
+            "Running · TCP 7000 · AirPlay discovery active · FairPlay provider unavailable"
+                .to_owned()
         }
         Err(error) => {
             let message = format!("{error:#}");
