@@ -31,29 +31,43 @@ impl Render for PhoneControlApp {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         #[cfg(windows)]
         if self.frame_poll_task.is_none() {
+            tracing::debug!("Starting GPUI AirPlay frame and device-state poll task");
             self.frame_poll_task = Some(cx.spawn(async move |this, cx| {
+                let mut pairing_refresh_ticks = 0u8;
                 loop {
                     cx.background_executor()
                         .timer(Duration::from_millis(33))
                         .await;
+
+                    // Video preview remains responsive at ~30 FPS, while the
+                    // DPAPI-backed pairing registry is refreshed only twice
+                    // per second instead of being read on every frame tick.
+                    pairing_refresh_ticks = pairing_refresh_ticks.wrapping_add(1);
+                    let refresh_pairing = pairing_refresh_ticks >= 15;
+                    if refresh_pairing {
+                        pairing_refresh_ticks = 0;
+                    }
+
                     let updated = this.update(cx, |this, cx| {
-                        let pending = crate::airplay::pending_controller_approval();
-                        let trusted = crate::airplay::trusted_controller_fingerprints()
-                            .unwrap_or_default();
-                        let denied = crate::airplay::denied_controller_fingerprints()
-                            .unwrap_or_default();
                         let mut changed = false;
-                        if this.pending_airplay_controller != pending {
-                            this.pending_airplay_controller = pending;
-                            changed = true;
-                        }
-                        if this.trusted_airplay_controllers != trusted {
-                            this.trusted_airplay_controllers = trusted;
-                            changed = true;
-                        }
-                        if this.denied_airplay_controllers != denied {
-                            this.denied_airplay_controllers = denied;
-                            changed = true;
+                        if refresh_pairing {
+                            let pending = crate::airplay::pending_controller_approval();
+                            let trusted = crate::airplay::trusted_controller_fingerprints()
+                                .unwrap_or_default();
+                            let denied = crate::airplay::denied_controller_fingerprints()
+                                .unwrap_or_default();
+                            if this.pending_airplay_controller != pending {
+                                this.pending_airplay_controller = pending;
+                                changed = true;
+                            }
+                            if this.trusted_airplay_controllers != trusted {
+                                this.trusted_airplay_controllers = trusted;
+                                changed = true;
+                            }
+                            if this.denied_airplay_controllers != denied {
+                                this.denied_airplay_controllers = denied;
+                                changed = true;
+                            }
                         }
                         match crate::airplay::take_latest_video_frame() {
                             Ok(Some(snapshot)) => match bgra_frame_to_bmp(&snapshot.frame) {
@@ -84,6 +98,7 @@ impl Render for PhoneControlApp {
                         }
                     });
                     if updated.is_err() {
+                        tracing::debug!("Stopping GPUI AirPlay poll task because its app entity is no longer available");
                         break;
                     }
                 }
