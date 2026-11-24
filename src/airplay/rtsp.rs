@@ -1006,8 +1006,21 @@ pub fn serve_with_fairplay_provider(
                         }
                         Err(error) => {
                             tracing::warn!(%error, "Pair-Verify exchange rejected");
+                            // A failed exchange must not leave workers or key
+                            // material bound to an earlier authentication context.
+                            stop_session_channels(
+                                &mut event_channel,
+                                &mut timing_client,
+                                &mut media_receiver,
+                            );
                             pair_verify_session = None;
                             pair_verify_shared_secret = None;
+                            fairplay_ekey = None;
+                            fairplay_eiv = None;
+                            fairplay_video_key = None;
+                            fairplay_initial = None;
+                            fairplay_challenge = None;
+                            fairplay_session = None;
                             pair_verify::error_response()
                         }
                     };
