@@ -227,11 +227,21 @@ fn render_header(app: &PhoneControlApp) -> impl IntoElement {
 fn render_workspace(app: &PhoneControlApp, cx: &Context<PhoneControlApp>) -> impl IntoElement {
     div()
         .flex()
+        .flex_col()
         .flex_1()
         .gap_2()
-        .child(render_left_sidebar(app, cx))
-        .child(render_preview_column(app, cx))
-        .child(render_right_controls(cx))
+        // Keep device approval above the tall phone preview so the user can
+        // see and act on a first-time pairing request without scrolling.
+        .child(pending_airplay_approval_panel(app, cx))
+        .child(
+            div()
+                .flex()
+                .flex_1()
+                .gap_2()
+                .child(render_left_sidebar(app, cx))
+                .child(render_preview_column(app, cx))
+                .child(render_right_controls(cx)),
+        )
 }
 
 fn render_left_sidebar(app: &PhoneControlApp, cx: &Context<PhoneControlApp>) -> impl IntoElement {
@@ -405,7 +415,6 @@ fn render_preview_column(app: &PhoneControlApp, cx: &Context<PhoneControlApp>) -
         } else {
             app.preview_status.as_str()
         }))
-        .child(pending_airplay_approval_panel(app, cx))
 }
 
 fn render_right_controls(cx: &Context<PhoneControlApp>) -> impl IntoElement {
@@ -544,12 +553,12 @@ fn pending_airplay_approval_panel(
         .rounded_lg()
         .border_1()
         .border_color(gpui_kit::rgb(0xB7791F))
-        .child(Label::new("AirPlay device authorization"));
+        .child(Label::new("AirPlay 设备授权"));
 
     if let Some(fingerprint) = app.pending_airplay_controller.as_ref() {
         panel = panel
-            .child(Label::new("A new iPhone has completed identity verification and is waiting for your approval."))
-            .child(Label::new(format!("Device key fingerprint: {fingerprint}")))
+            .child(Label::new("检测到新的 iPhone，正在等待你在此电脑上批准。"))
+            .child(Label::new(format!("设备身份指纹：{fingerprint}")))
             .child(
                 div()
                     .flex()
@@ -557,13 +566,13 @@ fn pending_airplay_approval_panel(
                     .child(
                         Button::new("airplay-approve-controller")
                             .primary()
-                            .label("Allow this device")
+                            .label("允许此设备")
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.airplay_approval_status =
                                     match crate::airplay::approve_pending_controller() {
-                                        Ok(true) => "Device approved. It can reconnect automatically.".into(),
-                                        Ok(false) => "No pending device to approve.".into(),
-                                        Err(error) => format!("Approval failed: {error}"),
+                                        Ok(true) => "设备已批准。请在 iPhone 上重新选择此接收器连接。".into(),
+                                        Ok(false) => "当前没有等待批准的设备。".into(),
+                                        Err(error) => format!("批准失败：{error}"),
                                     };
                                 tracing::info!(status = %this.airplay_approval_status, "AirPlay approval action");
                                 cx.notify();
@@ -571,13 +580,13 @@ fn pending_airplay_approval_panel(
                     )
                     .child(
                         Button::new("airplay-reject-controller")
-                            .label("Reject")
+                            .label("拒绝")
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.airplay_approval_status =
                                     match crate::airplay::reject_pending_controller() {
-                                        Ok(true) => "Device blocked. It cannot reconnect until you clear the denial.".into(),
-                                        Ok(false) => "No pending device to reject.".into(),
-                                        Err(error) => format!("Could not block device: {error}"),
+                                        Ok(true) => "设备已拒绝；解除拒绝后仍需重新批准。".into(),
+                                        Ok(false) => "当前没有等待拒绝的设备。".into(),
+                                        Err(error) => format!("拒绝设备失败：{error}"),
                                     };
                                 tracing::info!(status = %this.airplay_approval_status, "AirPlay rejection action");
                                 cx.notify();
@@ -585,12 +594,12 @@ fn pending_airplay_approval_panel(
                     ),
             );
     } else {
-        panel = panel.child(Label::new("No new device is waiting for authorization."));
+        panel = panel.child(Label::new("当前没有等待授权的新设备。"));
     }
 
-    panel = panel.child(Label::new("Approved devices"));
+    panel = panel.child(Label::new("已批准设备"));
     if app.trusted_airplay_controllers.is_empty() {
-        panel = panel.child(Label::new("No approved devices."));
+        panel = panel.child(Label::new("暂无已批准设备。"));
     } else {
         for (index, fingerprint) in app.trusted_airplay_controllers.iter().enumerate() {
             let target = fingerprint.clone();
@@ -604,7 +613,7 @@ fn pending_airplay_approval_panel(
                         .child(Label::new(fingerprint.clone()))
                         .child(
                             Button::new(format!("airplay-revoke-controller-{index}"))
-                                .label("Revoke")
+                                .label("撤销授权")
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     this.airplay_approval_status =
                                         match crate::airplay::revoke_trusted_controller(&target) {
@@ -620,9 +629,9 @@ fn pending_airplay_approval_panel(
         }
     }
 
-    panel = panel.child(Label::new("Blocked devices"));
+    panel = panel.child(Label::new("已拒绝设备"));
     if app.denied_airplay_controllers.is_empty() {
-        panel = panel.child(Label::new("No blocked devices."));
+        panel = panel.child(Label::new("暂无已拒绝设备。"));
     } else {
         for (index, fingerprint) in app.denied_airplay_controllers.iter().enumerate() {
             let target = fingerprint.clone();
@@ -662,7 +671,7 @@ fn pending_airplay_approval_panel(
     _: &PhoneControlApp,
     _: &Context<PhoneControlApp>,
 ) -> impl IntoElement {
-    Label::new("AirPlay device authorization is available on Windows")
+    Label::new("AirPlay 设备授权仅在 Windows 上可用")
 }
 
 #[cfg(windows)]
