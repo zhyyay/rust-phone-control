@@ -343,6 +343,7 @@ fn render_left_sidebar(
                                     .child(Label::new("设备状态"))
                                     .child(Label::new("电量  —"))
                                     .child(Label::new("存储  —"))
+                            )
 }
 
 fn render_preview_column(
