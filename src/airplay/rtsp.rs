@@ -345,7 +345,7 @@ fn process_media_packets(
     let media_foundation = stream_context.media_foundation;
     let frames = stream_context.frames;
     let mut frame_pipeline = None;
-    let mut decoder_init_attempts = 0u8;
+    let mut decoder_init_policy = super::video::DecoderInitializationPolicy::default();
     let mut processor = super::video::MirrorStreamProcessor::new();
     while let Ok(packet) = packets.recv() {
         received = received.saturating_add(1);
@@ -364,29 +364,38 @@ fn process_media_packets(
             )
             && previous_configuration.as_ref() == processor.configuration();
 
-        if duplicate_configuration {
+        let initialize_decoder = if duplicate_configuration {
             // Repeated avcC packets must not churn a healthy decoder. If
-            // initialization previously failed, however, allow a small
-            // bounded retry budget in case the MF transform was temporarily
-            // unavailable during stream startup.
-            if frame_pipeline.is_some() || decoder_init_attempts >= 2 {
-                tracing::trace!(
-                    %packet.peer_addr,
-                    timestamp = packet.timestamp,
-                    received,
-                    decoder_init_attempts,
-                    "Ignoring duplicate AirPlay H.264 codec configuration"
-                );
-                continue;
+            // initialization previously failed, reserve one bounded retry.
+            if frame_pipeline.is_some() {
+                false
+            } else {
+                decoder_init_policy.begin_attempt()
             }
+        } else if is_codec_configuration {
+            decoder_init_policy.reset();
+            decoder_init_policy.begin_attempt()
+        } else {
+            false
+        };
+
+        if duplicate_configuration && !initialize_decoder {
+            tracing::trace!(
+                %packet.peer_addr,
+                timestamp = packet.timestamp,
+                received,
+                attempts = decoder_init_policy.attempts(),
+                "Ignoring duplicate AirPlay H.264 codec configuration"
+            );
+            continue;
+        }
+        if duplicate_configuration {
             tracing::debug!(
                 %packet.peer_addr,
                 timestamp = packet.timestamp,
-                decoder_init_attempts,
+                attempts = decoder_init_policy.attempts(),
                 "Retrying H.264 decoder initialization after duplicate codec configuration"
             );
-        } else if is_codec_configuration {
-            decoder_init_attempts = 0;
         }
         match outcome {
             super::video::MirrorPacketOutcome::CodecConfigurationUpdated {
@@ -414,7 +423,8 @@ fn process_media_packets(
                     received,
                     "AirPlay H.264 codec configuration accepted"
                 );
-                if let Some(configuration) = processor.configuration() {
+                if initialize_decoder {
+                    if let Some(configuration) = processor.configuration() {
                     match configuration.video_dimensions() {
                         Ok(Some(dimensions)) => tracing::info!(
                             width = dimensions.width,
@@ -440,20 +450,19 @@ fn process_media_packets(
                                 );
                             }
                             Err(error) => {
-                                decoder_init_attempts = decoder_init_attempts.saturating_add(1);
                                 tracing::warn!(
                                     %error,
-                                    decoder_init_attempts,
+                                    attempts = decoder_init_policy.attempts(),
                                     "Could not initialize Windows H.264 decoder pipeline"
                                 );
                             }
                         }
                     } else {
-                        decoder_init_attempts = decoder_init_attempts.saturating_add(1);
                         tracing::warn!(
-                            decoder_init_attempts,
+                            attempts = decoder_init_policy.attempts(),
                             "Media Foundation is unavailable; decoded-frame preview cannot start"
                         );
+                    }
                     }
                 }
             }
@@ -462,6 +471,7 @@ fn process_media_packets(
                 // previous decoder or its last frame visible as if it still
                 // represented the active sender stream.
                 frame_pipeline = None;
+                decoder_init_policy.reset();
                 if let Err(clear_error) = frames.clear() {
                     tracing::warn!(
                         %clear_error,
