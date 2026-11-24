@@ -740,11 +740,7 @@ impl<'runtime> H264FramePipeline<'runtime> {
     /// The replacement is fully initialized and receives the cached SPS/PPS
     /// before it replaces the active transform. If initialization fails, the
     /// current decoder remains available to the caller for diagnostics.
-    pub fn rebuild_decoder(
-        &mut self,
-        width: u32,
-        height: u32,
-    ) -> Result<(), MediaFoundationError> {
+    pub fn rebuild_decoder(&mut self, width: u32, height: u32) -> Result<(), MediaFoundationError> {
         let mut replacement = H264Decoder::new(self.decoder._runtime, width, height)?;
         if !self.parameter_sets.is_empty() {
             let _ = replacement.submit_access_unit_and_drain_bgra(&self.parameter_sets)?;
