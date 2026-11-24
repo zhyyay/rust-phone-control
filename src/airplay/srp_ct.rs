@@ -161,7 +161,10 @@ mod tests {
 
         let product = mul_mod(&left_bytes, &right_bytes).unwrap();
         let expected_product = ((&left * &right) % &n).to_bytes_be();
-        assert_eq!(&product[INTEGER_BYTES - expected_product.len()..], expected_product);
+        assert_eq!(
+            &product[INTEGER_BYTES - expected_product.len()..],
+            expected_product
+        );
 
         let sum = add_mod(&left_bytes, &right_bytes).unwrap();
         let expected_sum = ((&left + &right) % &n).to_bytes_be();
@@ -178,9 +181,18 @@ mod tests {
     #[test]
     fn fixed_width_group_arithmetic_rejects_oversized_inputs() {
         let oversized = vec![1u8; INTEGER_BYTES + 1];
-        assert_eq!(mul_mod(&oversized, &[1]).unwrap_err(), SrpCtError::InputTooWide);
-        assert_eq!(add_mod(&[1], &oversized).unwrap_err(), SrpCtError::InputTooWide);
-        assert_eq!(sub_mod(&[1], &oversized).unwrap_err(), SrpCtError::InputTooWide);
+        assert_eq!(
+            mul_mod(&oversized, &[1]).unwrap_err(),
+            SrpCtError::InputTooWide
+        );
+        assert_eq!(
+            add_mod(&[1], &oversized).unwrap_err(),
+            SrpCtError::InputTooWide
+        );
+        assert_eq!(
+            sub_mod(&[1], &oversized).unwrap_err(),
+            SrpCtError::InputTooWide
+        );
     }
 
     #[test]
