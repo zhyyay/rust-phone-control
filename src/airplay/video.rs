@@ -1514,20 +1514,14 @@ mod tests {
         let mut second_session = MirrorStreamProcessor::new();
 
         assert!(matches!(
-            first_session.process_packet(
-                ScreenMirrorPacketType::CodecConfiguration,
-                &valid_avcc
-            ),
+            first_session.process_packet(ScreenMirrorPacketType::CodecConfiguration, &valid_avcc),
             MirrorPacketOutcome::CodecConfigurationUpdated { .. }
         ));
         assert!(first_session.configuration().is_some());
         assert!(second_session.configuration().is_none());
 
         assert!(matches!(
-            second_session.process_packet(
-                ScreenMirrorPacketType::CodecConfiguration,
-                &[1, 2, 3]
-            ),
+            second_session.process_packet(ScreenMirrorPacketType::CodecConfiguration, &[1, 2, 3]),
             MirrorPacketOutcome::InvalidCodecConfiguration(_)
         ));
 
