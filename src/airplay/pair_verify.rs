@@ -911,6 +911,58 @@ mod tests {
     }
 
     #[test]
+    fn hap_pair_verify_sessions_reject_cross_session_m3_replay() {
+        let controller_a_secret = StaticSecret::random_from_rng(OsRng);
+        let controller_a_public = PublicKey::from(&controller_a_secret);
+        let controller_b_secret = StaticSecret::random_from_rng(OsRng);
+        let controller_b_public = PublicKey::from(&controller_b_secret);
+
+        let m1_a = tlv8::encode(&[
+            Tlv { kind: STATE, value: vec![1] },
+            Tlv { kind: PUBLIC_KEY, value: controller_a_public.as_bytes().to_vec() },
+        ]);
+        let m1_b = tlv8::encode(&[
+            Tlv { kind: STATE, value: vec![1] },
+            Tlv { kind: PUBLIC_KEY, value: controller_b_public.as_bytes().to_vec() },
+        ]);
+
+        let (_session_a, m2_a) = PairVerifySession::start(&m1_a).expect("session A M2");
+        let (session_b, _m2_b) = PairVerifySession::start(&m1_b).expect("session B M2");
+        let m2_fields = tlv8::decode(&m2_a).expect("decode session A M2");
+        let accessory_a: [u8; 32] = m2_fields
+            .iter()
+            .find(|field| field.kind == PUBLIC_KEY)
+            .expect("session A accessory public key")
+            .value
+            .as_slice()
+            .try_into()
+            .expect("32-byte accessory public key");
+        let shared_a =
+            controller_a_secret.diffie_hellman(&PublicKey::from(accessory_a));
+        let encryption_key_a = derive_key(
+            shared_a.as_bytes(),
+            b"Pair-Verify-Encrypt-Salt",
+            b"Pair-Verify-Encrypt-Info",
+        )
+        .expect("derive session A encryption key");
+        let cipher_a = ChaCha20Poly1305::new_from_slice(&encryption_key_a)
+            .expect("session A cipher");
+        let encrypted_a = cipher_a
+            .encrypt(Nonce::from_slice(NONCE_M3), b"session A private payload".as_ref())
+            .expect("encrypt session A payload");
+        let replayed_m3 = tlv8::encode(&[
+            Tlv { kind: STATE, value: vec![3] },
+            Tlv { kind: ENCRYPTED_DATA, value: encrypted_a },
+        ]);
+
+        let error = session_b
+            .finish(&replayed_m3)
+            .err()
+            .expect("session B must reject session A ciphertext");
+        assert!(error.contains("authentication tag verification failed"));
+    }
+
+    #[test]
     fn m1_rejects_wrong_state_and_short_public_key() {
         let wrong_state = tlv8::encode(&[
             Tlv {
