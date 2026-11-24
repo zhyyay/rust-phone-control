@@ -568,8 +568,8 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
     let mut pair_setup_session_key: Option<Zeroizing<[u8; 64]>> = None;
     let mut pair_verify_session: Option<PairVerifySession> = None;
     let mut pair_verify_shared_secret: Option<Zeroizing<[u8; 32]>> = None;
-    let mut fairplay_ekey: Option<[u8; 72]> = None;
-    let mut fairplay_eiv: Option<[u8; 16]> = None;
+    let mut fairplay_ekey: Option<Zeroizing<[u8; 72]>> = None;
+    let mut fairplay_eiv: Option<Zeroizing<[u8; 16]>> = None;
     let mut event_channel: Option<EventChannel> = None;
     let mut timing_client: Option<TimingClient> = None;
     let mut media_receiver: Option<MediaSession> = None;
@@ -1090,8 +1090,8 @@ fn handle_setup_request(
     event_channel: &mut Option<EventChannel>,
     timing_client: &mut Option<TimingClient>,
     media_receiver: &mut Option<MediaSession>,
-    fairplay_ekey: &mut Option<[u8; 72]>,
-    fairplay_eiv: &mut Option<[u8; 16]>,
+    fairplay_ekey: &mut Option<Zeroizing<[u8; 72]>>,
+    fairplay_eiv: &mut Option<Zeroizing<[u8; 16]>>,
     pair_verify_shared_secret: Option<&[u8; 32]>,
 ) -> Result<Vec<u8>, (u16, String)> {
     let setup = setup::parse_setup_request(body).map_err(|reason| (400, reason))?;
