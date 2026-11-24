@@ -220,7 +220,7 @@ fn invalid_data(message: impl Into<String>) -> io::Error {
 
 #[cfg(test)]
 mod tests {
-    use super::{StoredPairingState, controller_fingerprint};
+    use super::{StoredController, StoredPairingState, controller_fingerprint};
 
     fn state() -> StoredPairingState {
         StoredPairingState {
@@ -256,5 +256,57 @@ mod tests {
         assert!(store.revoke_controller(&fingerprint));
         assert!(!store.is_controller_trusted(&key));
         assert!(!store.revoke_controller(&fingerprint));
+    }
+
+    #[test]
+    fn validation_rejects_duplicate_trusted_identifiers() {
+        let mut store = state();
+        let key = [0x31; 32];
+        let identifier = controller_fingerprint(&key).to_vec();
+        store.controllers = vec![
+            StoredController {
+                identifier: identifier.clone(),
+                public_key: key.to_vec(),
+            },
+            StoredController {
+                identifier,
+                public_key: [0x32; 32].to_vec(),
+            },
+        ];
+
+        assert!(store.validate().is_err());
+    }
+
+    #[test]
+    fn validation_rejects_a_controller_that_is_both_trusted_and_denied() {
+        let mut store = state();
+        let key = [0x41; 32];
+        let controller = StoredController {
+            identifier: controller_fingerprint(&key).to_vec(),
+            public_key: key.to_vec(),
+        };
+        store.controllers.push(controller.clone());
+        store.denied_controllers.push(controller);
+
+        assert!(store.validate().is_err());
+    }
+
+    #[test]
+    fn validation_rejects_invalid_controller_key_lengths() {
+        let mut store = state();
+        store.controllers.push(StoredController {
+            identifier: b"invalid-key".to_vec(),
+            public_key: vec![0x51; 31],
+        });
+
+        assert!(store.validate().is_err());
+    }
+
+    #[test]
+    fn validation_rejects_unsupported_store_versions() {
+        let mut store = state();
+        store.version = 2;
+
+        assert!(store.validate().is_err());
     }
 }
