@@ -231,9 +231,46 @@ fn unsigned_integer(value: Option<&Value>) -> Option<u64> {
 
 #[cfg(test)]
 mod tests {
-    use super::{SetupRequest, parse_setup_request};
+    use super::{SetupRequest, parse_setup_request, zeroize_plist_data};
     use crate::airplay::plist;
     use ::plist::{Dictionary, Value};
+
+    #[test]
+    fn recursively_zeroizes_binary_data_in_nested_arrays_and_dictionaries() {
+        let mut nested_dictionary = Dictionary::new();
+        nested_dictionary.insert("nested_key".into(), Value::Data(vec![0xA5; 32]));
+
+        let mut root_dictionary = Dictionary::new();
+        root_dictionary.insert(
+            "payloads".into(),
+            Value::Array(vec![
+                Value::Data(vec![0x5A; 16]),
+                Value::Dictionary(nested_dictionary),
+            ]),
+        );
+        root_dictionary.insert("top_level_key".into(), Value::Data(vec![0xCC; 8]));
+
+        let mut value = Value::Dictionary(root_dictionary);
+        zeroize_plist_data(&mut value);
+
+        let root = value.as_dictionary().expect("root dictionary");
+        assert_eq!(
+            root.get("top_level_key").and_then(Value::as_data),
+            Some(&[0; 8][..])
+        );
+        let payloads = root
+            .get("payloads")
+            .and_then(Value::as_array)
+            .expect("payload array");
+        assert_eq!(payloads[0].as_data(), Some(&[0; 16][..]));
+        let nested = payloads[1]
+            .as_dictionary()
+            .expect("nested dictionary");
+        assert_eq!(
+            nested.get("nested_key").and_then(Value::as_data),
+            Some(&[0; 32][..])
+        );
+    }
 
     #[test]
     fn parses_session_level_setup_metadata() {
