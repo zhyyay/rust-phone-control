@@ -316,7 +316,7 @@ fn render_left_sidebar(app: &PhoneControlApp, cx: &Context<PhoneControlApp>) -> 
                 .child(
                     Button::new("connection-wireless")
                         .primary()
-                        .label("无线")
+                        .label("启动 AirPlay")
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.airplay_status = start_airplay_status();
                             cx.notify();
@@ -383,7 +383,7 @@ fn render_preview_column(app: &PhoneControlApp, cx: &Context<PhoneControlApp>) -
                 .child(
                     Button::new("mirror-start")
                         .primary()
-                        .label("●")
+                        .label("启动")
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.airplay_status = start_airplay_status();
                             cx.notify();
