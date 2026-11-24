@@ -251,7 +251,23 @@ impl Render for PhoneControlApp {
                                     .border_1()
                                     .border_color(gpui_kit::rgb(0xE8EBF1))
                                     .child(Label::new("  iPhone · BLE"))
-                                    .child(Label::new("蓝牙控制设备")),
+                                    .child(Label::new("蓝牙 HID 控制")),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .gap_1()
+                                    .child(
+                                        Button::new("ble-start")
+                                            .primary()
+                                            .label("启动蓝牙")
+                                            .on_click(|_, _, _| start_ble()),
+                                    )
+                                    .child(
+                                        Button::new("ble-stop")
+                                            .label("停止蓝牙")
+                                            .on_click(|_, _, _| stop_ble()),
+                                    ),
                             )
                             .child(Label::new("连接方式"))
                             .child(
@@ -379,22 +395,50 @@ impl Render for PhoneControlApp {
                             .bg(gpui_kit::rgb(0xFFFFFF))
                             .border_1()
                             .border_color(gpui_kit::rgb(0xE1E5ED))
-                            .child(Label::new("导航按键"))
+                            .child(Label::new("鼠标控制"))
                             .child(
                                 div()
                                     .flex()
-                                    .gap_1()
-                                    .child(Button::new("nav-back").label("‹ 返回"))
-                                    .child(Button::new("nav-home").label("○ 主页"))
-                                    .child(Button::new("nav-apps").label("□ 多任务")),
+                                    .items_center()
+                                    .justify_center()
+                                    .child(move_button("mouse-up", "↑", 0, -24)),
                             )
                             .child(
                                 div()
                                     .flex()
-                                    .gap_1()
-                                    .child(Button::new("nav-volume-up").label("音量 +"))
-                                    .child(Button::new("nav-volume-down").label("音量 −"))
-                                    .child(Button::new("nav-notifications").label("通知栏")),
+                                    .items_center()
+                                    .justify_center()
+                                    .gap_2()
+                                    .child(move_button("mouse-left", "←", -24, 0))
+                                    .child(
+                                        Button::new("mouse-click")
+                                            .primary()
+                                            .label("点击")
+                                            .on_click(|_, _, _| left_click_ble()),
+                                    )
+                                    .child(move_button("mouse-right", "→", 24, 0)),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .child(move_button("mouse-down", "↓", 0, 24)),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .gap_2()
+                                    .child(
+                                        Button::new("mouse-scroll-up")
+                                            .label("滚轮上")
+                                            .on_click(|_, _, _| scroll_ble(-3)),
+                                    )
+                                    .child(
+                                        Button::new("mouse-scroll-down")
+                                            .label("滚轮下")
+                                            .on_click(|_, _, _| scroll_ble(3)),
+                                    ),
                             )
                             .child(Label::new("电脑键盘输入到手机"))
                             .child(
@@ -645,7 +689,11 @@ fn preview_panel(image: Option<Arc<Image>>, status: String) -> impl IntoElement 
             .bg(gpui_kit::rgb(0x24283A))
             .child(Label::new("MirrorDeck"))
             .child(Label::new("等待手机投屏"))
-            .child(Label::new(if status.is_empty() {\n                "启动 AirPlay 后连接 iPhone"\n            } else {\n                status.as_str()\n            }))
+            .child(Label::new(if status.is_empty() {
+                "启动 AirPlay 后连接 iPhone"
+            } else {
+                status.as_str()
+            }))
     };
     shell = shell.child(screen);
     shell
