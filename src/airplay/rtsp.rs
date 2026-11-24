@@ -13,7 +13,7 @@ use std::sync::{
     mpsc::{self, Receiver},
 };
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use rand::{RngCore, rngs::OsRng};
 
@@ -40,6 +40,8 @@ const READ_CHUNK_BYTES: usize = 2048;
 const MEDIA_PACKET_QUEUE_CAPACITY: usize = 8;
 const MAX_MIRROR_PAYLOAD_BYTES: usize = 16 * 1024 * 1024;
 const MEDIA_ACCEPT_POLL_INTERVAL: Duration = Duration::from_millis(20);
+// Release a stale mirror TCP client that connects but never sends a packet.
+const MIRROR_CLIENT_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Per-stream cryptographic context. The shared secret is retained only in
 /// memory and is never formatted into logs or debug output.
@@ -187,7 +189,12 @@ fn read_mirror_stream(
     let mut received = 0u64;
     while running.load(Ordering::Acquire) {
         let mut header = [0u8; SCREEN_MIRROR_HEADER_SIZE];
-        match read_exact_while_running(&mut stream, &mut header, running) {
+        match read_exact_while_running(
+            &mut stream,
+            &mut header,
+            running,
+            MIRROR_CLIENT_IDLE_TIMEOUT,
+        ) {
             Ok(true) => {}
             Ok(false) => break,
             Err(error) => {
@@ -213,7 +220,8 @@ fn read_mirror_stream(
                 read_exact_while_running(
                     &mut stream,
                     &mut packet_bytes[SCREEN_MIRROR_HEADER_SIZE..],
-                    running
+                    running,
+                    MIRROR_CLIENT_IDLE_TIMEOUT,
                 ),
                 Ok(true)
             )
@@ -271,10 +279,12 @@ fn read_exact_while_running<R: Read>(
     reader: &mut R,
     buffer: &mut [u8],
     running: &std::sync::Arc<std::sync::atomic::AtomicBool>,
+    idle_timeout: Duration,
 ) -> io::Result<bool> {
     use std::sync::atomic::Ordering;
 
     let mut offset = 0;
+    let mut last_progress = Instant::now();
     while offset < buffer.len() && running.load(Ordering::Acquire) {
         match reader.read(&mut buffer[offset..]) {
             Ok(0) => {
@@ -283,7 +293,10 @@ fn read_exact_while_running<R: Read>(
                     "mirror stream closed",
                 ));
             }
-            Ok(read) => offset += read,
+            Ok(read) => {
+                offset += read;
+                last_progress = Instant::now();
+            },
             Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
             Err(error)
                 if matches!(
@@ -291,6 +304,12 @@ fn read_exact_while_running<R: Read>(
                     io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
                 ) =>
             {
+                if last_progress.elapsed() >= idle_timeout {
+                    return Err(io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        "mirror peer exceeded its packet idle timeout",
+                    ));
+                }
                 // A peer may stall halfway through a packet. Avoid spinning
                 // one CPU core while preserving prompt cancellation.
                 thread::sleep(Duration::from_millis(1));
