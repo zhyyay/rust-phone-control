@@ -404,6 +404,40 @@ mod tests {
     }
 
     #[test]
+    fn rejects_empty_setup_code_and_invalid_private_ephemeral_encodings() {
+        assert_eq!(
+            SrpServer::new_with_private_bytes("", [0x44; 16], &[1]).err(),
+            Some(SrpError::InvalidSetupCode)
+        );
+        assert_eq!(
+            SrpServer::new_with_private_bytes("518-08-582", [0x44; 16], &[]).err(),
+            Some(SrpError::InvalidPrivateKey)
+        );
+        assert_eq!(
+            SrpServer::new_with_private_bytes("518-08-582", [0x44; 16], &[0; 32]).err(),
+            Some(SrpError::InvalidPrivateKey)
+        );
+        let oversized = vec![1; MODULUS_BYTES + 1];
+        assert_eq!(
+            SrpServer::new_with_private_bytes("518-08-582", [0x44; 16], &oversized).err(),
+            Some(SrpError::EncodingOverflow)
+        );
+    }
+
+    #[test]
+    fn deterministic_parameters_produce_stable_public_server_key() {
+        let salt = [0x6bu8; 16];
+        let private = BigUint::from(0x123456789abcdefu64);
+        let first =
+            SrpServer::new_with_parameters("518-08-582", salt, private.clone()).unwrap();
+        let second = SrpServer::new_with_parameters("518-08-582", salt, private).unwrap();
+
+        assert_eq!(first.salt(), second.salt());
+        assert_eq!(first.public_key().unwrap(), second.public_key().unwrap());
+        assert_eq!(first.public_key().unwrap().len(), MODULUS_BYTES);
+    }
+
+    #[test]
     fn production_server_does_not_retain_biguint_secret_fields() {
         let server = SrpServer::new("518-08-582").unwrap();
         assert_eq!(server.private_b.len(), MODULUS_BYTES);
