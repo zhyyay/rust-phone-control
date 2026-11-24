@@ -336,8 +336,9 @@ fn process_media_packets(
     packets: Receiver<ReceivedMediaPacket>,
     stream_context: MirrorStreamContext,
 ) {
+    let stream_connection_id = stream_context.connection_id;
     tracing::info!(
-        stream_connection_id = ?stream_context.connection_id,
+        stream_connection_id = ?stream_connection_id,
         pair_verify_complete = stream_context.pair_verify_shared_secret.is_some(),
         "AirPlay media worker initialized with negotiated stream context"
     );
@@ -505,7 +506,18 @@ fn process_media_packets(
     if let Err(error) = frames.clear() {
         tracing::warn!(%error, "Could not clear final AirPlay preview frame");
     }
-    tracing::info!(received, "AirPlay media processing worker stopped");
+
+    // Release the MFT pipeline on this worker thread before releasing its
+    // Media Foundation runtime reference. H264Decoder owns thread-bound COM
+    // interfaces, so this ordering must remain explicit during teardown.
+    drop(frame_pipeline);
+    drop(media_foundation);
+
+    tracing::info!(
+        stream_connection_id = ?stream_connection_id,
+        received,
+        "AirPlay media processing worker stopped"
+    );
 }
 
 #[derive(Debug)]
