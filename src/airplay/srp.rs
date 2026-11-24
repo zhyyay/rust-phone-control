@@ -1,11 +1,8 @@
 //! HomeKit-compatible SRP-6a server primitives (3072-bit group, SHA-512).
 //!
-//! This module implements only the SRP M2/M4 cryptographic exchange. Pair-Setup
-//! transport state, HKDF, AEAD, and identity exchange are separate layers.
-//!
-//! BigUint modular exponentiation is variable-time. Do not use this implementation
-//! in production until the secret-exponent operation is replaced by a vetted,
-//! constant-time big-integer backend and reviewed.
+//! Secret-exponent operations use the fixed-width constant-time backend in
+//! `srp_ct`. BigUint is retained only for validating public client input and
+//! constructing the public HAP proof transcript.
 
 use num_bigint::BigUint;
 use num_traits::Zero;
@@ -13,10 +10,11 @@ use rand::RngCore;
 use rand::rngs::OsRng;
 use sha2::{Digest, Sha512};
 use subtle::ConstantTimeEq;
-use zeroize::{Zeroize, ZeroizeOnDrop};
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 const MODULUS_BYTES: usize = 384;
 const USERNAME: &[u8] = b"Pair-Setup";
+
 pub(super) const MODULUS_HEX: &str = concat!(
     "FFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD129024E08",
     "8A67CC74020BBEA63B139B22514A08798E3404DDEF9519B3CD3A431B",
@@ -41,6 +39,7 @@ pub enum SrpError {
     InvalidClientPublicKey,
     InvalidClientProof,
     EncodingOverflow,
+    ArithmeticFailure,
 }
 
 impl std::fmt::Display for SrpError {
@@ -51,6 +50,7 @@ impl std::fmt::Display for SrpError {
             Self::InvalidClientPublicKey => "invalid SRP client public key",
             Self::InvalidClientProof => "SRP client proof verification failed",
             Self::EncodingOverflow => "SRP integer exceeds the 3072-bit group width",
+            Self::ArithmeticFailure => "SRP fixed-width arithmetic failed",
         })
     }
 }
@@ -75,9 +75,9 @@ impl std::fmt::Debug for SrpServerProof {
 
 pub struct SrpServer {
     salt: [u8; 16],
-    private_b: BigUint,
-    public_b: BigUint,
-    verifier: BigUint,
+    private_b: Zeroizing<[u8; MODULUS_BYTES]>,
+    public_b: [u8; MODULUS_BYTES],
+    verifier: Zeroizing<[u8; MODULUS_BYTES]>,
 }
 
 impl SrpServer {
@@ -86,41 +86,69 @@ impl SrpServer {
         if setup_code.is_empty() {
             return Err(SrpError::InvalidSetupCode);
         }
+
         let mut salt = [0u8; 16];
-        let mut private = [0u8; 64];
+        let mut private = Zeroizing::new([0u8; 64]);
         OsRng.fill_bytes(&mut salt);
-        OsRng.fill_bytes(&mut private);
-        let private_b = BigUint::from_bytes_be(&private);
-        private.zeroize();
-        Self::new_with_parameters(setup_code, salt, private_b)
+        OsRng.fill_bytes(&mut *private);
+        Self::new_with_private_bytes(setup_code, salt, &private[..])
+    }
+
+    fn new_with_private_bytes(
+        setup_code: &str,
+        salt: [u8; 16],
+        private_bytes: &[u8],
+    ) -> Result<Self, SrpError> {
+        if setup_code.is_empty() {
+            return Err(SrpError::InvalidSetupCode);
+        }
+        if private_bytes.is_empty() || private_bytes.iter().all(|byte| *byte == 0) {
+            return Err(SrpError::InvalidPrivateKey);
+        }
+        if private_bytes.len() > MODULUS_BYTES {
+            return Err(SrpError::EncodingOverflow);
+        }
+
+        let private_b = fixed_width(private_bytes)?;
+        let x = password_exponent(&salt, setup_code);
+        let generator = [5u8];
+        let verifier = srp_ct::modpow(&generator, &x[..])
+            .map_err(|_| SrpError::ArithmeticFailure)?;
+        let n = modulus();
+        let g = generator();
+        let k = multiplier(&n, &g);
+        let g_b = srp_ct::modpow(&generator, &private_b[..])
+            .map_err(|_| SrpError::ArithmeticFailure)?;
+        let k_v = srp_ct::mul_mod(&k, &verifier[..])
+            .map_err(|_| SrpError::ArithmeticFailure)?;
+        let public_b = srp_ct::add_mod(&k_v[..], &g_b[..])
+            .map_err(|_| SrpError::ArithmeticFailure)?;
+
+        let mut verifier_storage = Zeroizing::new([0u8; MODULUS_BYTES]);
+        verifier_storage.copy_from_slice(&verifier[..]);
+        let mut public_storage = [0u8; MODULUS_BYTES];
+        public_storage.copy_from_slice(&public_b[..]);
+
+        Ok(Self {
+            salt,
+            private_b,
+            public_b: public_storage,
+            verifier: verifier_storage,
+        })
     }
 
     /// Deterministic constructor for protocol test vectors only.
+    #[cfg(test)]
     pub fn new_with_parameters(
         setup_code: &str,
         salt: [u8; 16],
         private_b: BigUint,
     ) -> Result<Self, SrpError> {
-        if setup_code.is_empty() {
-            return Err(SrpError::InvalidSetupCode);
-        }
         if private_b.is_zero() {
             return Err(SrpError::InvalidPrivateKey);
         }
-
-        let n = modulus();
-        let g = generator();
-        let k = multiplier(&n, &g);
-        let x = password_exponent(&salt, setup_code);
-        let verifier = g.modpow(&x, &n);
-        let public_b = ((&k * &verifier) + g.modpow(&private_b, &n)) % &n;
-
-        Ok(Self {
-            salt,
-            private_b,
-            public_b,
-            verifier,
-        })
+        let bytes = private_b.to_bytes_be();
+        Self::new_with_private_bytes(setup_code, salt, &bytes)
     }
 
     pub fn salt(&self) -> &[u8; 16] {
@@ -129,7 +157,7 @@ impl SrpServer {
 
     /// Return the 384-byte, left-padded SRP server public value B for Pair-Setup M2.
     pub fn public_key(&self) -> Result<Vec<u8>, SrpError> {
-        pad(&self.public_b)
+        Ok(self.public_b.to_vec())
     }
 
     /// Verify the controller's M3 proof and return the M4 proof and session key.
@@ -149,21 +177,21 @@ impl SrpServer {
         }
 
         let a_bytes = a.to_bytes_be();
-        let b_bytes = self.public_b.to_bytes_be();
+        let b_bytes = minimal_bytes(&self.public_b);
         let a_pad = pad(&a)?;
-        let b_pad = pad(&self.public_b)?;
-        let u = BigUint::from_bytes_be(&hash(&[&a_pad, &b_pad]));
-        if u.is_zero() {
-            return Err(SrpError::InvalidClientPublicKey);
-        }
+        let b_pad = self.public_b;
+        let u = hash(&[&a_pad, &b_pad]);
+        let vu = srp_ct::modpow(&self.verifier[..], &u)
+            .map_err(|_| SrpError::ArithmeticFailure)?;
+        let a_vu = srp_ct::mul_mod(&a_pad, &vu[..])
+            .map_err(|_| SrpError::ArithmeticFailure)?;
+        let shared = srp_ct::modpow(&a_vu[..], &self.private_b[..])
+            .map_err(|_| SrpError::ArithmeticFailure)?;
 
-        let vu = self.verifier.modpow(&u, &n);
-        let shared = (a * vu).modpow(&self.private_b, &n);
-        let shared_bytes = shared.to_bytes_be();
-        let session_key = hash(&[&shared_bytes]);
-
-        // HAP's proof transcript hashes N, g, A, and B in minimal
-        // big-endian form; PAD is used only for k and u calculations.
+        // Preserve the existing HAP implementation's minimal big-endian S
+        // encoding in K and the minimal A/B encoding in the proof transcript.
+        let shared_minimal = Zeroizing::new(minimal_bytes(&shared[..]));
+        let session_key = Zeroizing::new(hash(&[&shared_minimal]));
         let hn = hash(&[&n.to_bytes_be()]);
         let hg = hash(&[&g.to_bytes_be()]);
         let mut xor = [0u8; 64];
@@ -171,14 +199,16 @@ impl SrpServer {
             *out = left ^ right;
         }
         let hi = hash(&[USERNAME]);
-        let expected = hash(&[&xor, &hi, &self.salt, &a_bytes, &b_bytes, &session_key]);
+        let expected = hash(&[&xor, &hi, &self.salt, &a_bytes, &b_bytes, &session_key[..]]);
         if !bool::from(expected.as_slice().ct_eq(client_proof)) {
             return Err(SrpError::InvalidClientProof);
         }
 
-        let server_proof = hash(&[&a_bytes, &expected, &session_key]);
+        let server_proof = hash(&[&a_bytes, &expected, &session_key[..]]);
+        let mut output_key = [0u8; 64];
+        output_key.copy_from_slice(&session_key[..]);
         Ok(SrpServerProof {
-            session_key,
+            session_key: output_key,
             proof: server_proof,
         })
     }
@@ -192,16 +222,16 @@ fn generator() -> BigUint {
     BigUint::from(5u8)
 }
 
-fn multiplier(n: &BigUint, g: &BigUint) -> BigUint {
+fn multiplier(n: &BigUint, g: &BigUint) -> [u8; 64] {
     let n_pad = pad(n).expect("3072-bit modulus fits its width");
     let g_pad = pad(g).expect("generator fits its width");
-    BigUint::from_bytes_be(&hash(&[&n_pad, &g_pad]))
+    hash(&[&n_pad, &g_pad])
 }
 
-fn password_exponent(salt: &[u8; 16], setup_code: &str) -> BigUint {
-    let identity = [USERNAME, b":", setup_code.as_bytes()].concat();
-    let inner = hash(&[&identity]);
-    BigUint::from_bytes_be(&hash(&[salt, &inner]))
+fn password_exponent(salt: &[u8; 16], setup_code: &str) -> Zeroizing<[u8; 64]> {
+    let identity = Zeroizing::new([USERNAME, b":", setup_code.as_bytes()].concat());
+    let inner = Zeroizing::new(hash(&[&identity]));
+    Zeroizing::new(hash(&[salt, &inner[..]]))
 }
 
 fn hash(parts: &[&[u8]]) -> [u8; 64] {
@@ -210,6 +240,20 @@ fn hash(parts: &[&[u8]]) -> [u8; 64] {
         hasher.update(part);
     }
     hasher.finalize().into()
+}
+
+fn fixed_width(value: &[u8]) -> Result<Zeroizing<[u8; MODULUS_BYTES]>, SrpError> {
+    if value.len() > MODULUS_BYTES {
+        return Err(SrpError::EncodingOverflow);
+    }
+    let mut output = Zeroizing::new([0u8; MODULUS_BYTES]);
+    output[MODULUS_BYTES - value.len()..].copy_from_slice(value);
+    Ok(output)
+}
+
+fn minimal_bytes(value: &[u8]) -> Zeroizing<Vec<u8>> {
+    let first = value.iter().position(|byte| *byte != 0).unwrap_or(value.len());
+    Zeroizing::new(value[first..].to_vec())
 }
 
 fn pad(value: &BigUint) -> Result<Vec<u8>, SrpError> {
@@ -240,7 +284,7 @@ mod tests {
         let a_pad: [u8; 384] = pad(&a_public).unwrap().try_into().unwrap();
         let b_pad: [u8; 384] = pad(b_public).unwrap().try_into().unwrap();
         let k = BigUint::from_bytes_be(&hash(&[&pad(&n).unwrap(), &pad(&g).unwrap()]));
-        let x = password_exponent(salt, setup_code);
+        let x = BigUint::from_bytes_be(&password_exponent(salt, setup_code)[..]);
         let gx = g.modpow(&x, &n);
         let kgx = (&k * gx) % &n;
         let base = (b_public + &n - kgx) % &n;
@@ -294,7 +338,7 @@ mod tests {
             "518-08-582",
             &salt,
             &BigUint::from(0xfedcba987654321u64),
-            &server.public_b,
+            &server.public_b.iter().fold(BigUint::zero(), |value, byte| (value << 8usize) + BigUint::from(*byte)),
         );
 
         let result = server.verify_client(&client_a, &client_m1).unwrap();
@@ -312,11 +356,12 @@ mod tests {
         let server =
             SrpServer::new_with_parameters("518-08-582", salt, BigUint::from(987654321u64))
                 .unwrap();
+        let b_public = BigUint::from_bytes_be(&server.public_b);
         let (_, mut proof, client_a) = client_proof(
             "518-08-582",
             &salt,
             &BigUint::from(123456789u64),
-            &server.public_b,
+            &b_public,
         );
         proof[0] ^= 0x80;
         assert_eq!(
@@ -355,5 +400,12 @@ mod tests {
             SrpServer::new_with_parameters("518-08-582", [0; 16], BigUint::zero()).err(),
             Some(SrpError::InvalidPrivateKey)
         );
+    }
+
+    #[test]
+    fn production_server_does_not_retain_biguint_secret_fields() {
+        let server = SrpServer::new("518-08-582").unwrap();
+        assert_eq!(server.private_b.len(), MODULUS_BYTES);
+        assert_eq!(server.verifier.len(), MODULUS_BYTES);
     }
 }
