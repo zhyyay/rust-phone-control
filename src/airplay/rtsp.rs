@@ -44,7 +44,7 @@ const MIRROR_CLIENT_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 /// memory and is never formatted into logs or debug output.
 struct MirrorStreamContext {
     connection_id: Option<u64>,
-    pair_verify_shared_secret: Option<[u8; 32]>,
+    pair_verify_shared_secret: Option<Zeroizing<[u8; 32]>>,
     media_foundation: Option<Arc<super::decoder::MediaFoundationRuntime>>,
     frames: Arc<super::video::LatestFrameMailbox>,
 }
@@ -478,7 +478,7 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
     let mut pair_setup_srp: Option<SrpServer> = None;
     let mut pair_setup_session_key: Option<[u8; 64]> = None;
     let mut pair_verify_session: Option<PairVerifySession> = None;
-    let mut pair_verify_shared_secret: Option<[u8; 32]> = None;
+    let mut pair_verify_shared_secret: Option<Zeroizing<[u8; 32]>> = None;
     let mut fairplay_ekey: Option<[u8; 72]> = None;
     let mut fairplay_eiv: Option<[u8; 16]> = None;
     let mut event_channel: Option<EventChannel> = None;
@@ -707,7 +707,7 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
                     &mut media_receiver,
                     &mut fairplay_ekey,
                     &mut fairplay_eiv,
-                    pair_verify_shared_secret.as_ref(),
+                    pair_verify_shared_secret.as_deref(),
                 ) {
                     Ok(body) => write_binary_plist_response(&mut stream, &request.cseq, &body)?,
                     Err((status, reason)) => {
@@ -1099,7 +1099,8 @@ fn handle_setup_request(
                 peer_ip,
                 MirrorStreamContext {
                     connection_id: stream.connection_id,
-                    pair_verify_shared_secret: pair_verify_shared_secret.copied(),
+                    pair_verify_shared_secret: pair_verify_shared_secret
+                        .map(|secret| Zeroizing::new(*secret)),
                     media_foundation,
                     frames,
                 },
@@ -1323,7 +1324,7 @@ fn handle_pair_setup(
 fn handle_pair_verify(
     body: &[u8],
     session: &mut Option<PairVerifySession>,
-) -> Result<(Vec<u8>, Option<[u8; 32]>), String> {
+) -> Result<(Vec<u8>, Option<Zeroizing<[u8; 32]>>), String> {
     if body.len() == 68 && body[..4] == [1, 0, 0, 0] {
         if session.is_some() {
             return Err("Legacy Pair-Verify M1 received while another exchange is active".into());
@@ -1345,7 +1346,7 @@ fn handle_pair_verify(
             super::queue_pending_controller(completion.controller_public_key)?;
             return Err("Legacy Pair-Verify controller is awaiting local approval".into());
         }
-        return Ok((completion.response, Some(*completion.shared_secret)));
+        return Ok((completion.response, Some(completion.shared_secret)));
     }
 
     // HAP Pair-Verify uses TLV8 with State=1 for M1 and State=3 for M3.
@@ -1487,6 +1488,7 @@ mod tests {
         use std::io::Write;
         use std::net::TcpListener;
         use std::time::Duration;
+use zeroize::Zeroizing;
 
         let listener = TcpListener::bind("127.0.0.1:0")?;
         let mut client = TcpStream::connect(listener.local_addr()?)?;
