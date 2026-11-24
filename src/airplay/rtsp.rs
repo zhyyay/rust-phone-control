@@ -18,7 +18,6 @@ use std::time::{Duration, Instant};
 use super::{
     config,
     event::EventChannel,
-    fairplay::FairPlaySession,
     media::{ReceivedMediaPacket, SCREEN_MIRROR_HEADER_SIZE, parse_screen_mirror_packet},
     pair_setup,
     pair_verify::{self, PairVerifySession},
@@ -480,7 +479,6 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
     let mut pair_setup_session_key: Option<[u8; 64]> = None;
     let mut pair_verify_session: Option<PairVerifySession> = None;
     let mut pair_verify_shared_secret: Option<[u8; 32]> = None;
-    let mut fairplay_session = FairPlaySession::new();
     let mut fairplay_ekey: Option<[u8; 72]> = None;
     let mut fairplay_eiv: Option<[u8; 16]> = None;
     let mut event_channel: Option<EventChannel> = None;
