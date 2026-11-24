@@ -587,6 +587,89 @@ mod tests {
     }
 
     #[test]
+    fn hap_pair_verify_rejects_unpaired_controller_identifier() {
+        let mut ephemeral_bytes = [0u8; 32];
+        OsRng.fill_bytes(&mut ephemeral_bytes);
+        let controller_ephemeral_secret = StaticSecret::from(ephemeral_bytes);
+        let controller_ephemeral_public = PublicKey::from(&controller_ephemeral_secret);
+        let controller_identity = SigningKey::generate(&mut OsRng);
+        let controller_identifier = b"unpaired-controller-for-rejection-test";
+
+        let m1 = tlv8::encode(&[
+            Tlv {
+                kind: STATE,
+                value: vec![1],
+            },
+            Tlv {
+                kind: PUBLIC_KEY,
+                value: controller_ephemeral_public.as_bytes().to_vec(),
+            },
+        ]);
+        let (session, m2) = PairVerifySession::start(&m1).expect("Pair-Verify M2");
+        let fields = tlv8::decode(&m2).expect("decode M2");
+        let accessory_ephemeral: [u8; 32] = fields
+            .iter()
+            .find(|field| field.kind == PUBLIC_KEY)
+            .unwrap()
+            .value
+            .as_slice()
+            .try_into()
+            .unwrap();
+        let encrypted_m2 = &fields
+            .iter()
+            .find(|field| field.kind == ENCRYPTED_DATA)
+            .unwrap()
+            .value;
+        let shared =
+            controller_ephemeral_secret.diffie_hellman(&PublicKey::from(accessory_ephemeral));
+        let encryption_key = derive_key(
+            shared.as_bytes(),
+            b"Pair-Verify-Encrypt-Salt",
+            b"Pair-Verify-Encrypt-Info",
+        )
+        .unwrap();
+        let controller_x = derive_key(
+            shared.as_bytes(),
+            b"Pair-Verify-Controller-Sign-Salt",
+            b"Pair-Verify-Controller-Sign-Info",
+        )
+        .unwrap();
+        let mut signed = controller_x.to_vec();
+        signed.extend_from_slice(controller_ephemeral_public.as_bytes());
+        signed.extend_from_slice(controller_identifier);
+        signed.extend_from_slice(&accessory_ephemeral);
+        let signature = controller_identity.sign(&signed);
+        let inner = tlv8::encode(&[
+            Tlv {
+                kind: IDENTIFIER,
+                value: controller_identifier.to_vec(),
+            },
+            Tlv {
+                kind: SIGNATURE,
+                value: signature.to_bytes().to_vec(),
+            },
+        ]);
+        let cipher = ChaCha20Poly1305::new_from_slice(&encryption_key).unwrap();
+        let encrypted = cipher
+            .encrypt(Nonce::from_slice(NONCE_M3), inner.as_ref())
+            .expect("encrypt M3");
+        let m3 = tlv8::encode(&[
+            Tlv {
+                kind: STATE,
+                value: vec![3],
+            },
+            Tlv {
+                kind: ENCRYPTED_DATA,
+                value: encrypted,
+            },
+        ]);
+
+        let error = session.finish(&m3).unwrap_err();
+        assert!(error.contains("controller is not paired"));
+        let _ = encrypted_m2;
+    }
+
+    #[test]
     fn completes_legacy_binary_pair_verify_exchange() {
         use super::{
             LegacyPairVerifySession, legacy_aes_ctr, legacy_aes_ctr_at_offset, legacy_aes_material,
