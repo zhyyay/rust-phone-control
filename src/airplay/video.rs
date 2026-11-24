@@ -663,7 +663,13 @@ impl MirrorStreamProcessor {
                         self.configuration = Some(configuration);
                         outcome
                     }
-                    Err(error) => MirrorPacketOutcome::InvalidCodecConfiguration(error),
+                    Err(error) => {
+                        // A malformed replacement invalidates the previous
+                        // configuration too: continuing with stale SPS/PPS
+                        // could decode packets using the wrong stream geometry.
+                        self.configuration = None;
+                        MirrorPacketOutcome::InvalidCodecConfiguration(error)
+                    },
                 }
             }
             super::media::ScreenMirrorPacketType::Video => {
@@ -1473,6 +1479,35 @@ mod tests {
             .decrypt_video_packet(&mut decryptor, &encrypted)
             .expect("configured stream decrypts");
         assert_eq!(annex_b, [0, 0, 0, 1, 0x65, 0x88]);
+    }
+
+    #[test]
+    fn invalid_replacement_configuration_discards_previous_configuration() {
+        use super::super::media::ScreenMirrorPacketType;
+
+        let mut processor = MirrorStreamProcessor::new();
+        let valid_avcc = [
+            0x01, 0x64, 0xc0, 0x28, 0xff, 0xe1, 0x00, 0x04, 0x67, 0x64, 0xc0, 0x28, 0x01, 0x00,
+            0x02, 0x68, 0xee,
+        ];
+        assert!(matches!(
+            processor.process_packet(ScreenMirrorPacketType::CodecConfiguration, &valid_avcc),
+            MirrorPacketOutcome::CodecConfigurationUpdated { .. }
+        ));
+        assert!(processor.configuration().is_some());
+
+        assert!(matches!(
+            processor.process_packet(ScreenMirrorPacketType::CodecConfiguration, &[1, 2, 3]),
+            MirrorPacketOutcome::InvalidCodecConfiguration(_)
+        ));
+        assert!(processor.configuration().is_none());
+        assert!(matches!(
+            processor.process_packet(ScreenMirrorPacketType::Video, &[0, 0, 0, 2, 0x65, 0x88]),
+            MirrorPacketOutcome::VideoWaitingForDecryption {
+                has_configuration: false,
+                ..
+            }
+        ));
     }
 
     #[test]
