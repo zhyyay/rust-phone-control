@@ -762,6 +762,57 @@ mod tests {
     }
 
     #[test]
+    fn hap_pair_verify_rejects_tampered_m3_ciphertext() {
+        let controller_secret = StaticSecret::random_from_rng(OsRng);
+        let controller_public = PublicKey::from(&controller_secret);
+        let m1 = tlv8::encode(&[
+            Tlv { kind: STATE, value: vec![1] },
+            Tlv { kind: PUBLIC_KEY, value: controller_public.as_bytes().to_vec() },
+        ]);
+        let (session, _) = PairVerifySession::start(&m1).expect("Pair-Verify M2");
+        let m3 = tlv8::encode(&[
+            Tlv { kind: STATE, value: vec![3] },
+            Tlv { kind: ENCRYPTED_DATA, value: vec![0xA5; 32] },
+        ]);
+
+        let error = session.finish(&m3).err().expect("reject tampered M3");
+        assert!(error.contains("authentication tag verification failed"));
+    }
+
+    #[test]
+    fn legacy_pair_verify_rejects_invalid_controller_signature() {
+        use super::{LegacyPairVerifySession, legacy_aes_ctr_at_offset, legacy_aes_material};
+
+        let controller_secret = StaticSecret::random_from_rng(OsRng);
+        let controller_ephemeral = PublicKey::from(&controller_secret);
+        let controller_identity = SigningKey::generate(&mut OsRng);
+        let mut m1 = vec![1, 0, 0, 0];
+        m1.extend_from_slice(controller_ephemeral.as_bytes());
+        m1.extend_from_slice(&controller_identity.verifying_key().to_bytes());
+
+        let (session, _) = LegacyPairVerifySession::start(&m1).expect("legacy M2");
+        let mut accessory_ephemeral = [0u8; 32];
+        accessory_ephemeral.copy_from_slice(&m1[4..36]);
+        let _ = &mut accessory_ephemeral;
+
+        // The M3 body is encrypted with the session's derived AES material;
+        // encrypting an invalid Ed25519 signature must never complete verify.
+        let shared = controller_secret.diffie_hellman(&PublicKey::from(
+            session.accessory_ephemeral,
+        ));
+        let (aes_key, aes_iv) = legacy_aes_material(shared.as_bytes());
+        let invalid_signature = [0u8; 64];
+        let encrypted = legacy_aes_ctr_at_offset(
+            &aes_key, &aes_iv, &invalid_signature, 64,
+        ).expect("encrypt invalid signature");
+        let mut m3 = vec![0, 0, 0, 0];
+        m3.extend_from_slice(&encrypted);
+
+        let error = session.finish(&m3).err().expect("reject invalid signature");
+        assert!(error.contains("signature verification failed"));
+    }
+
+    #[test]
     fn m1_rejects_wrong_state_and_short_public_key() {
         let wrong_state = tlv8::encode(&[
             Tlv {
