@@ -1781,12 +1781,15 @@ mod tests {
             .expect("reconnected client sends heartbeat");
         drop(second);
 
-        let first_packet = receiver
-            .recv_timeout(Duration::from_secs(2))
-            .expect("first client packet is received");
-        let second_packet = receiver
-            .recv_timeout(Duration::from_secs(2))
-            .expect("second client packet is received after reconnect");
+        let first_packet = receiver.recv_timeout(Duration::from_secs(2));
+        let second_packet = receiver.recv_timeout(Duration::from_secs(2));
+
+        running.store(false, Ordering::Release);
+        worker.join().expect("mirror listener stops");
+
+        let first_packet = first_packet.expect("first client packet is received");
+        let second_packet =
+            second_packet.expect("second client packet is received after reconnect");
         assert_eq!(
             first_packet.packet_type,
             crate::airplay::media::ScreenMirrorPacketType::Heartbeat
@@ -1795,9 +1798,6 @@ mod tests {
             second_packet.packet_type,
             crate::airplay::media::ScreenMirrorPacketType::Heartbeat
         );
-
-        running.store(false, Ordering::Release);
-        worker.join().expect("mirror listener stops");
     }
 
     #[test]
