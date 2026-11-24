@@ -345,6 +345,7 @@ fn process_media_packets(
     let media_foundation = stream_context.media_foundation;
     let frames = stream_context.frames;
     let mut frame_pipeline = None;
+    let mut decoder_init_attempts = 0u8;
     let mut processor = super::video::MirrorStreamProcessor::new();
     while let Ok(packet) = packets.recv() {
         received = received.saturating_add(1);
@@ -356,23 +357,36 @@ fn process_media_packets(
             .then(|| processor.configuration().cloned())
             .flatten();
         let outcome = processor.process_packet(packet.packet_type, &packet.payload);
-        if is_codec_configuration
+        let duplicate_configuration = is_codec_configuration
             && matches!(
                 outcome,
                 super::video::MirrorPacketOutcome::CodecConfigurationUpdated { .. }
             )
-            && previous_configuration.as_ref() == processor.configuration()
-        {
-            // Senders may repeat the same avcC record during a stream. Treat
-            // identical configuration as a keepalive for decoder state rather
-            // than destroying and reactivating the MFT on every repetition.
-            tracing::trace!(
+            && previous_configuration.as_ref() == processor.configuration();
+
+        if duplicate_configuration {
+            // Repeated avcC packets must not churn a healthy decoder. If
+            // initialization previously failed, however, allow a small
+            // bounded retry budget in case the MF transform was temporarily
+            // unavailable during stream startup.
+            if frame_pipeline.is_some() || decoder_init_attempts >= 2 {
+                tracing::trace!(
+                    %packet.peer_addr,
+                    timestamp = packet.timestamp,
+                    received,
+                    decoder_init_attempts,
+                    "Ignoring duplicate AirPlay H.264 codec configuration"
+                );
+                continue;
+            }
+            tracing::debug!(
                 %packet.peer_addr,
                 timestamp = packet.timestamp,
-                received,
-                "Ignoring duplicate AirPlay H.264 codec configuration"
+                decoder_init_attempts,
+                "Retrying H.264 decoder initialization after duplicate codec configuration"
             );
-            continue;
+        } else if is_codec_configuration {
+            decoder_init_attempts = 0;
         }
         match outcome {
             super::video::MirrorPacketOutcome::CodecConfigurationUpdated {
@@ -425,10 +439,14 @@ fn process_media_packets(
                                     "Windows H.264 decoder pipeline initialized from stream SPS"
                                 );
                             }
-                            Err(error) => tracing::warn!(
-                                %error,
-                                "Could not initialize Windows H.264 decoder pipeline"
-                            ),
+                            Err(error) => {
+                                decoder_init_attempts = decoder_init_attempts.saturating_add(1);
+                                tracing::warn!(
+                                    %error,
+                                    decoder_init_attempts,
+                                    "Could not initialize Windows H.264 decoder pipeline"
+                                );
+                            },
                         }
                     } else {
                         tracing::warn!(
