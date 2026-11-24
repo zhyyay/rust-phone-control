@@ -1842,6 +1842,82 @@ mod tests {
     }
 
     #[test]
+    fn repeated_session_setup_releases_previous_event_and_timing_ports() {
+        use std::net::{TcpListener, UdpSocket};
+
+        let sender_one = UdpSocket::bind("127.0.0.1:0").expect("bind first timing sender");
+        let sender_two = UdpSocket::bind("127.0.0.1:0").expect("bind second timing sender");
+        let peer_ip = "127.0.0.1".parse().expect("loopback IP");
+        let make_body = |session_id: &str, sender_port: u16| {
+            let mut session = Dictionary::new();
+            session.insert("sessionUUID".into(), Value::String(session_id.into()));
+            session.insert("timingProtocol".into(), Value::String("NTP".into()));
+            session.insert("timingPort".into(), Value::Integer(sender_port.into()));
+            plist::encode_binary(&Value::Dictionary(session)).expect("encode session SETUP")
+        };
+
+        let mut event = None;
+        let mut timing = None;
+        let mut media = None;
+        let first = handle_setup_request(
+            &make_body("first-session", sender_one.local_addr().unwrap().port()),
+            peer_ip,
+            &mut event,
+            &mut timing,
+            &mut media,
+            &mut None,
+            &mut None,
+            None,
+        )
+        .expect("first session SETUP");
+        let first = plist::decode(&first).expect("decode first session response");
+        let first = first.as_dictionary().expect("first session dictionary");
+        let old_event_port = first
+            .get("eventPort")
+            .and_then(Value::as_unsigned)
+            .expect("first event port") as u16;
+        let old_timing_port = first
+            .get("timingPort")
+            .and_then(Value::as_unsigned)
+            .expect("first timing port") as u16;
+
+        let second = handle_setup_request(
+            &make_body("second-session", sender_two.local_addr().unwrap().port()),
+            peer_ip,
+            &mut event,
+            &mut timing,
+            &mut media,
+            &mut None,
+            &mut None,
+            None,
+        )
+        .expect("replacement session SETUP");
+        let second = plist::decode(&second).expect("decode replacement session response");
+        let second = second.as_dictionary().expect("replacement session dictionary");
+        let new_event_port = second
+            .get("eventPort")
+            .and_then(Value::as_unsigned)
+            .expect("replacement event port") as u16;
+        let new_timing_port = second
+            .get("timingPort")
+            .and_then(Value::as_unsigned)
+            .expect("replacement timing port") as u16;
+
+        assert_ne!(old_event_port, new_event_port);
+        assert_ne!(old_timing_port, new_timing_port);
+        assert!(
+            TcpListener::bind(("0.0.0.0", old_event_port)).is_ok(),
+            "previous event listener must be released after session replacement"
+        );
+        assert!(
+            UdpSocket::bind(("0.0.0.0", old_timing_port)).is_ok(),
+            "previous timing socket must be released after session replacement"
+        );
+        assert!(TcpStream::connect((peer_ip, new_event_port)).is_ok());
+        assert!(UdpSocket::bind(("0.0.0.0", new_timing_port)).is_err());
+    }
+
+    #[test]
     fn ntp_session_setup_returns_live_timing_port() {
         use std::net::UdpSocket;
         use std::time::Duration;
