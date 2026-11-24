@@ -141,8 +141,8 @@ impl LegacyPairVerifySession {
                 controller_public_key,
                 accessory_ephemeral,
                 shared_secret: *shared_secret,
-                aes_key,
-                aes_iv,
+                aes_key: *aes_key,
+                aes_iv: *aes_iv,
             },
             response,
         ))
@@ -284,12 +284,12 @@ impl HapPairVerifySession {
         let shared_secret = Zeroizing::new(*shared.as_bytes());
 
         let encryption_key = Zeroizing::new(derive_key(
-            &shared_secret,
+            shared_secret.as_slice(),
             b"Pair-Verify-Encrypt-Salt",
             b"Pair-Verify-Encrypt-Info",
         )?);
         let accessory_x = Zeroizing::new(derive_key(
-            &shared_secret,
+            shared_secret.as_slice(),
             b"Pair-Verify-Accessory-Sign-Salt",
             b"Pair-Verify-Accessory-Sign-Info",
         )?);
@@ -302,7 +302,7 @@ impl HapPairVerifySession {
                 + accessory_identifier.len()
                 + controller_ephemeral.len(),
         ));
-        signed.extend_from_slice(&accessory_x);
+        signed.extend_from_slice(accessory_x.as_slice());
         signed.extend_from_slice(&accessory_ephemeral);
         signed.extend_from_slice(&accessory_identifier);
         signed.extend_from_slice(&controller_ephemeral);
@@ -374,7 +374,7 @@ impl HapPairVerifySession {
             pair_setup::paired_controller_public_key(controller_identifier)?
                 .ok_or_else(|| "Pair-Verify controller is not paired".to_owned())?;
         let controller_x = Zeroizing::new(derive_key(
-            &self.shared_secret,
+            self.shared_secret.as_slice(),
             b"Pair-Verify-Controller-Sign-Salt",
             b"Pair-Verify-Controller-Sign-Info",
         )?);
@@ -384,7 +384,7 @@ impl HapPairVerifySession {
                 + controller_identifier.len()
                 + self.accessory_ephemeral.len(),
         ));
-        signed.extend_from_slice(&controller_x);
+        signed.extend_from_slice(controller_x.as_slice());
         signed.extend_from_slice(&self.controller_ephemeral);
         signed.extend_from_slice(controller_identifier);
         signed.extend_from_slice(&self.accessory_ephemeral);
