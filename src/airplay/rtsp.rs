@@ -1698,6 +1698,49 @@ mod tests {
     }
 
     #[test]
+    fn mirror_listener_accepts_a_new_client_after_disconnect() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::time::Duration;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind mirror listener");
+        listener
+            .set_nonblocking(true)
+            .expect("make mirror listener nonblocking");
+        let address = listener.local_addr().expect("listener address");
+        let running = Arc::new(AtomicBool::new(true));
+        let worker_running = Arc::clone(&running);
+        let (sender, receiver) = mpsc::sync_channel(4);
+        let worker = thread::spawn(move || {
+            super::accept_mirror_connections(listener, worker_running, address.ip(), sender);
+        });
+
+        let mut heartbeat = [0u8; super::SCREEN_MIRROR_HEADER_SIZE];
+        heartbeat[4..6].copy_from_slice(&2u16.to_le_bytes());
+
+        let mut first = TcpStream::connect(address).expect("first mirror client connects");
+        first.write_all(&heartbeat).expect("first client sends heartbeat");
+        drop(first);
+
+        let mut second = TcpStream::connect(address).expect("reconnected mirror client connects");
+        second
+            .write_all(&heartbeat)
+            .expect("reconnected client sends heartbeat");
+        drop(second);
+
+        let first_packet = receiver
+            .recv_timeout(Duration::from_secs(2))
+            .expect("first client packet is received");
+        let second_packet = receiver
+            .recv_timeout(Duration::from_secs(2))
+            .expect("second client packet is received after reconnect");
+        assert_eq!(first_packet.packet_type, crate::airplay::media::ScreenMirrorPacketType::Heartbeat);
+        assert_eq!(second_packet.packet_type, crate::airplay::media::ScreenMirrorPacketType::Heartbeat);
+
+        running.store(false, Ordering::Release);
+        worker.join().expect("mirror listener stops");
+    }
+
+    #[test]
     fn media_session_starts_and_stops_its_workers() {
         let peer_ip = "127.0.0.1".parse().expect("loopback IP");
         let mut session = super::MediaSession::start(peer_ip).expect("start media session");
