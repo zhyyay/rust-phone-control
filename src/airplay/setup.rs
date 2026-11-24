@@ -6,6 +6,7 @@
 //! are handled by the RTSP session layer.
 
 use ::plist::Value;
+use zeroize::Zeroizing;
 
 /// A validated AirPlay 2 SETUP request body.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -22,9 +23,9 @@ pub(super) struct SessionSetup {
     pub screen_mirroring: bool,
     pub timing_protocol: Option<String>,
     /// FairPlay-wrapped 16-byte video key supplied by the sender.
-    pub fairplay_ekey: Option<[u8; 72]>,
+    pub fairplay_ekey: Option<Zeroizing<[u8; 72]>>,
     /// Optional stream IV supplied alongside the wrapped key.
-    pub fairplay_eiv: Option<[u8; 16]>,
+    pub fairplay_eiv: Option<Zeroizing<[u8; 16]>>,
 }
 
 /// One stream descriptor from a subsequent SETUP request.
@@ -168,7 +169,7 @@ pub(super) fn parse_setup_request(bytes: &[u8]) -> Result<SetupRequest, String> 
 fn fixed_data<const N: usize>(
     value: Option<&Value>,
     field: &str,
-) -> Result<Option<[u8; N]>, String> {
+) -> Result<Option<Zeroizing<[u8; N]>>, String> {
     let Some(value) = value else {
         return Ok(None);
     };
@@ -180,7 +181,7 @@ fn fixed_data<const N: usize>(
         .as_slice()
         .try_into()
         .map_err(|_| format!("SETUP {field} must be exactly {N} bytes"))?;
-    Ok(Some(data))
+    Ok(Some(Zeroizing::new(data)))
 }
 
 fn unsigned_integer(value: Option<&Value>) -> Option<u64> {
@@ -220,8 +221,8 @@ mod tests {
                 );
                 assert!(session.screen_mirroring);
                 assert_eq!(session.timing_protocol.as_deref(), Some("PTP"));
-                assert_eq!(session.fairplay_ekey, Some([0x11; 72]));
-                assert_eq!(session.fairplay_eiv, Some([0x22; 16]));
+                assert_eq!(session.fairplay_ekey.as_deref(), Some(&[0x11; 72]));
+                assert_eq!(session.fairplay_eiv.as_deref(), Some(&[0x22; 16]));
             }
             SetupRequest::Streams(_) => panic!("expected session SETUP"),
         }
