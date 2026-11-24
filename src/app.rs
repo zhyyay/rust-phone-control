@@ -212,7 +212,7 @@ fn render_header(app: &PhoneControlApp) -> impl IntoElement {
                     } else {
                         "● 等待连接"
                     }))
-                    .child(Label::new("⚙")),
+                    .child(Label::new("⚙"))
 }
 
 fn render_workspace(
@@ -333,7 +333,7 @@ fn render_left_sidebar(
                                     .bg(gpui_kit::rgb(0xF7F8FA))
                                     .child(Label::new("设备状态"))
                                     .child(Label::new("电量  —"))
-                                    .child(Label::new("存储  —")),
+                                    .child(Label::new("存储  —"))
                             ),
 }
 
@@ -400,7 +400,7 @@ fn render_preview_column(
                             } else {
                                 app.preview_status.as_str()
                             }))
-                            .child(pending_airplay_approval_panel(app, cx)),
+                            .child(pending_airplay_approval_panel(app, cx))
 }
 
 fn render_right_controls(
@@ -508,8 +508,7 @@ fn render_right_controls(
                                         this.airplay_status = stop_airplay_status();
                                         cx.notify();
                                     })),
-                            ),
-                    ),
+                            )
 }
 
 fn render_footer() -> impl IntoElement {
@@ -526,7 +525,7 @@ fn render_footer() -> impl IntoElement {
                     .child(Label::new("◉ 延迟 —"))
                     .child(Label::new("▦ FPS —"))
                     .child(Label::new("▥ 码率 —"))
-                    .child(Label::new("🔒 本地加密")),
+                    .child(Label::new("🔒 本地加密"))
 }
 
 #[cfg(windows)]
