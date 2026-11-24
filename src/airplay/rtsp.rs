@@ -1816,7 +1816,9 @@ mod tests {
         )
         .expect("repeated screen stream SETUP");
         let value = plist::decode(&response).expect("decode replacement stream response");
-        let dictionary = value.as_dictionary().expect("replacement stream dictionary");
+        let dictionary = value
+            .as_dictionary()
+            .expect("replacement stream dictionary");
         let streams = dictionary
             .get("streams")
             .and_then(Value::as_array)
