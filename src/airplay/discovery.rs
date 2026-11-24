@@ -221,7 +221,7 @@ impl RegisteredService {
     }
 
     fn unregister(self) -> Result<()> {
-        let mut request = DNS_SERVICE_REGISTER_REQUEST {
+        let request = DNS_SERVICE_REGISTER_REQUEST {
             Version: DNS_SERVICE_REQUEST_VERSION,
             InterfaceIndex: self.interface_index,
             pServiceInstance: self.instance as *mut DNS_SERVICE_INSTANCE,
