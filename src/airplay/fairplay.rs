@@ -799,11 +799,17 @@ mod tests {
 
     #[test]
     fn rejects_truncated_and_malformed_fply_headers() {
-        assert_eq!(parse_message(&[0u8; 15]).unwrap_err(), FairPlayParseError::TooShort);
+        assert_eq!(
+            parse_message(&[0u8; 15]).unwrap_err(),
+            FairPlayParseError::TooShort
+        );
 
         let mut wrong_magic = initial_message(3);
         wrong_magic[..4].copy_from_slice(b"NOPE");
-        assert_eq!(parse_message(&wrong_magic).unwrap_err(), FairPlayParseError::InvalidMagic);
+        assert_eq!(
+            parse_message(&wrong_magic).unwrap_err(),
+            FairPlayParseError::InvalidMagic
+        );
 
         let mut wrong_version = initial_message(3);
         wrong_version[4] = 2;
@@ -816,7 +822,10 @@ mod tests {
         wrong_length[8..12].copy_from_slice(&5u32.to_be_bytes());
         assert_eq!(
             parse_message(&wrong_length).unwrap_err(),
-            FairPlayParseError::InvalidPayloadLength { declared: 5, actual: 4 }
+            FairPlayParseError::InvalidPayloadLength {
+                declared: 5,
+                actual: 4
+            }
         );
     }
 
@@ -840,7 +849,9 @@ mod tests {
     #[test]
     fn rejects_duplicate_m3_and_never_marks_structural_m3_as_authenticated() {
         let mut session = FairPlaySession::new();
-        session.accept(parse_message(&initial_message(3)).unwrap()).unwrap();
+        session
+            .accept(parse_message(&initial_message(3)).unwrap())
+            .unwrap();
         session.mark_challenge_sent(3, [0x33; 128]).unwrap();
 
         let first = parse_message(&key_message()).unwrap();
@@ -852,13 +863,18 @@ mod tests {
 
         let duplicate = parse_message(&key_message()).unwrap();
         assert!(
-            session.accept(duplicate).unwrap_err().contains("already received"),
+            session
+                .accept(duplicate)
+                .unwrap_err()
+                .contains("already received"),
             "a second M3 must not replace the first message"
         );
         // The state type intentionally has no authenticated/ready variant:
         // only an authorized SAP provider may produce media keys.
         assert_eq!(
-            session.accept(parse_message(&build_m4(&[0x44; 20])).unwrap()).unwrap_err(),
+            session
+                .accept(parse_message(&build_m4(&[0x44; 20])).unwrap())
+                .unwrap_err(),
             "FairPlay phase 4 is receiver-originated"
         );
     }
