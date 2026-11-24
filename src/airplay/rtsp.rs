@@ -1458,6 +1458,29 @@ mod tests {
     }
 
     #[test]
+    fn rejects_ambiguous_body_framing_headers() {
+        let duplicate_length =
+            b"POST /info RTSP/1.0\\r\\nCSeq: 1\\r\\nContent-Length: 0\\r\\ncontent-length: 0\\r\\n\\r\\n";
+        let error = read_request_from_bytes(duplicate_length)
+            .expect_err("duplicate content length rejected");
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+
+        let transfer_encoding =
+            b"POST /info RTSP/1.0\\r\\nCSeq: 1\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n";
+        let error = read_request_from_bytes(transfer_encoding)
+            .expect_err("transfer encoding rejected");
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn rejects_request_body_larger_than_configured_limit() {
+        let request =
+            b"POST /info RTSP/1.0\\r\\nCSeq: 1\\r\\nContent-Length: 65537\\r\\n\\r\\n";
+        let error = read_request_from_bytes(request).expect_err("oversized body rejected");
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+    }
+
+    #[test]
     fn rejects_cseq_values_outside_rfc_integer_range() {
         let request = b"OPTIONS * RTSP/1.0\\r\\nCSeq: 4294967296\\r\\n\\r\\n";
         let error = read_request_from_bytes(request).expect_err("overflowing CSeq rejected");
