@@ -182,7 +182,7 @@ impl RegisteredService {
         interface_index: u32,
     ) -> Result<Self> {
         let mut data = ServiceData::new(&fullname, properties);
-        let mut request = DNS_SERVICE_REGISTER_REQUEST {
+        let request = DNS_SERVICE_REGISTER_REQUEST {
             Version: DNS_SERVICE_REQUEST_VERSION,
             InterfaceIndex: interface_index,
             pServiceInstance: &mut data.instance,
@@ -237,7 +237,6 @@ impl RegisteredService {
         unsafe {
             DnsServiceFreeInstance(completion_instance as *const DNS_SERVICE_INSTANCE);
         }
-        request.pServiceInstance = ptr::null_mut();
         tracing::info!(
             service = %self.fullname,
             interface_index = self.interface_index,
