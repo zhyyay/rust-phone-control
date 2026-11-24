@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use zeroize::Zeroizing;
 
 const FILE_NAME: &str = "airplay-pairing.bin";
 const MAX_FILE_BYTES: u64 = 1024 * 1024;
@@ -134,8 +135,8 @@ pub fn load() -> io::Result<Option<StoredPairingState>> {
 
     let mut encrypted = Vec::with_capacity(length as usize);
     file.read_to_end(&mut encrypted)?;
-    let plaintext = crate::platform::windows::dpapi::unprotect(&encrypted)?;
-    let state: StoredPairingState = serde_json::from_slice(&plaintext)
+    let plaintext = Zeroizing::new(crate::platform::windows::dpapi::unprotect(&encrypted)?);
+    let state: StoredPairingState = serde_json::from_slice(plaintext.as_slice())
         .map_err(|error| invalid_data(format!("cannot parse AirPlay pairing store: {error}")))?;
     state.validate()?;
     Ok(Some(state))
@@ -150,10 +151,10 @@ pub fn save(state: &StoredPairingState) -> io::Result<()> {
         .ok_or_else(|| invalid_data("AirPlay pairing store has no parent directory"))?;
     fs::create_dir_all(directory)?;
 
-    let plaintext = serde_json::to_vec(state).map_err(|error| {
+    let plaintext = Zeroizing::new(serde_json::to_vec(state).map_err(|error| {
         invalid_data(format!("cannot serialize AirPlay pairing store: {error}"))
-    })?;
-    let encrypted = crate::platform::windows::dpapi::protect(&plaintext)?;
+    })?);
+    let encrypted = crate::platform::windows::dpapi::protect(plaintext.as_slice())?;
 
     let temp_path = temporary_path(&path);
     let mut file = OpenOptions::new()
