@@ -900,6 +900,10 @@ pub fn serve_with_fairplay_provider(
                         let state_validation = session.accept(message.clone());
                         if let Err(error) = state_validation {
                             tracing::warn!(%error, "FairPlay M3 state validation failed");
+                            // A rejected M3 invalidates every piece of material
+                            // from this exchange, including the wrapped key and IV.
+                            fairplay_ekey = None;
+                            fairplay_eiv = None;
                             fairplay_video_key = None;
                             fairplay_initial = None;
                             fairplay_challenge = None;
