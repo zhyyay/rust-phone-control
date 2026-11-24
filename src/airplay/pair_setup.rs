@@ -752,6 +752,34 @@ mod tests {
     }
 
     #[test]
+    fn legacy_controller_trust_deny_and_retrust_updates_authorization() {
+        let controller = SigningKey::generate(&mut OsRng);
+        let public_key = controller.verifying_key().to_bytes();
+
+        trust_legacy_controller(public_key).expect("trust controller");
+        assert!(is_controller_public_key_paired(&public_key).unwrap());
+        assert!(!is_controller_public_key_denied(&public_key).unwrap());
+
+        deny_legacy_controller(public_key).expect("deny controller");
+        assert!(!is_controller_public_key_paired(&public_key).unwrap());
+        assert!(is_controller_public_key_denied(&public_key).unwrap());
+
+        trust_legacy_controller(public_key).expect("approve controller again");
+        assert!(is_controller_public_key_paired(&public_key).unwrap());
+        assert!(!is_controller_public_key_denied(&public_key).unwrap());
+
+        revoke_legacy_controller(&hex_fingerprint(&public_key)).expect("revoke controller");
+        assert!(!is_controller_public_key_paired(&public_key).unwrap());
+    }
+
+    fn hex_fingerprint(public_key: &[u8; 32]) -> String {
+        Sha256::digest(public_key)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
+    }
+
+    #[test]
     fn m5_rejects_controller_public_key_with_invalid_length() {
         let session_key = [0x27u8; 64];
         let encrypted = encrypted_m5(&session_key, b"bad-key-length", &[0x42; 31], &[0; 64]);
