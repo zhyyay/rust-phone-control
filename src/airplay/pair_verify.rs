@@ -470,7 +470,9 @@ mod tests {
             },
         ]);
 
-        let error = PairVerifySession::start(&m1).err().expect("reject zero shared secret");
+        let error = PairVerifySession::start(&m1)
+            .err()
+            .expect("reject zero shared secret");
         assert!(error.contains("all-zero X25519 shared secret"));
     }
 
@@ -690,7 +692,10 @@ mod tests {
             },
         ]);
 
-        let error = session.finish(&m3).unwrap_err();
+        let error = session
+            .finish(&m3)
+            .err()
+            .expect("reject unpaired controller");
         assert!(error.contains("controller is not paired"));
     }
 
