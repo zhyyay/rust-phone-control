@@ -766,13 +766,25 @@ mod tests {
         let controller_secret = StaticSecret::random_from_rng(OsRng);
         let controller_public = PublicKey::from(&controller_secret);
         let m1 = tlv8::encode(&[
-            Tlv { kind: STATE, value: vec![1] },
-            Tlv { kind: PUBLIC_KEY, value: controller_public.as_bytes().to_vec() },
+            Tlv {
+                kind: STATE,
+                value: vec![1],
+            },
+            Tlv {
+                kind: PUBLIC_KEY,
+                value: controller_public.as_bytes().to_vec(),
+            },
         ]);
         let (session, _) = PairVerifySession::start(&m1).expect("Pair-Verify M2");
         let m3 = tlv8::encode(&[
-            Tlv { kind: STATE, value: vec![3] },
-            Tlv { kind: ENCRYPTED_DATA, value: vec![0xA5; 32] },
+            Tlv {
+                kind: STATE,
+                value: vec![3],
+            },
+            Tlv {
+                kind: ENCRYPTED_DATA,
+                value: vec![0xA5; 32],
+            },
         ]);
 
         let error = session.finish(&m3).err().expect("reject tampered M3");
@@ -793,14 +805,12 @@ mod tests {
         let (session, _) = LegacyPairVerifySession::start(&m1).expect("legacy M2");
         // The M3 body is encrypted with the session's derived AES material;
         // encrypting an invalid Ed25519 signature must never complete verify.
-        let shared = controller_secret.diffie_hellman(&PublicKey::from(
-            session.accessory_ephemeral,
-        ));
+        let shared =
+            controller_secret.diffie_hellman(&PublicKey::from(session.accessory_ephemeral));
         let (aes_key, aes_iv) = legacy_aes_material(shared.as_bytes());
         let invalid_signature = [0u8; 64];
-        let encrypted = legacy_aes_ctr_at_offset(
-            &aes_key, &aes_iv, &invalid_signature, 64,
-        ).expect("encrypt invalid signature");
+        let encrypted = legacy_aes_ctr_at_offset(&aes_key, &aes_iv, &invalid_signature, 64)
+            .expect("encrypt invalid signature");
         let mut m3 = vec![0, 0, 0, 0];
         m3.extend_from_slice(&encrypted);
 
