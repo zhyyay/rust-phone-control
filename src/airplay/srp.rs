@@ -268,6 +268,18 @@ mod tests {
     }
 
     #[test]
+    fn srp_proof_debug_output_redacts_session_material() {
+        let proof = super::SrpServerProof {
+            session_key: [0xA5; 64],
+            proof: [0x5A; 64],
+        };
+        let debug = format!("{proof:?}");
+        assert!(debug.contains("[REDACTED]"));
+        assert!(!debug.contains("A5"));
+        assert!(!debug.contains("5A"));
+    }
+
+    #[test]
     fn configured_group_is_exactly_3072_bits() {
         assert_eq!(modulus().bits(), 3072);
     }
