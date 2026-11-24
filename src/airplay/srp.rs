@@ -4,9 +4,9 @@
 //! `srp_ct`. BigUint is retained only for validating public client input and
 //! constructing the public HAP proof transcript.
 
+use super::srp_ct;
 use num_bigint::BigUint;
 use num_traits::Zero;
-use super::srp_ct;
 use rand::RngCore;
 use rand::rngs::OsRng;
 use sha2::{Digest, Sha512};
@@ -269,7 +269,9 @@ fn pad(value: &BigUint) -> Result<Vec<u8>, SrpError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{MODULUS_BYTES, SrpError, SrpServer, generator, hash, modulus, pad, password_exponent};
+    use super::{
+        MODULUS_BYTES, SrpError, SrpServer, generator, hash, modulus, pad, password_exponent,
+    };
     use num_bigint::BigUint;
     use num_traits::Zero;
 
