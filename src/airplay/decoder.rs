@@ -636,6 +636,47 @@ const MAX_DECODE_ACCESS_UNIT_BYTES: usize = 64 * 1024 * 1024;
 #[cfg(windows)]
 const MAX_DECODED_NV12_BYTES: usize = 128 * 1024 * 1024;
 
+/// Limits consecutive decoder rebuilds until a real frame is decoded.
+///
+/// A successful rebuild alone does not prove the decoder recovered. The
+/// budget is reset only after at least one frame has been decoded and
+/// published, preventing repeated rebuild loops on a broken stream.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DecoderRecoveryPolicy {
+    attempts_without_frame: u8,
+    max_attempts: u8,
+}
+
+impl Default for DecoderRecoveryPolicy {
+    fn default() -> Self {
+        Self {
+            attempts_without_frame: 0,
+            max_attempts: 2,
+        }
+    }
+}
+
+impl DecoderRecoveryPolicy {
+    /// Reserve one rebuild attempt, returning false after the retry budget is exhausted.
+    pub fn begin_rebuild(&mut self) -> bool {
+        if self.attempts_without_frame >= self.max_attempts {
+            return false;
+        }
+        self.attempts_without_frame += 1;
+        true
+    }
+
+    /// Reset the retry budget only after decoded output proves recovery.
+    pub fn record_decoded_frame(&mut self) {
+        self.attempts_without_frame = 0;
+    }
+
+    /// Number of rebuild attempts since the last decoded frame.
+    pub fn attempts_without_frame(&self) -> u8 {
+        self.attempts_without_frame
+    }
+}
+
 /// H.264 decode-to-frame pipeline for one mirror session.
 ///
 /// Construct and use this value on the dedicated media worker thread. It
@@ -648,6 +689,7 @@ const MAX_DECODED_NV12_BYTES: usize = 128 * 1024 * 1024;
 pub struct H264FramePipeline<'runtime> {
     decoder: H264Decoder<'runtime>,
     parameter_sets: Vec<u8>,
+    recovery: DecoderRecoveryPolicy,
     frames: std::sync::Arc<crate::airplay::video::LatestFrameMailbox>,
 }
 
@@ -664,6 +706,7 @@ impl<'runtime> H264FramePipeline<'runtime> {
         Ok(Self {
             decoder,
             parameter_sets: Vec::new(),
+            recovery: DecoderRecoveryPolicy::default(),
             frames,
         })
     }
@@ -715,6 +758,9 @@ impl<'runtime> H264FramePipeline<'runtime> {
                 .map_err(MediaFoundationError::FrameMailbox)?;
             published = published.saturating_add(1);
         }
+        if published > 0 {
+            self.recovery.record_decoded_frame();
+        }
         Ok(published)
     }
 
@@ -741,6 +787,9 @@ impl<'runtime> H264FramePipeline<'runtime> {
     /// before it replaces the active transform. If initialization fails, the
     /// current decoder remains available to the caller for diagnostics.
     pub fn rebuild_decoder(&mut self, width: u32, height: u32) -> Result<(), MediaFoundationError> {
+        if !self.recovery.begin_rebuild() {
+            return Err(MediaFoundationError::DecoderRecoveryLimitReached);
+        }
         let mut replacement = H264Decoder::new(self.decoder._runtime, width, height)?;
         if !self.parameter_sets.is_empty() {
             let _ = replacement.submit_access_unit_and_drain_bgra(&self.parameter_sets)?;
@@ -790,6 +839,7 @@ pub enum MediaFoundationError {
     FrameMailbox(crate::airplay::video::FrameMailboxError),
     ProcessOutputFailed(i32),
     RepeatedOutputStreamChange,
+    DecoderRecoveryLimitReached,
 }
 
 impl fmt::Display for MediaFoundationError {
@@ -891,6 +941,9 @@ impl fmt::Display for MediaFoundationError {
             Self::RepeatedOutputStreamChange => {
                 f.write_str("H.264 decoder repeatedly changed its output type")
             }
+            Self::DecoderRecoveryLimitReached => {
+                f.write_str("H.264 decoder rebuild retry limit reached before a frame was decoded")
+            }
         }
     }
 }
@@ -906,6 +959,27 @@ mod tests {
         assert_eq!(
             MediaFoundationError::RepeatedOutputStreamChange.to_string(),
             "H.264 decoder repeatedly changed its output type"
+        );
+    }
+
+    #[test]
+    fn decoder_recovery_policy_limits_rebuilds_until_output_recovers() {
+        let mut policy = DecoderRecoveryPolicy::default();
+        assert!(policy.begin_rebuild());
+        assert!(policy.begin_rebuild());
+        assert!(!policy.begin_rebuild());
+        assert_eq!(policy.attempts_without_frame(), 2);
+
+        policy.record_decoded_frame();
+        assert_eq!(policy.attempts_without_frame(), 0);
+        assert!(policy.begin_rebuild());
+    }
+
+    #[test]
+    fn decoder_recovery_limit_error_is_actionable() {
+        assert_eq!(
+            MediaFoundationError::DecoderRecoveryLimitReached.to_string(),
+            "H.264 decoder rebuild retry limit reached before a frame was decoded"
         );
     }
 
