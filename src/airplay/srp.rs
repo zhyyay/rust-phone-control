@@ -181,10 +181,8 @@ impl SrpServer {
         let a_pad = pad(&a)?;
         let b_pad = self.public_b;
         let u = hash(&[&a_pad, &b_pad]);
-        let vu = srp_ct::modpow(&self.verifier[..], &u)
-            .map_err(|_| SrpError::ArithmeticFailure)?;
-        let a_vu = srp_ct::mul_mod(&a_pad, &vu[..])
-            .map_err(|_| SrpError::ArithmeticFailure)?;
+        let vu = srp_ct::modpow(&self.verifier[..], &u).map_err(|_| SrpError::ArithmeticFailure)?;
+        let a_vu = srp_ct::mul_mod(&a_pad, &vu[..]).map_err(|_| SrpError::ArithmeticFailure)?;
         let shared = srp_ct::modpow(&a_vu[..], &self.private_b[..])
             .map_err(|_| SrpError::ArithmeticFailure)?;
 
@@ -252,7 +250,10 @@ fn fixed_width(value: &[u8]) -> Result<Zeroizing<[u8; MODULUS_BYTES]>, SrpError>
 }
 
 fn minimal_bytes(value: &[u8]) -> Zeroizing<Vec<u8>> {
-    let first = value.iter().position(|byte| *byte != 0).unwrap_or(value.len());
+    let first = value
+        .iter()
+        .position(|byte| *byte != 0)
+        .unwrap_or(value.len());
     Zeroizing::new(value[first..].to_vec())
 }
 
@@ -338,7 +339,9 @@ mod tests {
             "518-08-582",
             &salt,
             &BigUint::from(0xfedcba987654321u64),
-            &server.public_b.iter().fold(BigUint::zero(), |value, byte| (value << 8usize) + BigUint::from(*byte)),
+            &server.public_b.iter().fold(BigUint::zero(), |value, byte| {
+                (value << 8usize) + BigUint::from(*byte)
+            }),
         );
 
         let result = server.verify_client(&client_a, &client_m1).unwrap();
@@ -357,12 +360,8 @@ mod tests {
             SrpServer::new_with_parameters("518-08-582", salt, BigUint::from(987654321u64))
                 .unwrap();
         let b_public = BigUint::from_bytes_be(&server.public_b);
-        let (_, mut proof, client_a) = client_proof(
-            "518-08-582",
-            &salt,
-            &BigUint::from(123456789u64),
-            &b_public,
-        );
+        let (_, mut proof, client_a) =
+            client_proof("518-08-582", &salt, &BigUint::from(123456789u64), &b_public);
         proof[0] ^= 0x80;
         assert_eq!(
             server.verify_client(&client_a, &proof),
