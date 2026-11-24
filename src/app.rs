@@ -234,11 +234,13 @@ impl Render for PhoneControlApp {
                                     .border_1()
                                     .border_color(gpui_kit::rgb(0xC9CCFF))
                                     .child(Label::new("📱  iPhone"))
-                                    .child(Label::new(if self.airplay_status.contains("Running") {
-                                        "投屏中 · AirPlay"
-                                    } else {
-                                        "等待连接"
-                                    })),
+                                    .child(Label::new(
+                                        if self.airplay_status.contains("Running") {
+                                            "投屏中 · AirPlay"
+                                        } else {
+                                            "等待连接"
+                                        },
+                                    )),
                             )
                             .child(
                                 div()
@@ -283,22 +285,14 @@ impl Render for PhoneControlApp {
                                                 cx.notify();
                                             })),
                                     )
-                                    .child(
-                                        Button::new("connection-usb")
-                                            .label("USB")
-                                            .on_click(|_, _, _| {
-                                                tracing::info!(
-                                                    "USB transport adapter is not wired yet"
-                                                )
-                                            }),
-                                    )
-                                    .child(
-                                        Button::new("connection-qr")
-                                            .label("扫码")
-                                            .on_click(|_, _, _| {
-                                                tracing::info!("QR pairing entry selected")
-                                            }),
-                                    ),
+                                    .child(Button::new("connection-usb").label("USB").on_click(
+                                        |_, _, _| {
+                                            tracing::info!("USB transport adapter is not wired yet")
+                                        },
+                                    ))
+                                    .child(Button::new("connection-qr").label("扫码").on_click(
+                                        |_, _, _| tracing::info!("QR pairing entry selected"),
+                                    )),
                             )
                             .child(div().flex_1())
                             .child(
@@ -331,38 +325,29 @@ impl Render for PhoneControlApp {
                                     .justify_center()
                                     .gap_2()
                                     .p_2()
+                                    .child(Button::new("mirror-refresh").label("⟳").on_click(
+                                        cx.listener(|this, _, _, cx| {
+                                            this.airplay_status = start_airplay_status();
+                                            cx.notify();
+                                        }),
+                                    ))
+                                    .child(Button::new("mirror-screenshot").label("▣").on_click(
+                                        |_, _, _| tracing::info!("Screenshot action requested"),
+                                    ))
                                     .child(
-                                        Button::new("mirror-refresh")
-                                            .label("⟳")
-                                            .on_click(cx.listener(|this, _, _, cx| {
+                                        Button::new("mirror-start").primary().label("●").on_click(
+                                            cx.listener(|this, _, _, cx| {
                                                 this.airplay_status = start_airplay_status();
                                                 cx.notify();
-                                            })),
-                                    )
-                                    .child(
-                                        Button::new("mirror-screenshot")
-                                            .label("▣")
-                                            .on_click(|_, _, _| {
-                                                tracing::info!("Screenshot action requested")
                                             }),
+                                        ),
                                     )
-                                    .child(
-                                        Button::new("mirror-start")
-                                            .primary()
-                                            .label("●")
-                                            .on_click(cx.listener(|this, _, _, cx| {
-                                                this.airplay_status = start_airplay_status();
-                                                cx.notify();
-                                            })),
-                                    )
-                                    .child(
-                                        Button::new("mirror-stop")
-                                            .label("Ⅱ")
-                                            .on_click(cx.listener(|this, _, _, cx| {
-                                                this.airplay_status = stop_airplay_status();
-                                                cx.notify();
-                                            })),
-                                    )
+                                    .child(Button::new("mirror-stop").label("Ⅱ").on_click(
+                                        cx.listener(|this, _, _, cx| {
+                                            this.airplay_status = stop_airplay_status();
+                                            cx.notify();
+                                        }),
+                                    ))
                                     .child(
                                         Button::new("mirror-copy-code")
                                             .label("配对码")
@@ -382,7 +367,8 @@ impl Render for PhoneControlApp {
                                 "等待手机画面 · AirPlay"
                             } else {
                                 self.preview_status.as_str()
-                            })),
+                            }))
+                            .child(pending_airplay_approval_panel(self, cx)),
                     )
                     .child(
                         div()
