@@ -11,6 +11,7 @@ use gpui_kit::*;
 
 fn main() -> Result<()> {
     logging::init_logging()?;
+    tracing::info!("Starting GPUI application");
     application().with_assets(assets::Assets).run(|cx| {
         init(cx);
         let options = WindowOptions {
@@ -22,9 +23,14 @@ fn main() -> Result<()> {
         })
         .expect("failed to open Rust Phone Control window");
     });
+    tracing::info!("GPUI application event loop returned; beginning process shutdown");
     #[cfg(windows)]
-    if let Err(error) = airplay::stop() {
-        tracing::warn!(error = %format!("{error:#}"), "Could not stop AirPlay receiver during shutdown");
+    {
+        tracing::info!("Process shutdown: stopping AirPlay receiver");
+        if let Err(error) = airplay::stop() {
+            tracing::warn!(error = %format!("{error:#}"), "Could not stop AirPlay receiver during shutdown");
+        }
+        tracing::info!("Process shutdown: AirPlay receiver stop completed");
     }
     Ok(())
 }
