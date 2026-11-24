@@ -3111,7 +3111,9 @@ mod tests {
     #[test]
     fn pair_setup_fresh_m1_replaces_abandoned_exchange_before_validation() {
         let old_server = SrpServer::new("518-08-582").expect("create abandoned SRP server");
-        let old_public_key = old_server.public_key().expect("read abandoned SRP public key");
+        let old_public_key = old_server
+            .public_key()
+            .expect("read abandoned SRP public key");
         let mut srp = Some(old_server);
         let mut session_key = Some(Zeroizing::new([0xA5; 64]));
         let invalid_m1 = tlv8::encode(&[Tlv {
@@ -3119,15 +3121,13 @@ mod tests {
             value: vec![0x01],
         }]);
 
-        let error = handle_pair_setup(
-            &invalid_m1,
-            &mut srp,
-            &mut session_key,
-            Some("518-08-582"),
-        )
-        .expect_err("M1 without method must be rejected");
+        let error = handle_pair_setup(&invalid_m1, &mut srp, &mut session_key, Some("518-08-582"))
+            .expect_err("M1 without method must be rejected");
         assert_eq!(error.status, 400);
-        assert!(srp.is_none(), "invalid fresh M1 must discard the old SRP exchange");
+        assert!(
+            srp.is_none(),
+            "invalid fresh M1 must discard the old SRP exchange"
+        );
         assert!(
             session_key.is_none(),
             "invalid fresh M1 must discard the old session key"
@@ -3304,7 +3304,10 @@ mod tests {
                 .any(|field| field.kind == 0x07 && field.value == [0x02])
         );
         assert!(session_key.is_none());
-        assert!(srp.is_none(), "failed SRP proof must consume the exchange state");
+        assert!(
+            srp.is_none(),
+            "failed SRP proof must consume the exchange state"
+        );
     }
 
     #[test]
