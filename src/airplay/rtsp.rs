@@ -15,6 +15,8 @@ use std::sync::{
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
+use zeroize::Zeroizing;
+
 use super::{
     config,
     event::EventChannel,
