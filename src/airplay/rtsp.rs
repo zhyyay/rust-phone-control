@@ -1490,6 +1490,36 @@ mod tests {
     }
 
     #[test]
+    fn mirror_reader_times_out_when_peer_stops_mid_packet() {
+        use std::net::TcpListener;
+        use std::sync::atomic::AtomicBool;
+        use std::time::Duration;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind local listener");
+        let mut client =
+            TcpStream::connect(listener.local_addr().expect("listener address"))
+                .expect("connect local client");
+        let (mut server, _) = listener.accept().expect("accept local client");
+        server
+            .set_read_timeout(Some(Duration::from_millis(5)))
+            .expect("set short read timeout");
+        let running = std::sync::Arc::new(AtomicBool::new(true));
+        let mut packet_header = [0u8; 16];
+
+        let error = super::read_exact_while_running(
+            &mut server,
+            &mut packet_header,
+            &running,
+            Duration::from_millis(20),
+        )
+        .expect_err("idle peer must be disconnected");
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+        client
+            .shutdown(std::net::Shutdown::Both)
+            .expect("close idle test client");
+    }
+
+    #[test]
     fn rejects_peer_disconnect_before_request_headers_are_complete() {
         let request = b"OPTIONS * RTSP/1.0\r\nCSeq: 1";
         let error = read_request_from_bytes(request).expect_err("truncated headers rejected");
