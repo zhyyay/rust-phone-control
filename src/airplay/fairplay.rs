@@ -1,5 +1,3 @@
-use zeroize::Zeroizing;
-
 //! FairPlay SAP wire framing and session-state validation.
 //!
 //! This module does not implement the SAP cryptographic transform or ekey
@@ -7,6 +5,8 @@ use zeroize::Zeroizing;
 //! must fail closed rather than send placeholder challenges or acknowledgements.
 //! Keep this module Apache-2.0 clean: do not vendor LGPL implementations,
 //! Apple-derived white-box tables, captured response blobs, or replay prefixes.
+
+use zeroize::Zeroizing;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MessagePhase {
