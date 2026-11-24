@@ -63,19 +63,25 @@ impl Render for PhoneControlApp {
             tracing::debug!(
                 "Registering GPUI application-quit cleanup for AirPlay preview resources"
             );
-            self.quit_subscription = Some(cx.on_app_quit(|this, _cx| async move {
+            self.quit_subscription = Some(cx.on_app_quit(|this, _cx| {
                 tracing::info!("GPUI application-quit cleanup: begin");
-                if let Some(task) = this.frame_poll_task.take() {
-                    tracing::debug!("GPUI application-quit cleanup: cancelling frame poll task");
-                    drop(task);
-                    tracing::debug!("GPUI application-quit cleanup: frame poll task cancelled");
+                // Move owned resources out while the model borrow is active;
+                // the returned future must not retain GPUI's borrowed model.
+                let task = this.frame_poll_task.take();
+                let image = this.preview_image.take();
+                async move {
+                    if let Some(task) = task {
+                        tracing::debug!("GPUI application-quit cleanup: cancelling frame poll task");
+                        drop(task);
+                        tracing::debug!("GPUI application-quit cleanup: frame poll task cancelled");
+                    }
+                    if let Some(image) = image {
+                        tracing::debug!("GPUI application-quit cleanup: releasing preview image");
+                        drop(image);
+                        tracing::debug!("GPUI application-quit cleanup: preview image released");
+                    }
+                    tracing::info!("GPUI application-quit cleanup: complete");
                 }
-                if let Some(image) = this.preview_image.take() {
-                    tracing::debug!("GPUI application-quit cleanup: releasing preview image");
-                    drop(image);
-                    tracing::debug!("GPUI application-quit cleanup: preview image released");
-                }
-                tracing::info!("GPUI application-quit cleanup: complete");
             }));
         }
 
