@@ -1765,6 +1765,7 @@ fn handle_pair_verify(
             super::queue_pending_controller(completion.controller_public_key)?;
             return Err("Legacy Pair-Verify controller is awaiting local approval".into());
         }
+        tracing::info!("Legacy Pair-Verify authenticated an approved controller");
         return Ok((completion.response, Some(completion.shared_secret)));
     }
 
@@ -1799,6 +1800,7 @@ fn handle_pair_verify(
                 super::queue_pending_controller(completion.controller_public_key)?;
                 return Err("Pair-Verify controller is awaiting local approval".into());
             }
+            tracing::info!("HAP Pair-Verify authenticated an approved controller");
             Ok((completion.response, Some(completion.shared_secret)))
         }
         other => Err(format!("unsupported Pair-Verify state {other}")),
