@@ -421,6 +421,7 @@ fn process_media_packets(
     tracing::info!(received, "AirPlay media processing worker stopped");
 }
 
+#[derive(Debug)]
 struct Request {
     method: String,
     path: String,
