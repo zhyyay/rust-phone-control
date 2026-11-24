@@ -263,9 +263,7 @@ mod tests {
             .and_then(Value::as_array)
             .expect("payload array");
         assert_eq!(payloads[0].as_data(), Some(&[0; 16][..]));
-        let nested = payloads[1]
-            .as_dictionary()
-            .expect("nested dictionary");
+        let nested = payloads[1].as_dictionary().expect("nested dictionary");
         assert_eq!(
             nested.get("nested_key").and_then(Value::as_data),
             Some(&[0; 32][..])
