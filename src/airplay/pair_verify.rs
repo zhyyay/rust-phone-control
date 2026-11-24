@@ -393,7 +393,7 @@ impl HapPairVerifySession {
                 kind: STATE,
                 value: vec![4],
             }]),
-            shared_secret: self.shared_secret,
+            shared_secret: Zeroizing::new(self.shared_secret),
             controller_public_key,
         })
     }
@@ -577,7 +577,7 @@ mod tests {
         ]);
 
         let completion = session.finish(&m3).expect("verify M3");
-        assert_ne!(completion.shared_secret, [0u8; 32]);
+        assert_ne!(*completion.shared_secret, [0u8; 32]);
         let m4_fields = tlv8::decode(&completion.response).expect("decode M4");
         assert!(
             m4_fields
@@ -634,7 +634,7 @@ mod tests {
 
         let completion = session.finish(&m3).expect("legacy M4");
         assert!(completion.response.is_empty());
-        assert_eq!(completion.shared_secret, *shared.as_bytes());
+        assert_eq!(*completion.shared_secret, *shared.as_bytes());
     }
 
     #[test]
