@@ -2014,7 +2014,10 @@ mod tests {
             .expect("replacement event port") as u16;
         let new_timing_port = second
             .get("timingPort")
-            .and_then(Value::as_unsigned)
+            .and_then(|value| match value {
+                Value::Integer(integer) => integer.as_unsigned(),
+                _ => None,
+            })
             .expect("replacement timing port") as u16;
 
         assert_ne!(old_event_port, new_event_port);
