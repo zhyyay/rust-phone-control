@@ -1732,7 +1732,7 @@ fn handle_pair_setup(
             Err(PairSetupFailure::bad_request(format!(
                 "unsupported Pair-Setup state {other}"
             )))
-        },
+        }
     }
 }
 
