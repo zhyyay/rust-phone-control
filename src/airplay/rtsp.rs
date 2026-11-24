@@ -124,16 +124,29 @@ impl MediaSession {
         use std::sync::atomic::Ordering;
 
         self.running.store(false, Ordering::Release);
+        tracing::info!(%self.local_addr, "Stopping AirPlay media session");
+
         if let Some(worker) = self.accept_worker.take() {
             if worker.join().is_err() {
                 tracing::warn!("AirPlay mirror TCP accept worker panicked");
+            } else {
+                tracing::debug!("AirPlay mirror TCP accept worker joined");
             }
         }
+
+        // The accept worker owns the packet sender. Once it exits, the
+        // receiver drains any already-queued packets and then observes channel
+        // closure, allowing decoder COM interfaces to be released on their
+        // owning media worker thread before the runtime Arc is dropped.
         if let Some(worker) = self.worker.take() {
             if worker.join().is_err() {
                 tracing::warn!("AirPlay media processing worker panicked");
+            } else {
+                tracing::debug!("AirPlay media processing worker joined");
             }
         }
+
+        tracing::info!(%self.local_addr, "AirPlay media session stopped");
     }
 }
 
@@ -465,10 +478,16 @@ fn stop_session_channels(
     media_receiver: &mut Option<MediaSession>,
 ) {
     // Stop media reception first so no new video packets are accepted while
-    // the control-side channels are being released.
+    // the control-side channels are being released. MediaSession::drop joins
+    // both workers before the timing/event sockets are released.
+    if media_receiver.is_some() {
+        tracing::info!("AirPlay RTSP session: stopping media pipeline");
+    }
     media_receiver.take();
+    tracing::debug!("AirPlay RTSP session: media pipeline released");
     timing_client.take();
     event_channel.take();
+    tracing::debug!("AirPlay RTSP session channels released");
 }
 
 pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
