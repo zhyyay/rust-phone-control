@@ -449,7 +449,9 @@ fn process_media_packets(
                             },
                         }
                     } else {
+                        decoder_init_attempts = decoder_init_attempts.saturating_add(1);
                         tracing::warn!(
+                            decoder_init_attempts,
                             "Media Foundation is unavailable; decoded-frame preview cannot start"
                         );
                     }
