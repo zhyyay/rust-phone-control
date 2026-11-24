@@ -17,7 +17,7 @@ mod discovery;
 mod event;
 #[allow(dead_code)]
 mod fairplay;
-pub use fairplay::{\n    FairPlayChallenge, FairPlayKeys, FairPlayMessage, FairPlayProviderError, FairPlaySapProvider,\n    parse_message as parse_fairplay_message,\n};\n#[allow(dead_code)]
+pub use fairplay::{\n    FairPlayChallenge, FairPlayKeys, FairPlayMessage, FairPlayParseError, FairPlayProviderError,\n    FairPlaySapProvider, MessagePhase,\n    parse_message as parse_fairplay_message,\n};\n#[allow(dead_code)]
 mod media;
 #[allow(dead_code)]
 mod mirror_crypto;
