@@ -2103,7 +2103,9 @@ mod tests {
                 "SETUP * RTSP/1.0\r\nCSeq: {cseq}\r\nContent-Type: application/x-apple-binary-plist\r\nContent-Length: {}\r\n\r\n",
                 body.len()
             );
-            stream.write_all(header.as_bytes()).expect("write RTSP headers");
+            stream
+                .write_all(header.as_bytes())
+                .expect("write RTSP headers");
             stream.write_all(body).expect("write RTSP body");
             stream.flush().expect("flush RTSP request");
         }
@@ -2112,7 +2114,9 @@ mod tests {
             let mut header = Vec::new();
             let mut byte = [0u8; 1];
             while !header.ends_with(b"\r\n\r\n") {
-                stream.read_exact(&mut byte).expect("read RTSP response header");
+                stream
+                    .read_exact(&mut byte)
+                    .expect("read RTSP response header");
                 header.push(byte[0]);
                 assert!(header.len() < 16 * 1024, "RTSP response header too large");
             }
@@ -2126,7 +2130,9 @@ mod tests {
                 })
                 .unwrap_or(0);
             let mut body = vec![0u8; content_length];
-            stream.read_exact(&mut body).expect("read RTSP response body");
+            stream
+                .read_exact(&mut body)
+                .expect("read RTSP response body");
             body
         }
 
@@ -2143,15 +2149,18 @@ mod tests {
 
         let sender = UdpSocket::bind("127.0.0.1:0").expect("bind timing sender");
         let mut session = Dictionary::new();
-        session.insert("sessionUUID".into(), Value::String("disconnect-test".into()));
+        session.insert(
+            "sessionUUID".into(),
+            Value::String("disconnect-test".into()),
+        );
         session.insert("isScreenMirroringSession".into(), Value::Boolean(true));
         session.insert("timingProtocol".into(), Value::String("NTP".into()));
         session.insert(
             "timingPort".into(),
             Value::Integer(sender.local_addr().expect("sender address").port().into()),
         );
-        let session_body = plist::encode_binary(&Value::Dictionary(session))
-            .expect("encode session SETUP");
+        let session_body =
+            plist::encode_binary(&Value::Dictionary(session)).expect("encode session SETUP");
         send_request(&mut client, 1, &session_body);
         let session_response =
             plist::decode(&read_response_body(&mut client)).expect("decode session response");
@@ -2180,8 +2189,8 @@ mod tests {
             "streams".into(),
             Value::Array(vec![Value::Dictionary(stream_descriptor)]),
         );
-        let stream_body = plist::encode_binary(&Value::Dictionary(stream_setup))
-            .expect("encode stream SETUP");
+        let stream_body =
+            plist::encode_binary(&Value::Dictionary(stream_setup)).expect("encode stream SETUP");
         send_request(&mut client, 2, &stream_body);
         let stream_response =
             plist::decode(&read_response_body(&mut client)).expect("decode stream response");
