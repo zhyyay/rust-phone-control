@@ -1851,7 +1851,7 @@ mod tests {
     }
 
     #[test]
-    fn invalid_avc_configuration_does_not_replace_previous_configuration() {
+    fn invalid_avc_configuration_discards_previous_configuration() {
         use super::super::media::ScreenMirrorPacketType;
         use super::{MirrorPacketOutcome, MirrorStreamProcessor};
 
@@ -1861,13 +1861,11 @@ mod tests {
         ];
         let mut processor = MirrorStreamProcessor::new();
         processor.process_packet(ScreenMirrorPacketType::CodecConfiguration, &valid);
-        let previous = processor.configuration().cloned();
-
         assert_eq!(
             processor.process_packet(ScreenMirrorPacketType::CodecConfiguration, &[0x01]),
             MirrorPacketOutcome::InvalidCodecConfiguration(super::AvcConfigError::TooShort)
         );
-        assert_eq!(processor.configuration(), previous.as_ref());
+        assert!(processor.configuration().is_none());
     }
 
     #[test]
