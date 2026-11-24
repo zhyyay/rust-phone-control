@@ -110,7 +110,7 @@ fn encode_fixed(
 
 #[cfg(test)]
 mod tests {
-    use super::{INTEGER_BYTES, SrpCtError, modpow};
+    use super::{INTEGER_BYTES, SrpCtError, add_mod, modpow, mul_mod, sub_mod};
     use num_bigint::BigUint;
 
     fn modulus() -> BigUint {
@@ -149,6 +149,38 @@ mod tests {
             *byte = (index as u8).wrapping_mul(17).wrapping_add(3);
         }
         assert_matches_reference(&[5], &exponent);
+    }
+
+    #[test]
+    fn fixed_width_group_arithmetic_matches_biguint_reference() {
+        let n = modulus();
+        let left = BigUint::from(0x123456789abcdefu64);
+        let right = BigUint::from(0xfedcba987654321u64);
+        let left_bytes = left.to_bytes_be();
+        let right_bytes = right.to_bytes_be();
+
+        let product = mul_mod(&left_bytes, &right_bytes).unwrap();
+        let expected_product = ((&left * &right) % &n).to_bytes_be();
+        assert_eq!(&product[INTEGER_BYTES - expected_product.len()..], expected_product);
+
+        let sum = add_mod(&left_bytes, &right_bytes).unwrap();
+        let expected_sum = ((&left + &right) % &n).to_bytes_be();
+        assert_eq!(&sum[INTEGER_BYTES - expected_sum.len()..], expected_sum);
+
+        let difference = sub_mod(&right_bytes, &left_bytes).unwrap();
+        let expected_difference = ((&right + &n - &left) % &n).to_bytes_be();
+        assert_eq!(
+            &difference[INTEGER_BYTES - expected_difference.len()..],
+            expected_difference
+        );
+    }
+
+    #[test]
+    fn fixed_width_group_arithmetic_rejects_oversized_inputs() {
+        let oversized = vec![1u8; INTEGER_BYTES + 1];
+        assert_eq!(mul_mod(&oversized, &[1]).unwrap_err(), SrpCtError::InputTooWide);
+        assert_eq!(add_mod(&[1], &oversized).unwrap_err(), SrpCtError::InputTooWide);
+        assert_eq!(sub_mod(&[1], &oversized).unwrap_err(), SrpCtError::InputTooWide);
     }
 
     #[test]
