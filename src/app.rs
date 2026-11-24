@@ -31,14 +31,25 @@ impl Drop for PhoneControlApp {
     fn drop(&mut self) {
         #[cfg(windows)]
         {
-            tracing::info!("PhoneControlApp is being dropped; cancelling its GPUI polling task");
-            // Stop the periodic task before releasing the preview image. This
-            // makes UI teardown order explicit and prevents a late poll from
-            // retaining presentation resources during window destruction.
-            if self.frame_poll_task.take().is_some() {
-                tracing::debug!("GPUI AirPlay frame poll task handle released");
+            tracing::info!("PhoneControlApp teardown: begin");
+            // Drop the task explicitly so its cancellation point is visible in
+            // the log. The task is cancelled before the image it may publish.
+            if let Some(task) = self.frame_poll_task.take() {
+                tracing::debug!("PhoneControlApp teardown: cancelling GPUI frame poll task");
+                drop(task);
+                tracing::debug!("PhoneControlApp teardown: GPUI frame poll task cancelled");
+            } else {
+                tracing::debug!("PhoneControlApp teardown: no GPUI frame poll task");
             }
-            self.preview_image.take();
+
+            if let Some(image) = self.preview_image.take() {
+                tracing::debug!("PhoneControlApp teardown: releasing preview image");
+                drop(image);
+                tracing::debug!("PhoneControlApp teardown: preview image released");
+            } else {
+                tracing::debug!("PhoneControlApp teardown: no preview image to release");
+            }
+            tracing::info!("PhoneControlApp teardown: complete");
         }
     }
 }
