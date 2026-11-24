@@ -182,7 +182,7 @@ pub fn parse_message(body: &[u8]) -> Result<FairPlayMessage, FairPlayParseError>
                 local_sap: None,
                 key_response: None,
                 acknowledgement: None,
-                body: body.to_vec(),
+                body: Zeroizing::new(body.to_vec()),
             })
         }
         3 => {
@@ -216,7 +216,7 @@ pub fn parse_message(body: &[u8]) -> Result<FairPlayMessage, FairPlayParseError>
                         .expect("20-byte FairPlay key response"),
                 ),
                 acknowledgement: None,
-                body: body.to_vec(),
+                body: Zeroizing::new(body.to_vec()),
             })
         }
         4 => {
@@ -238,7 +238,7 @@ pub fn parse_message(body: &[u8]) -> Result<FairPlayMessage, FairPlayParseError>
                         .try_into()
                         .expect("20-byte FairPlay acknowledgement"),
                 ),
-                body: body.to_vec(),
+                body: Zeroizing::new(body.to_vec()),
             })
         }
         other => Err(FairPlayParseError::UnsupportedPhase(other)),
