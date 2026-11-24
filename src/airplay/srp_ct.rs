@@ -34,7 +34,7 @@ fn decode_fixed(input: &[u8]) -> Result<Zeroizing<U3072>, SrpCtError> {
     let mut padded = Zeroizing::new([0u8; INTEGER_BYTES]);
     let offset = INTEGER_BYTES - input.len();
     padded[offset..].copy_from_slice(input);
-    Ok(Zeroizing::new(U3072::from_be_slice(&padded)))
+    Ok(Zeroizing::new(U3072::from_be_slice(&padded[..])))
 }
 
 /// Compute base^exponent mod the HomeKit 3072-bit SRP modulus.
@@ -65,7 +65,6 @@ pub(super) fn modpow(
 mod tests {
     use super::{INTEGER_BYTES, SrpCtError, modpow};
     use num_bigint::BigUint;
-    use num_traits::Num;
 
     fn modulus() -> BigUint {
         BigUint::parse_bytes(super::super::srp::MODULUS_HEX.as_bytes(), 16)
