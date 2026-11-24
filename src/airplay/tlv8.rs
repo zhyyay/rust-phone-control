@@ -11,11 +11,17 @@ pub struct Tlv {
     pub value: Vec<u8>,
 }
 
+impl Tlv {
+    fn zeroize_payload(&mut self) {
+        self.value.zeroize();
+    }
+}
+
 impl Drop for Tlv {
     fn drop(&mut self) {
         // Pairing TLVs can carry SRP proofs, encrypted key material, and
         // controller signatures. Wipe the owned payload before releasing it.
-        self.value.zeroize();
+        self.zeroize_payload();
     }
 }
 
@@ -120,6 +126,18 @@ pub fn encode(items: &[Tlv]) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::{Tlv, Tlv8Error, decode, encode};
+
+    #[test]
+    fn zeroize_payload_clears_owned_bytes() {
+        let mut item = Tlv {
+            kind: 0x05,
+            value: vec![0xA5; 64],
+        };
+
+        item.zeroize_payload();
+
+        assert!(item.value.is_empty());
+    }
 
     #[test]
     fn encodes_and_decodes_multiple_values() {
