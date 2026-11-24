@@ -1800,6 +1800,43 @@ mod tests {
             Some(110)
         );
         assert!(media.is_some());
+
+        // A repeated stream SETUP replaces the previous listener rather than
+        // leaving two media endpoints alive for one RTSP session.
+        let old_port = data_port as u16;
+        let response = handle_setup_request(
+            &stream_body,
+            peer_ip,
+            &mut event,
+            &mut timing,
+            &mut media,
+            &mut None,
+            &mut None,
+            None,
+        )
+        .expect("repeated screen stream SETUP");
+        let value = plist::decode(&response).expect("decode replacement stream response");
+        let dictionary = value.as_dictionary().expect("replacement stream dictionary");
+        let streams = dictionary
+            .get("streams")
+            .and_then(Value::as_array)
+            .expect("replacement response streams");
+        let replacement = streams[0]
+            .as_dictionary()
+            .expect("replacement stream response item");
+        let new_port = replacement
+            .get("dataPort")
+            .and_then(|value| match value {
+                Value::Integer(integer) => integer.as_unsigned(),
+                _ => None,
+            })
+            .expect("replacement data port") as u16;
+        assert_ne!(old_port, new_port);
+        assert!(
+            TcpStream::connect((peer_ip, old_port)).is_err(),
+            "previous media listener must be closed after replacement"
+        );
+        assert!(TcpStream::connect((peer_ip, new_port)).is_ok());
     }
 
     #[test]
