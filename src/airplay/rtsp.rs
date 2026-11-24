@@ -1847,7 +1847,7 @@ mod tests {
             cseq: "7".into(),
             connection_close: false,
             headers: vec![("transport".into(), "RTP/AVP/UDP;unicast".into())],
-            body: Vec::new(),
+            body: Zeroizing::default(),
         };
         assert_eq!(request.header("Transport"), Some("RTP/AVP/UDP;unicast"));
     }
