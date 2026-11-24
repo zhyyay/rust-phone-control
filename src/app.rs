@@ -60,7 +60,9 @@ impl Render for PhoneControlApp {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         #[cfg(windows)]
         if self.quit_subscription.is_none() {
-            tracing::debug!("Registering GPUI application-quit cleanup for AirPlay preview resources");
+            tracing::debug!(
+                "Registering GPUI application-quit cleanup for AirPlay preview resources"
+            );
             self.quit_subscription = Some(cx.on_app_quit(|this, _cx| async move {
                 tracing::info!("GPUI application-quit cleanup: begin");
                 if let Some(task) = this.frame_poll_task.take() {
