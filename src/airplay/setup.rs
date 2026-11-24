@@ -6,7 +6,8 @@
 //! are handled by the RTSP session layer.
 
 use ::plist::Value;
-use zeroize::Zeroizing;
+use std::ops::Deref;
+use zeroize::{Zeroize, Zeroizing};
 
 /// A validated AirPlay 2 SETUP request body.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,10 +36,47 @@ pub(super) struct StreamSetup {
     pub connection_id: Option<u64>,
 }
 
+/// Owns the decoded plist and clears every binary data value on drop.
+/// The SETUP plist may contain FairPlay key material in nested or unused fields,
+/// so clearing only the fields copied into SessionSetup is insufficient.
+struct ZeroizingPlist(Value);
+
+impl Deref for ZeroizingPlist {
+    type Target = Value;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl Drop for ZeroizingPlist {
+    fn drop(&mut self) {
+        zeroize_plist_data(&mut self.0);
+    }
+}
+
+fn zeroize_plist_data(value: &mut Value) {
+    match value {
+        Value::Data(bytes) => bytes.zeroize(),
+        Value::Array(values) => {
+            for value in values {
+                zeroize_plist_data(value);
+            }
+        }
+        Value::Dictionary(values) => {
+            for value in values.values_mut() {
+                zeroize_plist_data(value);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Decode and validate an AirPlay 2 SETUP property list.
 pub(super) fn parse_setup_request(bytes: &[u8]) -> Result<SetupRequest, String> {
-    let value =
-        super::plist::decode(bytes).map_err(|error| format!("invalid SETUP plist: {error}"))?;
+    let value = ZeroizingPlist(
+        super::plist::decode(bytes).map_err(|error| format!("invalid SETUP plist: {error}"))?,
+    );
     let dictionary = value
         .as_dictionary()
         .ok_or_else(|| "SETUP plist root must be a dictionary".to_owned())?;
