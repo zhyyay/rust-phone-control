@@ -458,6 +458,18 @@ impl Request {
     }
 }
 
+fn stop_session_channels(
+    event_channel: &mut Option<EventChannel>,
+    timing_client: &mut Option<TimingClient>,
+    media_receiver: &mut Option<MediaSession>,
+) {
+    // Stop media reception first so no new video packets are accepted while
+    // the control-side channels are being released.
+    media_receiver.take();
+    timing_client.take();
+    event_channel.take();
+}
+
 pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
     stream.set_read_timeout(Some(Duration::from_secs(15)))?;
     stream.set_write_timeout(Some(Duration::from_secs(5)))?;
@@ -744,9 +756,11 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
             ("TEARDOWN", _, "RTSP/1.0") => {
                 fairplay_ekey = None;
                 fairplay_eiv = None;
-                media_receiver = None;
-                timing_client = None;
-                event_channel = None;
+                stop_session_channels(
+                    &mut event_channel,
+                    &mut timing_client,
+                    &mut media_receiver,
+                );
                 let response = format!(
                     "RTSP/1.0 200 OK\r\nCSeq: {}\r\nServer: RustPhoneControl/0.1\r\nContent-Length: 0\r\n\r\n",
                     request.cseq
@@ -1485,6 +1499,44 @@ mod tests {
         client.shutdown(std::net::Shutdown::Write)?;
         let mut pending = Vec::new();
         super::read_request(&mut server, &mut pending)
+    }
+
+    #[test]
+    fn teardown_releases_media_event_and_timing_channels_together() {
+        use std::net::{TcpListener, UdpSocket};
+
+        let peer_ip = "127.0.0.1".parse().expect("loopback IP");
+        let mut event_channel =
+            Some(super::super::event::EventChannel::bind(peer_ip).expect("event channel"));
+        let mut timing_client =
+            Some(super::super::timing::TimingClient::start(peer_ip, 9).expect("timing client"));
+        let mut media_receiver = Some(super::MediaSession::start(peer_ip).expect("media session"));
+
+        let event_port = event_channel.as_ref().expect("event channel").port();
+        let timing_port = timing_client.as_ref().expect("timing client").port();
+        let media_port = media_receiver.as_ref().expect("media session").port();
+
+        super::stop_session_channels(
+            &mut event_channel,
+            &mut timing_client,
+            &mut media_receiver,
+        );
+
+        assert!(event_channel.is_none());
+        assert!(timing_client.is_none());
+        assert!(media_receiver.is_none());
+        assert!(
+            TcpListener::bind(("0.0.0.0", event_port)).is_ok(),
+            "event TCP port must be released"
+        );
+        assert!(
+            UdpSocket::bind(("0.0.0.0", timing_port)).is_ok(),
+            "timing UDP port must be released"
+        );
+        assert!(
+            TcpListener::bind(("0.0.0.0", media_port)).is_ok(),
+            "media TCP port must be released"
+        );
     }
 
     #[test]
