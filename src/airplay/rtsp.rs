@@ -722,8 +722,11 @@ pub fn serve_with_fairplay_provider(
                 match super::fairplay::parse_message(&request.body) {
                     Ok(message) if message.phase == super::fairplay::MessagePhase::Initial => {
                         let Some(provider) = fairplay_provider.as_ref() else {
-                            tracing::warn!("FairPlay SAP unavailable: no authorized provider configured");
-                            let response = fairplay_error_response(501, "Not Implemented", &request.cseq);
+                            tracing::warn!(
+                                "FairPlay SAP unavailable: no authorized provider configured"
+                            );
+                            let response =
+                                fairplay_error_response(501, "Not Implemented", &request.cseq);
                             write_response(&mut stream, &response, 501)?;
                             continue;
                         };
@@ -731,25 +734,22 @@ pub fn serve_with_fairplay_provider(
                         match provider.begin(&message) {
                             Ok(challenge) => {
                                 let mut session = super::fairplay::FairPlaySession::new();
-                                if let Err(error) = session
-                                    .accept(message.clone())
-                                    .and_then(|_| {
-                                        session.mark_challenge_sent(
-                                            challenge.mode,
-                                            *challenge.challenge,
-                                        )
-                                    })
-                                {
+                                if let Err(error) = session.accept(message.clone()).and_then(|_| {
+                                    session
+                                        .mark_challenge_sent(challenge.mode, *challenge.challenge)
+                                }) {
                                     tracing::warn!(%error, "FairPlay provider returned an invalid challenge");
-                                    let response = fairplay_error_response(500, "Internal Server Error", &request.cseq);
+                                    let response = fairplay_error_response(
+                                        500,
+                                        "Internal Server Error",
+                                        &request.cseq,
+                                    );
                                     write_response(&mut stream, &response, 500)?;
                                     continue;
                                 }
 
-                                let response_body = super::fairplay::build_m2(
-                                    challenge.mode,
-                                    &challenge.challenge,
-                                );
+                                let response_body =
+                                    super::fairplay::build_m2(challenge.mode, &challenge.challenge);
                                 fairplay_initial = Some(message);
                                 fairplay_challenge = Some(challenge);
                                 fairplay_session = Some(session);
@@ -760,25 +760,22 @@ pub fn serve_with_fairplay_provider(
                                 let status = fairplay_provider_error_status(&error);
                                 tracing::warn!(%error, status, "FairPlay SAP provider rejected M1");
                                 let reason = reason_phrase(status);
-                                let response = fairplay_error_response(status, reason, &request.cseq);
+                                let response =
+                                    fairplay_error_response(status, reason, &request.cseq);
                                 write_response(&mut stream, &response, status)?;
                             }
                         }
                     }
                     Ok(message) if message.phase == super::fairplay::MessagePhase::KeyMessage => {
-                        let (
-                            Some(provider),
-                            Some(initial),
-                            Some(challenge),
-                            Some(session),
-                        ) = (
+                        let (Some(provider), Some(initial), Some(challenge), Some(session)) = (
                             fairplay_provider.as_ref(),
                             fairplay_initial.as_ref(),
                             fairplay_challenge.as_ref(),
                             fairplay_session.as_mut(),
-                        )
-                        else {
-                            tracing::warn!("FairPlay M3 received without an active authenticated SAP negotiation");
+                        ) else {
+                            tracing::warn!(
+                                "FairPlay M3 received without an active authenticated SAP negotiation"
+                            );
                             let response = fairplay_error_response(403, "Forbidden", &request.cseq);
                             write_response(&mut stream, &response, 403)?;
                             continue;
@@ -786,14 +783,16 @@ pub fn serve_with_fairplay_provider(
 
                         if let Err(error) = session.accept(message.clone()) {
                             tracing::warn!(%error, "FairPlay M3 state validation failed");
-                            let response = fairplay_error_response(400, "Bad Request", &request.cseq);
+                            let response =
+                                fairplay_error_response(400, "Bad Request", &request.cseq);
                             write_response(&mut stream, &response, 400)?;
                             continue;
                         }
 
                         match provider.finish(initial, challenge, &message) {
                             Ok(keys) => {
-                                let response_body = super::fairplay::build_m4(&keys.acknowledgement);
+                                let response_body =
+                                    super::fairplay::build_m4(&keys.acknowledgement);
                                 *fairplay_ekey = Some(keys.ekey);
                                 *fairplay_eiv = Some(keys.eiv);
                                 write_binary_response(&mut stream, &request.cseq, &response_body)?;
@@ -808,7 +807,11 @@ pub fn serve_with_fairplay_provider(
                                 fairplay_eiv = None;
                                 let status = fairplay_provider_error_status(&error);
                                 tracing::warn!(%error, status, "FairPlay SAP provider rejected M3");
-                                let response = fairplay_error_response(status, reason_phrase(status), &request.cseq);
+                                let response = fairplay_error_response(
+                                    status,
+                                    reason_phrase(status),
+                                    &request.cseq,
+                                );
                                 write_response(&mut stream, &response, status)?;
                             }
                         }
@@ -1319,11 +1322,7 @@ fn handle_setup_request(
     }
 }
 
-fn write_binary_response(
-    stream: &mut TcpStream,
-    cseq: &str,
-    body: &[u8],
-) -> std::io::Result<()> {
+fn write_binary_response(stream: &mut TcpStream, cseq: &str, body: &[u8]) -> std::io::Result<()> {
     let header = format!(
         "RTSP/1.0 200 OK\\r\\nCSeq: {}\\r\\nServer: RustPhoneControl/0.1\\r\\nContent-Type: application/octet-stream\\r\\nContent-Length: {}\\r\\n\\r\\n",
         cseq,
