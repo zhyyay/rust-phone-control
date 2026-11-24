@@ -1465,8 +1465,23 @@ mod tests {
         let (mut server, _) = listener.accept()?;
         server.set_read_timeout(Some(Duration::from_secs(1)))?;
         client.write_all(bytes)?;
+        client.shutdown(std::net::Shutdown::Write)?;
         let mut pending = Vec::new();
         super::read_request(&mut server, &mut pending)
+    }
+
+    #[test]
+    fn rejects_peer_disconnect_before_request_headers_are_complete() {
+        let request = b"OPTIONS * RTSP/1.0\r\nCSeq: 1";
+        let error = read_request_from_bytes(request).expect_err("truncated headers rejected");
+        assert_eq!(error.kind(), std::io::ErrorKind::UnexpectedEof);
+    }
+
+    #[test]
+    fn rejects_peer_disconnect_before_request_body_is_complete() {
+        let request = b"POST /info RTSP/1.0\r\nCSeq: 1\r\nContent-Length: 5\r\n\r\nab";
+        let error = read_request_from_bytes(request).expect_err("truncated body rejected");
+        assert_eq!(error.kind(), std::io::ErrorKind::UnexpectedEof);
     }
 
     #[test]
