@@ -11,12 +11,13 @@ use aes::{
     cipher::{Block, BlockEncrypt, KeyInit},
 };
 use sha2::{Digest, Sha512};
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 const AES_BLOCK_BYTES: usize = 16;
 const FAIRPLAY_KEY_BYTES: usize = 16;
 const X25519_SHARED_SECRET_BYTES: usize = 32;
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, Zeroize, ZeroizeOnDrop)]
 pub struct MirrorStreamKeyMaterial {
     key: [u8; AES_BLOCK_BYTES],
     iv: [u8; AES_BLOCK_BYTES],
@@ -148,6 +149,13 @@ pub fn derive_mirror_stream_keys(
 pub struct MirrorStreamCipher {
     cipher: Aes128,
     counter: [u8; AES_BLOCK_BYTES],
+}
+
+impl Drop for MirrorStreamCipher {
+    fn drop(&mut self) {
+        // Clear the stream counter when the per-session cipher is released.
+        self.counter.zeroize();
+    }
 }
 
 impl std::fmt::Debug for MirrorStreamCipher {
