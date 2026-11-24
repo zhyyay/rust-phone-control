@@ -64,7 +64,11 @@ impl Drop for ControlServer {
     }
 }
 
-fn run_listener(\n    listener: TcpListener,\n    stop: Arc<AtomicBool>,\n    fairplay_provider: Option<Arc<dyn FairPlaySapProvider>>,\n) {
+fn run_listener(
+    listener: TcpListener,
+    stop: Arc<AtomicBool>,
+    fairplay_provider: Option<Arc<dyn FairPlaySapProvider>>,
+) {
     struct ClientWorker {
         peer: std::net::SocketAddr,
         shutdown_socket: TcpStream,
@@ -114,7 +118,10 @@ fn run_listener(\n    listener: TcpListener,\n    stop: Arc<AtomicBool>,\n    fa
                 tracing::info!(%peer, "AirPlay TCP client accepted; starting handler");
                 match thread::Builder::new()
                     .name("airplay-client".to_owned())
-                    .spawn({\n                        let provider = fairplay_provider.clone();\n                        move || handle_client(stream, peer, provider)\n                    })
+                    .spawn({
+                        let provider = fairplay_provider.clone();
+                        move || handle_client(stream, peer, provider)
+                    })
                 {
                     Ok(worker) => {
                         clients.push(ClientWorker {
@@ -156,7 +163,11 @@ fn run_listener(\n    listener: TcpListener,\n    stop: Arc<AtomicBool>,\n    fa
     tracing::info!("All AirPlay client handlers stopped");
 }
 
-fn handle_client(\n    stream: TcpStream,\n    peer: std::net::SocketAddr,\n    fairplay_provider: Option<Arc<dyn FairPlaySapProvider>>,\n) {
+fn handle_client(
+    stream: TcpStream,
+    peer: std::net::SocketAddr,
+    fairplay_provider: Option<Arc<dyn FairPlaySapProvider>>,
+) {
     // On Windows, accepted sockets can retain the listener's nonblocking
     // mode. RTSP uses blocking reads with explicit timeouts, so switch each
     // client connection back to blocking mode before handing it to the parser.
