@@ -630,6 +630,45 @@ mod tests {
     }
 
     #[test]
+    fn fairplay_sessions_keep_distinct_challenges_and_m3_state() {
+        let mut first = FairPlaySession::new();
+        let mut second = FairPlaySession::new();
+
+        first
+            .accept(parse_message(&initial_message(3)).unwrap())
+            .expect("first session accepts M1");
+        second
+            .accept(parse_message(&initial_message(3)).unwrap())
+            .expect("second session accepts its own M1");
+
+        let first_challenge = [0x11; 128];
+        let second_challenge = [0x22; 128];
+        first
+            .mark_challenge_sent(3, first_challenge)
+            .expect("first session sends its challenge");
+        second
+            .mark_challenge_sent(3, second_challenge)
+            .expect("second session sends its challenge");
+
+        assert_eq!(first.challenge(), Some(&first_challenge));
+        assert_eq!(second.challenge(), Some(&second_challenge));
+
+        first
+            .accept(parse_message(&key_message()).unwrap())
+            .expect("first session accepts its M3");
+        assert!(first.has_key_message());
+        assert!(!second.has_key_message());
+        assert_eq!(second.challenge(), Some(&second_challenge));
+
+        second
+            .accept(parse_message(&key_message()).unwrap())
+            .expect("second session accepts its own M3");
+        assert!(second.has_key_message());
+        assert_eq!(first.challenge(), Some(&first_challenge));
+        assert_eq!(second.challenge(), Some(&second_challenge));
+    }
+
+    #[test]
     fn rejects_invalid_m1_payload_marker_and_trailer() {
         let mut body = initial_message(3);
         body[12] = 0;
