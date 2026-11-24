@@ -1718,7 +1718,9 @@ mod tests {
         heartbeat[4..6].copy_from_slice(&2u16.to_le_bytes());
 
         let mut first = TcpStream::connect(address).expect("first mirror client connects");
-        first.write_all(&heartbeat).expect("first client sends heartbeat");
+        first
+            .write_all(&heartbeat)
+            .expect("first client sends heartbeat");
         drop(first);
 
         let mut second = TcpStream::connect(address).expect("reconnected mirror client connects");
@@ -1733,8 +1735,14 @@ mod tests {
         let second_packet = receiver
             .recv_timeout(Duration::from_secs(2))
             .expect("second client packet is received after reconnect");
-        assert_eq!(first_packet.packet_type, crate::airplay::media::ScreenMirrorPacketType::Heartbeat);
-        assert_eq!(second_packet.packet_type, crate::airplay::media::ScreenMirrorPacketType::Heartbeat);
+        assert_eq!(
+            first_packet.packet_type,
+            crate::airplay::media::ScreenMirrorPacketType::Heartbeat
+        );
+        assert_eq!(
+            second_packet.packet_type,
+            crate::airplay::media::ScreenMirrorPacketType::Heartbeat
+        );
 
         running.store(false, Ordering::Release);
         worker.join().expect("mirror listener stops");
@@ -1924,7 +1932,10 @@ mod tests {
             .expect("first event port") as u16;
         let old_timing_port = first
             .get("timingPort")
-            .and_then(Value::as_unsigned)
+            .and_then(|value| match value {
+                Value::Integer(integer) => integer.as_unsigned(),
+                _ => None,
+            })
             .expect("first timing port") as u16;
 
         let second = handle_setup_request(
@@ -1939,7 +1950,9 @@ mod tests {
         )
         .expect("replacement session SETUP");
         let second = plist::decode(&second).expect("decode replacement session response");
-        let second = second.as_dictionary().expect("replacement session dictionary");
+        let second = second
+            .as_dictionary()
+            .expect("replacement session dictionary");
         let new_event_port = second
             .get("eventPort")
             .and_then(Value::as_unsigned)
