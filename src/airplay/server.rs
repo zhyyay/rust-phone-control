@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 
-use super::{config, rtsp};
+use super::{config, fairplay::FairPlaySapProvider, rtsp};
 
 pub struct ControlServer {
     stop: Arc<AtomicBool>,
@@ -17,6 +17,20 @@ pub struct ControlServer {
 
 impl ControlServer {
     pub fn start() -> Result<Self> {
+        Self::start_inner(None)
+    }
+
+    /// Start the listener with an explicitly supplied authorized FairPlay SAP
+    /// provider. The default start() path remains fail-closed.
+    pub fn start_with_fairplay_provider(
+        provider: Arc<dyn FairPlaySapProvider>,
+    ) -> Result<Self> {
+        Self::start_inner(Some(provider))
+    }
+
+    fn start_inner(
+        fairplay_provider: Option<Arc<dyn FairPlaySapProvider>>,
+    ) -> Result<Self> {
         let listener = TcpListener::bind(("0.0.0.0", config::TCP_PORT))
             .with_context(|| format!("bind AirPlay TCP port {}", config::TCP_PORT))?;
         listener
@@ -27,7 +41,7 @@ impl ControlServer {
         let worker_stop = Arc::clone(&stop);
         let worker = thread::Builder::new()
             .name("airplay-control".to_owned())
-            .spawn(move || run_listener(listener, worker_stop))
+            .spawn(move || run_listener(listener, worker_stop, fairplay_provider))
             .context("spawn AirPlay control listener")?;
 
         tracing::info!(port = config::TCP_PORT, "AirPlay control listener started");
@@ -50,7 +64,7 @@ impl Drop for ControlServer {
     }
 }
 
-fn run_listener(listener: TcpListener, stop: Arc<AtomicBool>) {
+fn run_listener(\n    listener: TcpListener,\n    stop: Arc<AtomicBool>,\n    fairplay_provider: Option<Arc<dyn FairPlaySapProvider>>,\n) {
     struct ClientWorker {
         peer: std::net::SocketAddr,
         shutdown_socket: TcpStream,
@@ -100,7 +114,7 @@ fn run_listener(listener: TcpListener, stop: Arc<AtomicBool>) {
                 tracing::info!(%peer, "AirPlay TCP client accepted; starting handler");
                 match thread::Builder::new()
                     .name("airplay-client".to_owned())
-                    .spawn(move || handle_client(stream, peer))
+                    .spawn({\n                        let provider = fairplay_provider.clone();\n                        move || handle_client(stream, peer, provider)\n                    })
                 {
                     Ok(worker) => {
                         clients.push(ClientWorker {
@@ -142,7 +156,7 @@ fn run_listener(listener: TcpListener, stop: Arc<AtomicBool>) {
     tracing::info!("All AirPlay client handlers stopped");
 }
 
-fn handle_client(stream: TcpStream, peer: std::net::SocketAddr) {
+fn handle_client(\n    stream: TcpStream,\n    peer: std::net::SocketAddr,\n    fairplay_provider: Option<Arc<dyn FairPlaySapProvider>>,\n) {
     // On Windows, accepted sockets can retain the listener's nonblocking
     // mode. RTSP uses blocking reads with explicit timeouts, so switch each
     // client connection back to blocking mode before handing it to the parser.
@@ -157,7 +171,7 @@ fn handle_client(stream: TcpStream, peer: std::net::SocketAddr) {
     }
 
     tracing::info!(%peer, "AirPlay client handler entered");
-    match rtsp::serve(stream) {
+    match rtsp::serve_with_fairplay_provider(stream, fairplay_provider) {
         Ok(()) => tracing::info!(%peer, "AirPlay client handler completed normally"),
         Err(error) => {
             tracing::error!(
