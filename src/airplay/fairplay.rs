@@ -796,4 +796,95 @@ mod tests {
         );
         assert!(session.has_key_message());
     }
+
+    #[test]
+    fn rejects_truncated_and_malformed_fply_headers() {
+        assert_eq!(parse_message(&[0u8; 15]).unwrap_err(), FairPlayParseError::TooShort);
+
+        let mut wrong_magic = initial_message(3);
+        wrong_magic[..4].copy_from_slice(b"NOPE");
+        assert_eq!(parse_message(&wrong_magic).unwrap_err(), FairPlayParseError::InvalidMagic);
+
+        let mut wrong_version = initial_message(3);
+        wrong_version[4] = 2;
+        assert_eq!(
+            parse_message(&wrong_version).unwrap_err(),
+            FairPlayParseError::UnsupportedMajorVersion(2)
+        );
+
+        let mut wrong_length = initial_message(3);
+        wrong_length[8..12].copy_from_slice(&5u32.to_be_bytes());
+        assert_eq!(
+            parse_message(&wrong_length).unwrap_err(),
+            FairPlayParseError::InvalidPayloadLength { declared: 5, actual: 4 }
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_phase_and_invalid_m1_payload() {
+        let mut unknown_phase = initial_message(3);
+        unknown_phase[6] = 9;
+        assert_eq!(
+            parse_message(&unknown_phase).unwrap_err(),
+            FairPlayParseError::UnsupportedPhase(9)
+        );
+
+        let mut invalid_m1 = initial_message(3);
+        invalid_m1[12] = 0xff;
+        assert_eq!(
+            parse_message(&invalid_m1).unwrap_err(),
+            FairPlayParseError::InvalidInitialPayload
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_m3_and_never_marks_structural_m3_as_authenticated() {
+        let mut session = FairPlaySession::new();
+        session.accept(parse_message(&initial_message(3)).unwrap()).unwrap();
+        session.mark_challenge_sent(3, [0x33; 128]).unwrap();
+
+        let first = parse_message(&key_message()).unwrap();
+        assert_eq!(
+            session.accept(first).unwrap(),
+            FairPlayState::KeyMessageReceivedUnverified
+        );
+        assert!(session.has_key_message());
+
+        let duplicate = parse_message(&key_message()).unwrap();
+        assert!(
+            session.accept(duplicate).unwrap_err().contains("already received"),
+            "a second M3 must not replace the first message"
+        );
+        // The state type intentionally has no authenticated/ready variant:
+        // only an authorized SAP provider may produce media keys.
+        assert_eq!(
+            session.accept(parse_message(&build_m4(&[0x44; 20])).unwrap()).unwrap_err(),
+            "FairPlay phase 4 is receiver-originated"
+        );
+    }
+
+    #[test]
+    fn rejects_truncated_m2_m3_and_m4_records() {
+        let m2 = build_m2(3, &[0x55; 128]);
+        assert!(matches!(
+            parse_message(&m2[..m2.len() - 1]),
+            Err(FairPlayParseError::InvalidPayloadLength { .. })
+                | Err(FairPlayParseError::InvalidChallengeLength(_))
+        ));
+
+        let m3 = key_message();
+        assert!(matches!(
+            parse_message(&m3[..m3.len() - 1]),
+            Err(FairPlayParseError::InvalidPayloadLength { .. })
+                | Err(FairPlayParseError::InvalidKeyMessageLength(_))
+        ));
+
+        let m4 = build_m4(&[0x66; 20]);
+        assert!(matches!(
+            parse_message(&m4[..m4.len() - 1]),
+            Err(FairPlayParseError::InvalidPayloadLength { .. })
+                | Err(FairPlayParseError::InvalidAcknowledgementLength(_))
+        ));
+    }
+
 }
