@@ -568,8 +568,6 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
     let mut pair_setup_session_key: Option<Zeroizing<[u8; 64]>> = None;
     let mut pair_verify_session: Option<PairVerifySession> = None;
     let mut pair_verify_shared_secret: Option<Zeroizing<[u8; 32]>> = None;
-    let mut fairplay_ekey: Option<[u8; 72]> = None;
-    let mut fairplay_eiv: Option<[u8; 16]> = None;
     let mut event_channel: Option<EventChannel> = None;
     let mut timing_client: Option<TimingClient> = None;
     let mut media_receiver: Option<MediaSession> = None;
@@ -841,8 +839,6 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
                 write_response(&mut stream, &response, 200)?;
             }
             ("TEARDOWN", _, "RTSP/1.0") => {
-                fairplay_ekey = None;
-                fairplay_eiv = None;
                 stop_session_channels(&mut event_channel, &mut timing_client, &mut media_receiver);
                 let response = format!(
                     "RTSP/1.0 200 OK\r\nCSeq: {}\r\nServer: RustPhoneControl/0.1\r\nContent-Length: 0\r\n\r\n",
@@ -1586,6 +1582,55 @@ mod tests {
         client.shutdown(std::net::Shutdown::Write)?;
         let mut pending = Vec::new();
         super::read_request(&mut server, &mut pending)
+    }
+
+    #[test]
+    fn fairplay_m1_fails_closed_without_sap_provider() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::thread;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind RTSP test listener");
+        let address = listener.local_addr().expect("listener address");
+        let server = thread::spawn(move || {
+            let (stream, _) = listener.accept().expect("accept RTSP test client");
+            super::serve(stream).expect("serve FairPlay request");
+        });
+
+        let mut client = TcpStream::connect(address).expect("connect RTSP test client");
+        let mut body = vec![0u8; 16];
+        body[..4].copy_from_slice(b"FPLY");
+        body[4..8].copy_from_slice(&[3, 1, 1, 0]);
+        body[8..12].copy_from_slice(&4u32.to_be_bytes());
+        body[12..16].copy_from_slice(&[0x02, 0x00, 0x02, 0xbb]);
+
+        let request = format!(
+            "POST /fp-setup RTSP/1.0\\r\\nCSeq: 77\\r\\nContent-Type: application/octet-stream\\r\\nContent-Length: {}\\r\\n\\r\\n",
+            body.len()
+        );
+        client.write_all(request.as_bytes()).expect("write RTSP headers");
+        client.write_all(&body).expect("write FairPlay M1 body");
+
+        let mut response = Vec::new();
+        let mut chunk = [0u8; 512];
+        loop {
+            let read = client.read(&mut chunk).expect("read RTSP response");
+            if read == 0 {
+                break;
+            }
+            response.extend_from_slice(&chunk[..read]);
+            if response.windows(4).any(|window| window == b"\\r\\n\\r\\n") {
+                break;
+            }
+        }
+        let response = String::from_utf8_lossy(&response);
+        assert!(
+            response.starts_with("RTSP/1.0 501 Not Implemented"),
+            "unexpected FairPlay response: {response}"
+        );
+
+        drop(client);
+        server.join().expect("RTSP server thread exits");
     }
 
     #[test]
