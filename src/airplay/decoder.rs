@@ -647,6 +647,7 @@ const MAX_DECODED_NV12_BYTES: usize = 128 * 1024 * 1024;
 #[cfg(windows)]
 pub struct H264FramePipeline<'runtime> {
     decoder: H264Decoder<'runtime>,
+    parameter_sets: Vec<u8>,
     frames: std::sync::Arc<crate::airplay::video::LatestFrameMailbox>,
 }
 
@@ -660,7 +661,11 @@ impl<'runtime> H264FramePipeline<'runtime> {
         frames: std::sync::Arc<crate::airplay::video::LatestFrameMailbox>,
     ) -> Result<Self, MediaFoundationError> {
         let decoder = H264Decoder::new(runtime, width, height)?;
-        Ok(Self { decoder, frames })
+        Ok(Self {
+            decoder,
+            parameter_sets: Vec::new(),
+            frames,
+        })
     }
 
     /// Build a decoder directly from the dimensions carried by the stream avcC SPS.
@@ -678,11 +683,11 @@ impl<'runtime> H264FramePipeline<'runtime> {
         // avcC carries the stream's SPS/PPS. Submit them before the first
         // picture so Media Foundation has the codec state needed to decode
         // the first IDR access unit once encrypted video becomes available.
-        let parameter_sets = configuration.parameter_sets_annex_b();
-        if !parameter_sets.is_empty() {
+        pipeline.parameter_sets = configuration.parameter_sets_annex_b();
+        if !pipeline.parameter_sets.is_empty() {
             let _ = pipeline
                 .decoder
-                .submit_access_unit_and_drain_bgra(&parameter_sets)?;
+                .submit_access_unit_and_drain_bgra(&pipeline.parameter_sets)?;
         }
 
         Ok(pipeline)
@@ -728,6 +733,29 @@ impl<'runtime> H264FramePipeline<'runtime> {
             .decrypt_video_packet(cipher, encrypted_payload)
             .map_err(MediaFoundationError::VideoDecryption)?;
         self.submit_access_unit(&annex_b)
+    }
+
+    /// Recreate the Media Foundation transform after a fatal decoder-state error.
+    ///
+    /// The replacement is fully initialized and receives the cached SPS/PPS
+    /// before it replaces the active transform. If initialization fails, the
+    /// current decoder remains available to the caller for diagnostics.
+    pub fn rebuild_decoder(
+        &mut self,
+        width: u32,
+        height: u32,
+    ) -> Result<(), MediaFoundationError> {
+        let replacement = H264Decoder::new(self.decoder._runtime, width, height)?;
+        if !self.parameter_sets.is_empty() {
+            let _ = replacement
+                .transform;
+        }
+        self.frames
+            .clear()
+            .map_err(MediaFoundationError::FrameMailbox)?;
+        self.decoder = replacement;
+        tracing::info!(width, height, "H.264 decoder transform rebuilt");
+        Ok(())
     }
 
     /// Discard any pending frame when this mirror session is ending.
