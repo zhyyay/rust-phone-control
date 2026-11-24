@@ -221,6 +221,18 @@ mod tests {
     }
 
     #[test]
+    fn key_material_debug_output_never_exposes_key_or_iv() {
+        let material = MirrorStreamKeyMaterial {
+            key: [0xA5; AES_BLOCK_BYTES],
+            iv: [0x5A; AES_BLOCK_BYTES],
+        };
+        let debug = format!("{material:?}");
+        assert!(debug.contains("[REDACTED]"));
+        assert!(!debug.contains("A5"));
+        assert!(!debug.contains("5A"));
+    }
+
+    #[test]
     fn matches_nist_aes_128_ctr_block_vector() {
         let material = MirrorStreamKeyMaterial {
             key: hex("2b7e151628aed2a6abf7158809cf4f3c"),
