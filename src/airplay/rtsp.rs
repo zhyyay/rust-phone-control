@@ -558,7 +558,17 @@ fn stop_session_channels(
     tracing::debug!("AirPlay RTSP session channels released");
 }
 
-pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
+pub fn serve(stream: TcpStream) -> std::io::Result<()> {
+    serve_with_fairplay_provider(stream, None)
+}
+
+/// Serve one RTSP connection with an optional authorized FairPlay SAP provider.
+/// The default listener deliberately supplies no provider and therefore fails
+/// closed for FairPlay requests until a licensed implementation is configured.
+pub fn serve_with_fairplay_provider(
+    mut stream: TcpStream,
+    fairplay_provider: Option<Arc<dyn super::fairplay::FairPlaySapProvider>>,
+) -> std::io::Result<()> {
     stream.set_read_timeout(Some(Duration::from_secs(15)))?;
     stream.set_write_timeout(Some(Duration::from_secs(5)))?;
 
@@ -570,6 +580,9 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
     let mut pair_verify_shared_secret: Option<Zeroizing<[u8; 32]>> = None;
     let mut fairplay_ekey: Option<Zeroizing<[u8; 72]>> = None;
     let mut fairplay_eiv: Option<Zeroizing<[u8; 16]>> = None;
+    let mut fairplay_session: Option<super::fairplay::FairPlaySession> = None;
+    let mut fairplay_initial: Option<super::fairplay::FairPlayMessage> = None;
+    let mut fairplay_challenge: Option<super::fairplay::FairPlayChallenge> = None;
     let mut event_channel: Option<EventChannel> = None;
     let mut timing_client: Option<TimingClient> = None;
     let mut media_receiver: Option<MediaSession> = None;
@@ -691,8 +704,7 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
                 }
             }
             ("POST", "/fp-setup", "RTSP/1.0") => {
-                // The first 16 bytes contain only the public FPLY record header,
-                // sequence and phase-1 selector bytes. Never log the full 164-byte M3.
+                // Never log the full M3 payload: it may contain SAP key material.
                 let record_prefix = request
                     .body
                     .iter()
@@ -706,30 +718,108 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
                     content_type = ?request.header("Content-Type"),
                     "AirPlay FairPlay request header"
                 );
+
                 match super::fairplay::parse_message(&request.body) {
-                    Ok(message) => {
-                        let phase = message.phase;
-                        if phase == super::fairplay::MessagePhase::Initial {
-                            // Never send random challenge bytes or acknowledge an
-                            // unauthenticated M3. The SAP crypto provider is not
-                            // implemented yet, so fail closed until it can produce
-                            // a session-aware, independently verified response.
-                            tracing::error!(
-                                sender_phase1_capabilities = ?message.initial_capabilities,
-                                sender_phase1_parameters = ?message.initial_parameters,
-                                "FairPlay SAP unavailable: refusing placeholder M2"
-                            );
-                            let response =
-                                fairplay_error_response(501, "Not Implemented", &request.cseq);
+                    Ok(message) if message.phase == super::fairplay::MessagePhase::Initial => {
+                        let Some(provider) = fairplay_provider.as_ref() else {
+                            tracing::warn!("FairPlay SAP unavailable: no authorized provider configured");
+                            let response = fairplay_error_response(501, "Not Implemented", &request.cseq);
                             write_response(&mut stream, &response, 501)?;
-                        } else {
-                            tracing::warn!(
-                                phase = phase as u8,
-                                "FairPlay message received but no authenticated SAP session exists"
-                            );
+                            continue;
+                        };
+
+                        match provider.begin(&message) {
+                            Ok(challenge) => {
+                                let mut session = super::fairplay::FairPlaySession::new();
+                                if let Err(error) = session
+                                    .accept(message.clone())
+                                    .and_then(|_| {
+                                        session.mark_challenge_sent(
+                                            challenge.mode,
+                                            *challenge.challenge,
+                                        )
+                                    })
+                                {
+                                    tracing::warn!(%error, "FairPlay provider returned an invalid challenge");
+                                    let response = fairplay_error_response(500, "Internal Server Error", &request.cseq);
+                                    write_response(&mut stream, &response, 500)?;
+                                    continue;
+                                }
+
+                                let response_body = super::fairplay::build_m2(
+                                    challenge.mode,
+                                    &challenge.challenge,
+                                );
+                                fairplay_initial = Some(message);
+                                fairplay_challenge = Some(challenge);
+                                fairplay_session = Some(session);
+                                write_binary_response(&mut stream, &request.cseq, &response_body)?;
+                                tracing::info!("FairPlay SAP provider produced an M2 challenge");
+                            }
+                            Err(error) => {
+                                let status = fairplay_provider_error_status(&error);
+                                tracing::warn!(%error, status, "FairPlay SAP provider rejected M1");
+                                let reason = reason_phrase(status);
+                                let response = fairplay_error_response(status, reason, &request.cseq);
+                                write_response(&mut stream, &response, status)?;
+                            }
+                        }
+                    }
+                    Ok(message) if message.phase == super::fairplay::MessagePhase::KeyMessage => {
+                        let (
+                            Some(provider),
+                            Some(initial),
+                            Some(challenge),
+                            Some(session),
+                        ) = (
+                            fairplay_provider.as_ref(),
+                            fairplay_initial.as_ref(),
+                            fairplay_challenge.as_ref(),
+                            fairplay_session.as_mut(),
+                        )
+                        else {
+                            tracing::warn!("FairPlay M3 received without an active authenticated SAP negotiation");
                             let response = fairplay_error_response(403, "Forbidden", &request.cseq);
                             write_response(&mut stream, &response, 403)?;
+                            continue;
+                        };
+
+                        if let Err(error) = session.accept(message.clone()) {
+                            tracing::warn!(%error, "FairPlay M3 state validation failed");
+                            let response = fairplay_error_response(400, "Bad Request", &request.cseq);
+                            write_response(&mut stream, &response, 400)?;
+                            continue;
                         }
+
+                        match provider.finish(initial, challenge, &message) {
+                            Ok(keys) => {
+                                let response_body = super::fairplay::build_m4(&keys.acknowledgement);
+                                *fairplay_ekey = Some(keys.ekey);
+                                *fairplay_eiv = Some(keys.eiv);
+                                write_binary_response(&mut stream, &request.cseq, &response_body)?;
+                                tracing::info!(
+                                    has_fairplay_ekey = fairplay_ekey.is_some(),
+                                    has_fairplay_eiv = fairplay_eiv.is_some(),
+                                    "FairPlay SAP provider authenticated M3 and installed session keys"
+                                );
+                            }
+                            Err(error) => {
+                                fairplay_ekey = None;
+                                fairplay_eiv = None;
+                                let status = fairplay_provider_error_status(&error);
+                                tracing::warn!(%error, status, "FairPlay SAP provider rejected M3");
+                                let response = fairplay_error_response(status, reason_phrase(status), &request.cseq);
+                                write_response(&mut stream, &response, status)?;
+                            }
+                        }
+                    }
+                    Ok(message) => {
+                        tracing::warn!(
+                            phase = message.phase as u8,
+                            "Unexpected receiver-originated FairPlay phase from sender"
+                        );
+                        let response = fairplay_error_response(400, "Bad Request", &request.cseq);
+                        write_response(&mut stream, &response, 400)?;
                     }
                     Err(error) => {
                         tracing::warn!(%error, "AirPlay FairPlay setup framing rejected");
@@ -1226,6 +1316,42 @@ fn handle_setup_request(
                 )
             })
         }
+    }
+}
+
+fn write_binary_response(
+    stream: &mut TcpStream,
+    cseq: &str,
+    body: &[u8],
+) -> std::io::Result<()> {
+    let header = format!(
+        "RTSP/1.0 200 OK\\r\\nCSeq: {}\\r\\nServer: RustPhoneControl/0.1\\r\\nContent-Type: application/octet-stream\\r\\nContent-Length: {}\\r\\n\\r\\n",
+        cseq,
+        body.len()
+    );
+    stream.write_all(header.as_bytes())?;
+    stream.write_all(body)?;
+    stream.flush()
+}
+
+fn fairplay_provider_error_status(error: &super::fairplay::FairPlayProviderError) -> u16 {
+    match error {
+        super::fairplay::FairPlayProviderError::Unavailable => 503,
+        super::fairplay::FairPlayProviderError::UnsupportedMode(_) => 501,
+        super::fairplay::FairPlayProviderError::InvalidMessage => 400,
+        super::fairplay::FairPlayProviderError::AuthenticationFailed => 403,
+        super::fairplay::FairPlayProviderError::Internal(_) => 500,
+    }
+}
+
+fn reason_phrase(status: u16) -> &'static str {
+    match status {
+        400 => "Bad Request",
+        403 => "Forbidden",
+        500 => "Internal Server Error",
+        501 => "Not Implemented",
+        503 => "Service Unavailable",
+        _ => "Internal Server Error",
     }
 }
 
