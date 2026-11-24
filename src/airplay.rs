@@ -323,10 +323,7 @@ pub fn stop() -> anyhow::Result<()> {
     };
 
     tracing::info!("AirPlay shutdown: clearing pending video frame");
-    runtime
-        .video_frames
-        .clear()
-        .map_err(|error| anyhow::anyhow!(error))?;
+    let frame_clear_error = runtime.video_frames.clear().err();
 
     let ReceiverRuntime {
         server,
@@ -345,5 +342,11 @@ pub fn stop() -> anyhow::Result<()> {
     drop(_media_foundation);
     tracing::info!("AirPlay shutdown: Media Foundation runtime released");
     tracing::info!("Built-in AirPlay control endpoint stopped");
+
+    if let Some(error) = frame_clear_error {
+        return Err(anyhow::anyhow!(
+            "could not clear the pending AirPlay video frame during shutdown: {error}"
+        ));
+    }
     Ok(())
 }
