@@ -1491,7 +1491,7 @@ mod tests {
     #[test]
     fn rejects_control_characters_in_header_values() {
         let request =
-            b"OPTIONS * RTSP/1.0\r\nCSeq: 1\r\nX-Test: bad\\x01value\r\n\r\n";
+            b"OPTIONS * RTSP/1.0\r\nCSeq: 1\r\nX-Test: bad\x01value\r\n\r\n";
         let error =
             read_request_from_bytes(request).expect_err("control character rejected");
         assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
