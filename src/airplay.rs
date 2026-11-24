@@ -289,15 +289,44 @@ pub fn take_latest_video_frame() -> anyhow::Result<Option<FrameSnapshot>> {
 
 #[cfg(windows)]
 pub fn stop() -> anyhow::Result<()> {
-    let mut runtime = receiver_slot()
-        .lock()
-        .map_err(|_| anyhow::anyhow!("AirPlay runtime lock is poisoned"))?;
-    if let Some(runtime) = runtime.take() {
-        runtime
-            .video_frames
-            .clear()
-            .map_err(|error| anyhow::anyhow!(error))?;
-        tracing::info!("Built-in AirPlay control endpoint stopped");
-    }
+    // Detach the runtime while holding the global lock, then release the lock
+    // before joining network workers. A client may still be finishing a
+    // request that needs to inspect the runtime; joining while locked could
+    // otherwise deadlock shutdown.
+    let runtime = {
+        let mut slot = receiver_slot()
+            .lock()
+            .map_err(|_| anyhow::anyhow!("AirPlay runtime lock is poisoned"))?;
+        slot.take()
+    };
+
+    let Some(runtime) = runtime else {
+        tracing::debug!("AirPlay stop requested while receiver is already stopped");
+        return Ok(());
+    };
+
+    tracing::info!("AirPlay shutdown: clearing pending video frame");
+    runtime
+        .video_frames
+        .clear()
+        .map_err(|error| anyhow::anyhow!(error))?;
+
+    let ReceiverRuntime {
+        server,
+        advertisement,
+        _media_foundation,
+        video_frames: _,
+    } = runtime;
+
+    tracing::info!("AirPlay shutdown: stopping control server and client workers");
+    drop(server);
+    tracing::info!("AirPlay shutdown: control server stopped");
+
+    drop(advertisement);
+    tracing::info!("AirPlay shutdown: DNS-SD advertisement stopped");
+
+    drop(_media_foundation);
+    tracing::info!("AirPlay shutdown: Media Foundation runtime released");
+    tracing::info!("Built-in AirPlay control endpoint stopped");
     Ok(())
 }
