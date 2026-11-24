@@ -1567,6 +1567,7 @@ fn txt_airplay_dictionary() -> Dictionary {
 #[cfg(test)]
 mod tests {
     use super::plist;
+    use super::Zeroizing;
     use super::{
         Request, SCREEN_MIRROR_HEADER_SIZE, TcpStream, build_info_response, find_header_end,
         handle_pair_setup, handle_setup_request, server_info_plist,
@@ -1681,7 +1682,7 @@ mod tests {
         use std::time::Duration;
 
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind local listener");
-        let mut client = TcpStream::connect(listener.local_addr().expect("listener address"))
+        let client = TcpStream::connect(listener.local_addr().expect("listener address"))
             .expect("connect local client");
         let (mut server, _) = listener.accept().expect("accept local client");
         server
