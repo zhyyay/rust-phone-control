@@ -615,11 +615,6 @@ mod tests {
             .as_slice()
             .try_into()
             .unwrap();
-        let encrypted_m2 = &fields
-            .iter()
-            .find(|field| field.kind == ENCRYPTED_DATA)
-            .unwrap()
-            .value;
         let shared =
             controller_ephemeral_secret.diffie_hellman(&PublicKey::from(accessory_ephemeral));
         let encryption_key = derive_key(
@@ -666,7 +661,6 @@ mod tests {
 
         let error = session.finish(&m3).unwrap_err();
         assert!(error.contains("controller is not paired"));
-        let _ = encrypted_m2;
     }
 
     #[test]
