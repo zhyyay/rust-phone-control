@@ -1935,7 +1935,6 @@ mod tests {
             let response = super::fairplay_error_response(status, reason, "3");
             assert!(response.starts_with(&format!("RTSP/1.0 {status} {reason}\r\n")));
             assert!(response.ends_with("\r\n\r\n"));
-            assert!(!response.contains("\r\n"));
             assert!(response.contains("\r\nCSeq: 3\r\n"));
         }
     }
