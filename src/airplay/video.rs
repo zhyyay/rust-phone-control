@@ -611,6 +611,46 @@ pub enum MirrorPacketOutcome {
     Heartbeat,
 }
 
+/// Bounds decoder construction attempts for one accepted AVC configuration.
+///
+/// The initial attempt and one retry are allowed. Repeated identical avcC
+/// packets cannot trigger unbounded Media Foundation activation attempts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DecoderInitializationPolicy {
+    attempts: u8,
+    max_attempts: u8,
+}
+
+impl Default for DecoderInitializationPolicy {
+    fn default() -> Self {
+        Self {
+            attempts: 0,
+            max_attempts: 2,
+        }
+    }
+}
+
+impl DecoderInitializationPolicy {
+    /// Reserve an initialization attempt, returning false when the budget is spent.
+    pub fn begin_attempt(&mut self) -> bool {
+        if self.attempts >= self.max_attempts {
+            return false;
+        }
+        self.attempts += 1;
+        true
+    }
+
+    /// Reset the budget when a different codec configuration is accepted.
+    pub fn reset(&mut self) {
+        self.attempts = 0;
+    }
+
+    /// Number of attempts made for the current codec configuration.
+    pub fn attempts(&self) -> u8 {
+        self.attempts
+    }
+}
+
 /// Tracks codec configuration for one AirPlay mirror TCP session.
 ///
 /// This stage validates and remembers avcC packets, but never assumes video
@@ -1226,6 +1266,21 @@ mod tests {
     use super::*;
 
     #[test]
+    #[test]
+    fn decoder_initialization_policy_allows_only_two_attempts_per_configuration() {
+        let mut policy = DecoderInitializationPolicy::default();
+        assert!(policy.begin_attempt());
+        assert_eq!(policy.attempts(), 1);
+        assert!(policy.begin_attempt());
+        assert_eq!(policy.attempts(), 2);
+        assert!(!policy.begin_attempt());
+        assert_eq!(policy.attempts(), 2);
+
+        policy.reset();
+        assert_eq!(policy.attempts(), 0);
+        assert!(policy.begin_attempt());
+    }
+
     fn nv12_conversion_rejects_oversized_bgra_before_allocating() {
         let frame = Nv12Frame {
             width: MAX_FRAME_DIMENSION,
