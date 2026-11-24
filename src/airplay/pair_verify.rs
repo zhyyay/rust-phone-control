@@ -470,7 +470,7 @@ mod tests {
             },
         ]);
 
-        let error = PairVerifySession::start(&m1).unwrap_err();
+        let error = PairVerifySession::start(&m1).err().expect("reject zero shared secret");
         assert!(error.contains("all-zero X25519 shared secret"));
     }
 
@@ -482,7 +482,9 @@ mod tests {
         m1.extend_from_slice(&[0; 32]);
         m1.extend_from_slice(&[7; 32]);
 
-        let error = LegacyPairVerifySession::start(&m1).unwrap_err();
+        let error = LegacyPairVerifySession::start(&m1)
+            .err()
+            .expect("reject zero shared secret");
         assert!(error.contains("all-zero ECDH shared secret"));
     }
 
