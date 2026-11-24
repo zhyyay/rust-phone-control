@@ -15,6 +15,7 @@ use hkdf::Hkdf;
 use rand::RngCore;
 use rand::rngs::OsRng;
 use sha2::{Digest, Sha256, Sha512};
+use zeroize::{Zeroize, Zeroizing};
 
 use super::tlv8::{self, Tlv};
 
@@ -53,9 +54,10 @@ impl AccessoryIdentity {
         if identifier.is_empty() || identifier.len() > 64 || secret_key.len() != 32 {
             return Err("invalid persisted AirPlay accessory identity".into());
         }
-        let secret: [u8; 32] = secret_key
-            .try_into()
-            .map_err(|_| "invalid persisted accessory secret key")?;
+        let secret = Zeroizing::new(
+            <[u8; 32]>::try_from(secret_key)
+                .map_err(|_| "invalid persisted accessory secret key")?,
+        );
         Ok(Self {
             identifier,
             signing_key: SigningKey::from_bytes(&secret),
@@ -81,9 +83,10 @@ impl PairingState {
             if let Some(stored) = pairing_store::load()
                 .map_err(|error| format!("cannot load protected AirPlay pairing store: {error}"))?
             {
+                let accessory_secret_key = Zeroizing::new(stored.accessory_secret_key);
                 let accessory = AccessoryIdentity::from_parts(
                     stored.accessory_identifier,
-                    &stored.accessory_secret_key,
+                    &accessory_secret_key,
                 )?;
                 let controllers = stored
                     .controllers
@@ -139,7 +142,7 @@ impl PairingState {
         #[cfg(windows)]
         {
             use super::pairing_store::{self, StoredController, StoredPairingState};
-            let stored = StoredPairingState {
+            let mut stored = StoredPairingState {
                 version: 1,
                 accessory_identifier: self.accessory.identifier.clone(),
                 accessory_secret_key: self.accessory.signing_key.to_bytes().to_vec(),
@@ -160,7 +163,9 @@ impl PairingState {
                     })
                     .collect(),
             };
-            pairing_store::save(&stored).map_err(|error| {
+            let save_result = pairing_store::save(&stored);
+            stored.accessory_secret_key.zeroize();
+            save_result.map_err(|error| {
                 format!("cannot persist protected AirPlay pairing store: {error}")
             })?;
         }
