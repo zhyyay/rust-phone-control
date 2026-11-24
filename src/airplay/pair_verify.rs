@@ -184,17 +184,19 @@ fn legacy_aes_material(shared_secret: &[u8; 32]) -> ([u8; 16], [u8; 16]) {
     let mut key_hash = Sha512::new();
     key_hash.update(b"Pair-Verify-AES-Key");
     key_hash.update(shared_secret);
-    let key_digest = Zeroizing::new(key_hash.finalize());
+    let mut key_digest = key_hash.finalize();
 
     let mut iv_hash = Sha512::new();
     iv_hash.update(b"Pair-Verify-AES-IV");
     iv_hash.update(shared_secret);
-    let iv_digest = Zeroizing::new(iv_hash.finalize());
+    let mut iv_digest = iv_hash.finalize();
 
     let mut key = [0u8; 16];
     let mut iv = [0u8; 16];
     key.copy_from_slice(&key_digest[..16]);
     iv.copy_from_slice(&iv_digest[..16]);
+    key_digest.as_mut_slice().zeroize();
+    iv_digest.as_mut_slice().zeroize();
     (key, iv)
 }
 
