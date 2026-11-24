@@ -495,7 +495,7 @@ pub fn handle_m5(session_key: &[u8; 64], encrypted_data: &[u8]) -> Result<Vec<u8
         b"Pair-Setup-Encrypt-Salt",
         b"Pair-Setup-Encrypt-Info",
     )?);
-    let cipher = ChaCha20Poly1305::new_from_slice(&encryption_key)
+    let cipher = ChaCha20Poly1305::new_from_slice(encryption_key.as_slice())
         .map_err(|_| "invalid Pair-Setup encryption key")?;
     let plaintext = Zeroizing::new(
         cipher
@@ -525,7 +525,7 @@ pub fn handle_m5(session_key: &[u8; 64], encrypted_data: &[u8]) -> Result<Vec<u8
     let mut controller_info = Zeroizing::new(Vec::with_capacity(
         controller_x.len() + controller_id.len() + controller_public_key.len(),
     ));
-    controller_info.extend_from_slice(&controller_x);
+    controller_info.extend_from_slice(controller_x.as_slice());
     controller_info.extend_from_slice(controller_id);
     controller_info.extend_from_slice(&controller_public_key);
 
@@ -549,7 +549,7 @@ pub fn handle_m5(session_key: &[u8; 64], encrypted_data: &[u8]) -> Result<Vec<u8
     let mut accessory_info = Zeroizing::new(Vec::with_capacity(
         accessory_x.len() + accessory.identifier.len() + accessory_public_key.len(),
     ));
-    accessory_info.extend_from_slice(&accessory_x);
+    accessory_info.extend_from_slice(accessory_x.as_slice());
     accessory_info.extend_from_slice(&accessory.identifier);
     accessory_info.extend_from_slice(&accessory_public_key);
     let accessory_signature = accessory.signing_key.sign(&accessory_info);
