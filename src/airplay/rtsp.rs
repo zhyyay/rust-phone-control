@@ -935,11 +935,28 @@ pub fn serve_with_fairplay_provider(
                             phase = message.phase as u8,
                             "Unexpected receiver-originated FairPlay phase from sender"
                         );
+                        // An out-of-order record invalidates the in-flight
+                        // negotiation. Do not leave previously derived keys
+                        // available after a protocol violation.
+                        fairplay_ekey = None;
+                        fairplay_eiv = None;
+                        fairplay_video_key = None;
+                        fairplay_initial = None;
+                        fairplay_challenge = None;
+                        fairplay_session = None;
                         let response = fairplay_error_response(400, "Bad Request", &request.cseq);
                         write_response(&mut stream, &response, 400)?;
                     }
                     Err(error) => {
                         tracing::warn!(%error, "AirPlay FairPlay setup framing rejected");
+                        // Malformed FairPlay input is a hard boundary: discard
+                        // every key and negotiation object from this exchange.
+                        fairplay_ekey = None;
+                        fairplay_eiv = None;
+                        fairplay_video_key = None;
+                        fairplay_initial = None;
+                        fairplay_challenge = None;
+                        fairplay_session = None;
                         let response = fairplay_error_response(400, "Bad Request", &request.cseq);
                         write_response(&mut stream, &response, 400)?;
                     }
