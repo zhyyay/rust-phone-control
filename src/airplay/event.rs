@@ -119,3 +119,25 @@ fn handle_event_stream(mut stream: TcpStream, running: &AtomicBool, peer: Socket
         }
     }
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::EventChannel;
+    use std::net::{TcpStream, TcpListener};
+
+    #[test]
+    fn dropping_event_channel_releases_listener_with_connected_peer() {
+        let peer_ip = "127.0.0.1".parse().expect("loopback IP");
+        let channel = EventChannel::bind(peer_ip).expect("bind event channel");
+        let port = channel.port();
+        let _peer = TcpStream::connect((peer_ip, port)).expect("connect event peer");
+
+        drop(channel);
+
+        assert!(
+            TcpListener::bind(("0.0.0.0", port)).is_ok(),
+            "event listener port must be released after channel drop"
+        );
+    }
+}
