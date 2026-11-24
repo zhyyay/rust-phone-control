@@ -1470,6 +1470,40 @@ mod tests {
     }
 
     #[test]
+    fn parses_back_to_back_rtsp_requests_without_losing_buffered_bytes() {
+        use std::io::Write;
+        use std::net::TcpListener;
+        use std::time::Duration;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback listener");
+        let mut client =
+            TcpStream::connect(listener.local_addr().expect("listener address"))
+                .expect("connect loopback");
+        let (mut server, _) = listener.accept().expect("accept loopback");
+        server
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .expect("set read timeout");
+
+        client
+            .write_all(
+                b"OPTIONS * RTSP/1.0\r\nCSeq: 10\r\n\r\nOPTIONS * RTSP/1.0\r\nCSeq: 11\r\n\r\n",
+            )
+            .expect("write pipelined requests");
+
+        let mut pending = Vec::new();
+        let first = super::read_request(&mut server, &mut pending)
+            .expect("read first request")
+            .expect("first request exists");
+        assert_eq!(first.cseq, "10");
+
+        let second = super::read_request(&mut server, &mut pending)
+            .expect("read second request")
+            .expect("second request exists");
+        assert_eq!(second.cseq, "11");
+        assert!(pending.is_empty());
+    }
+
+    #[test]
     fn rejects_duplicate_and_malformed_cseq_headers() {
         let duplicate = b"OPTIONS * RTSP/1.0\r\nCSeq: 1\r\nCSeq: 2\r\n\r\n";
         let error = read_request_from_bytes(duplicate).expect_err("duplicate CSeq rejected");
