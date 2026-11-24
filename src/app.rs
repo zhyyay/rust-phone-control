@@ -207,7 +207,7 @@ fn render_header(app: &PhoneControlApp) -> impl IntoElement {
                             .child(Label::new("🔵"))
                             .child(Label::new("MirrorDeck")),
                     )
-                    .child(Label::new(if self.airplay_status.contains("Running") {
+                    .child(Label::new(if app.airplay_status.contains("Running") {
                         "● 已连接 · AirPlay"
                     } else {
                         "● 等待连接"
@@ -263,7 +263,7 @@ fn render_left_sidebar(
                                     .border_color(gpui_kit::rgb(0xC9CCFF))
                                     .child(Label::new("📱  iPhone"))
                                     .child(Label::new(
-                                        if self.airplay_status.contains("Running") {
+                                        if app.airplay_status.contains("Running") {
                                             "投屏中 · AirPlay"
                                         } else {
                                             "等待连接"
@@ -395,10 +395,10 @@ fn render_preview_column(
                                     .p_2()
                                     .child(preview_panel_for_app(self)),
                             )
-                            .child(Label::new(if self.preview_status.is_empty() {
+                            .child(Label::new(if app.preview_status.is_empty() {
                                 "等待手机画面 · AirPlay"
                             } else {
-                                self.preview_status.as_str()
+                                app.preview_status.as_str()
                             }))
                             .child(pending_airplay_approval_panel(self, cx)),
 }
