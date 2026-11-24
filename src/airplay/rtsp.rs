@@ -689,6 +689,7 @@ pub fn serve_with_fairplay_provider(
     loop {
         let Some(request) = read_request(&mut stream, &mut pending)? else {
             tracing::info!("AirPlay RTSP peer closed the session");
+            stop_session_channels(&mut event_channel, &mut timing_client, &mut media_receiver);
             return Ok(());
         };
 
@@ -979,17 +980,19 @@ pub fn serve_with_fairplay_provider(
                 }
             }
             ("POST", "/pair-verify", "RTSP/1.0") => {
-                // Pair-Verify changes the authenticated transport context. Stop
-                // any media workers created with the previous shared secret and
-                // discard FairPlay material before accepting a new exchange.
-                stop_session_channels(&mut event_channel, &mut timing_client, &mut media_receiver);
-                pair_verify_shared_secret = None;
-                fairplay_ekey = None;
-                fairplay_eiv = None;
-                fairplay_video_key = None;
-                fairplay_initial = None;
-                fairplay_challenge = None;
-                fairplay_session = None;
+                // A new Pair-Verify M1 starts a fresh authenticated transport
+                // context. Do not tear it down again when the matching M3 arrives.
+                if pair_verify_session.is_none() {
+                    tracing::info!("Pair-Verify starting a new authentication context");
+                    stop_session_channels(&mut event_channel, &mut timing_client, &mut media_receiver);
+                    pair_verify_shared_secret = None;
+                    fairplay_ekey = None;
+                    fairplay_eiv = None;
+                    fairplay_video_key = None;
+                    fairplay_initial = None;
+                    fairplay_challenge = None;
+                    fairplay_session = None;
+                }
 
                 let response_body =
                     match handle_pair_verify(&request.body, &mut pair_verify_session) {
@@ -1122,6 +1125,7 @@ pub fn serve_with_fairplay_provider(
         }
 
         if close_after_response {
+            stop_session_channels(&mut event_channel, &mut timing_client, &mut media_receiver);
             return Ok(());
         }
     }
