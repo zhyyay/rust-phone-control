@@ -844,7 +844,7 @@ fn read_request(stream: &mut TcpStream, pending: &mut Vec<u8>) -> std::io::Resul
         let value = raw_value.trim();
         if value
             .bytes()
-            .any(|byte| (byte < 0x20 && byte != b'\\t') || byte == 0x7f)
+            .any(|byte| (byte < 0x20 && byte != b'\t') || byte == 0x7f)
         {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
