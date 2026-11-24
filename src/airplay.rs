@@ -17,7 +17,7 @@ mod discovery;
 mod event;
 #[allow(dead_code)]
 mod fairplay;
-#[allow(dead_code)]
+pub use fairplay::{\n    FairPlayChallenge, FairPlayKeys, FairPlayMessage, FairPlayProviderError, FairPlaySapProvider,\n    parse_message as parse_fairplay_message,\n};\n#[allow(dead_code)]
 mod media;
 #[allow(dead_code)]
 mod mirror_crypto;
@@ -203,6 +203,23 @@ pub fn setup_code() -> String {
 
 #[cfg(windows)]
 pub fn start() -> anyhow::Result<()> {
+    start_inner(None)
+}
+
+/// Start the built-in receiver with an authorized FairPlay SAP provider.
+/// The ordinary start() entry point remains fail-closed when no provider is
+/// configured.
+#[cfg(windows)]
+pub fn start_with_fairplay_provider(
+    provider: Arc<dyn FairPlaySapProvider>,
+) -> anyhow::Result<()> {
+    start_inner(Some(provider))
+}
+
+#[cfg(windows)]
+fn start_inner(
+    fairplay_provider: Option<Arc<dyn FairPlaySapProvider>>,
+) -> anyhow::Result<()> {
     let _lifecycle = receiver_lifecycle()
         .lock()
         .map_err(|_| anyhow::anyhow!("AirPlay lifecycle lock is poisoned"))?;
@@ -242,7 +259,7 @@ pub fn start() -> anyhow::Result<()> {
         }
     }
     let video_frames = Arc::new(video::LatestFrameMailbox::new());
-    let server = server::ControlServer::start()?;
+    let server = match fairplay_provider {\n        Some(provider) => server::ControlServer::start_with_fairplay_provider(provider)?,\n        None => server::ControlServer::start()?,\n    };
     let advertisement = discovery::Advertisement::start()?;
 
     let mut runtime = receiver_slot()
