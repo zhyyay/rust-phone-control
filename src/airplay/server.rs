@@ -22,15 +22,11 @@ impl ControlServer {
 
     /// Start the listener with an explicitly supplied authorized FairPlay SAP
     /// provider. The default start() path remains fail-closed.
-    pub fn start_with_fairplay_provider(
-        provider: Arc<dyn FairPlaySapProvider>,
-    ) -> Result<Self> {
+    pub fn start_with_fairplay_provider(provider: Arc<dyn FairPlaySapProvider>) -> Result<Self> {
         Self::start_inner(Some(provider))
     }
 
-    fn start_inner(
-        fairplay_provider: Option<Arc<dyn FairPlaySapProvider>>,
-    ) -> Result<Self> {
+    fn start_inner(fairplay_provider: Option<Arc<dyn FairPlaySapProvider>>) -> Result<Self> {
         let listener = TcpListener::bind(("0.0.0.0", config::TCP_PORT))
             .with_context(|| format!("bind AirPlay TCP port {}", config::TCP_PORT))?;
         listener
@@ -121,8 +117,7 @@ fn run_listener(
                     .spawn({
                         let provider = fairplay_provider.clone();
                         move || handle_client(stream, peer, provider)
-                    })
-                {
+                    }) {
                     Ok(worker) => {
                         clients.push(ClientWorker {
                             peer,
