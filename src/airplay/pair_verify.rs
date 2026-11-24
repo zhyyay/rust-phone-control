@@ -717,13 +717,17 @@ mod tests {
     }
 
     #[test]
-    fn hap_pair_verify_rejects_unpaired_controller_identifier() {
+    fn hap_pair_verify_rejects_controller_revoked_during_exchange() {
         let mut ephemeral_bytes = [0u8; 32];
         OsRng.fill_bytes(&mut ephemeral_bytes);
         let controller_ephemeral_secret = StaticSecret::from(ephemeral_bytes);
         let controller_ephemeral_public = PublicKey::from(&controller_ephemeral_secret);
         let controller_identity = SigningKey::generate(&mut OsRng);
-        let controller_identifier = b"unpaired-controller-for-rejection-test";
+        let controller_identifier = b"revoked-controller-during-exchange";
+        pair_setup::test_register_controller(
+            controller_identifier,
+            controller_identity.verifying_key().to_bytes(),
+        );
 
         let m1 = tlv8::encode(&[
             Tlv {
@@ -789,10 +793,12 @@ mod tests {
             },
         ]);
 
+        // Revocation after M1 but before M3 must take effect immediately.
+        pair_setup::test_unregister_controller(controller_identifier);
         let error = session
             .finish(&m3)
             .err()
-            .expect("reject unpaired controller");
+            .expect("reject revoked controller");
         assert!(error.contains("controller is not paired"));
     }
 
