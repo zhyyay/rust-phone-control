@@ -629,6 +629,7 @@ mod tests {
     use chacha20poly1305::{ChaCha20Poly1305, Nonce};
     use ed25519_dalek::{Signer, SigningKey, Verifier, VerifyingKey};
     use rand::rngs::OsRng;
+    use sha2::Digest;
 
     #[test]
     fn m5_authenticates_controller_and_returns_decryptable_signed_m6() {
