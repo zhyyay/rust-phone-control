@@ -15,7 +15,6 @@ use std::sync::{
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use rand::{RngCore, rngs::OsRng};
 
 use super::{
     config,
