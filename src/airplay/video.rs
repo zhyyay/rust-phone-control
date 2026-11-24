@@ -1266,7 +1266,6 @@ mod tests {
     use super::*;
 
     #[test]
-    #[test]
     fn decoder_initialization_policy_allows_only_two_attempts_per_configuration() {
         let mut policy = DecoderInitializationPolicy::default();
         assert!(policy.begin_attempt());
@@ -1281,6 +1280,7 @@ mod tests {
         assert!(policy.begin_attempt());
     }
 
+    #[test]
     fn nv12_conversion_rejects_oversized_bgra_before_allocating() {
         let frame = Nv12Frame {
             width: MAX_FRAME_DIMENSION,
