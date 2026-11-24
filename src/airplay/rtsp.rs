@@ -1515,15 +1515,14 @@ mod tests {
 
         let transfer_encoding =
             b"POST /info RTSP/1.0\r\nCSeq: 1\r\nTransfer-Encoding: chunked\r\n\r\n";
-        let error = read_request_from_bytes(transfer_encoding)
-            .expect_err("transfer encoding rejected");
+        let error =
+            read_request_from_bytes(transfer_encoding).expect_err("transfer encoding rejected");
         assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
     }
 
     #[test]
     fn rejects_request_body_larger_than_configured_limit() {
-        let request =
-            b"POST /info RTSP/1.0\r\nCSeq: 1\r\nContent-Length: 65537\r\n\r\n";
+        let request = b"POST /info RTSP/1.0\r\nCSeq: 1\r\nContent-Length: 65537\r\n\r\n";
         let error = read_request_from_bytes(request).expect_err("oversized body rejected");
         assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
     }
