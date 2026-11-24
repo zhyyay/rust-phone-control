@@ -425,44 +425,44 @@ fn process_media_packets(
                 );
                 if initialize_decoder {
                     if let Some(configuration) = processor.configuration() {
-                    match configuration.video_dimensions() {
-                        Ok(Some(dimensions)) => tracing::info!(
-                            width = dimensions.width,
-                            height = dimensions.height,
-                            "AirPlay H.264 SPS dimensions parsed"
-                        ),
-                        Ok(None) => tracing::warn!("AirPlay AVC configuration has no SPS"),
-                        Err(error) => tracing::warn!(
-                            %error,
-                            "Could not read dimensions from AirPlay H.264 SPS"
-                        ),
-                    }
-                    if let Some(runtime) = media_foundation.as_ref() {
-                        match super::decoder::H264FramePipeline::from_avc_configuration(
-                            runtime,
-                            configuration,
-                            Arc::clone(&frames),
-                        ) {
-                            Ok(pipeline) => {
-                                frame_pipeline = Some(pipeline);
-                                tracing::info!(
-                                    "Windows H.264 decoder pipeline initialized from stream SPS"
-                                );
-                            }
-                            Err(error) => {
-                                tracing::warn!(
-                                    %error,
-                                    attempts = decoder_init_policy.attempts(),
-                                    "Could not initialize Windows H.264 decoder pipeline"
-                                );
-                            }
+                        match configuration.video_dimensions() {
+                            Ok(Some(dimensions)) => tracing::info!(
+                                width = dimensions.width,
+                                height = dimensions.height,
+                                "AirPlay H.264 SPS dimensions parsed"
+                            ),
+                            Ok(None) => tracing::warn!("AirPlay AVC configuration has no SPS"),
+                            Err(error) => tracing::warn!(
+                                %error,
+                                "Could not read dimensions from AirPlay H.264 SPS"
+                            ),
                         }
-                    } else {
-                        tracing::warn!(
-                            attempts = decoder_init_policy.attempts(),
-                            "Media Foundation is unavailable; decoded-frame preview cannot start"
-                        );
-                    }
+                        if let Some(runtime) = media_foundation.as_ref() {
+                            match super::decoder::H264FramePipeline::from_avc_configuration(
+                                runtime,
+                                configuration,
+                                Arc::clone(&frames),
+                            ) {
+                                Ok(pipeline) => {
+                                    frame_pipeline = Some(pipeline);
+                                    tracing::info!(
+                                        "Windows H.264 decoder pipeline initialized from stream SPS"
+                                    );
+                                }
+                                Err(error) => {
+                                    tracing::warn!(
+                                        %error,
+                                        attempts = decoder_init_policy.attempts(),
+                                        "Could not initialize Windows H.264 decoder pipeline"
+                                    );
+                                }
+                            }
+                        } else {
+                            tracing::warn!(
+                                attempts = decoder_init_policy.attempts(),
+                                "Media Foundation is unavailable; decoded-frame preview cannot start"
+                            );
+                        }
                     }
                 }
             }
