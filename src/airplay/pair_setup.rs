@@ -774,6 +774,44 @@ mod tests {
     }
 
     #[test]
+    fn m5_rejects_duplicate_controller_identifier_tlv() {
+        let session_key = [0x53u8; 64];
+        let controller = SigningKey::generate(&mut OsRng);
+        let public_key = controller.verifying_key().to_bytes();
+        let inner = tlv8::encode(&[
+            Tlv {
+                kind: 0x01,
+                value: b"duplicate-id".to_vec(),
+            },
+            Tlv {
+                kind: 0x01,
+                value: b"duplicate-id-again".to_vec(),
+            },
+            Tlv {
+                kind: 0x03,
+                value: public_key.to_vec(),
+            },
+            Tlv {
+                kind: 0x0a,
+                value: vec![0; 64],
+            },
+        ]);
+        let key = derive_key(
+            &session_key,
+            b"Pair-Setup-Encrypt-Salt",
+            b"Pair-Setup-Encrypt-Info",
+        )
+        .unwrap();
+        let encrypted = ChaCha20Poly1305::new_from_slice(&key)
+            .unwrap()
+            .encrypt(Nonce::from_slice(NONCE_M5), inner.as_ref())
+            .unwrap();
+
+        let error = handle_m5(&session_key, &encrypted).unwrap_err();
+        assert!(error.contains("duplicate TLV"));
+    }
+
+    #[test]
     fn m5_rejects_tampered_authentication_tag() {
         let session_key = [0x11u8; 64];
         assert!(handle_m5(&session_key, &[0u8; 16]).is_err());
