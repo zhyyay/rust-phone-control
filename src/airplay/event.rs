@@ -120,11 +120,10 @@ fn handle_event_stream(mut stream: TcpStream, running: &AtomicBool, peer: Socket
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::EventChannel;
-    use std::net::{TcpStream, TcpListener};
+    use std::net::{TcpListener, TcpStream};
 
     #[test]
     fn dropping_event_channel_releases_listener_with_connected_peer() {
