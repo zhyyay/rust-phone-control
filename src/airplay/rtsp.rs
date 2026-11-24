@@ -1294,7 +1294,7 @@ fn handle_pair_setup(
                             value: result.proof.to_vec(),
                         },
                     ]);
-                    *session_key = Some(Zeroizing::new(result.session_key));
+                    *session_key = Some(Zeroizing::new(*result.session_key));
                     Ok(response)
                 }
                 Err(error) => {
