@@ -126,8 +126,8 @@ pub struct FairPlayChallenge {
 /// the RTSP connection that completed the exchange.
 #[derive(Debug)]
 pub struct FairPlayKeys {
-    pub ekey: Zeroizing<[u8; 72]>,
-    pub eiv: Zeroizing<[u8; 16]>,
+    /// The 16-byte video key produced by the authorized SAP implementation.
+    pub video_key: Zeroizing<[u8; 16]>,
     pub acknowledgement: Zeroizing<[u8; 20]>,
 }
 
