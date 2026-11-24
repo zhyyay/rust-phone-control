@@ -3,6 +3,8 @@
 //! This module only handles the wire format. Pair-Setup state transitions,
 //! SRP, and cryptographic verification live in separate modules.
 
+use zeroize::Zeroize;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Tlv {
     pub kind: u8,
