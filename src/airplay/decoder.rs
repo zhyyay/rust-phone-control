@@ -520,104 +520,104 @@ impl<'runtime> H264Decoder<'runtime> {
 
         loop {
             let stream_info = unsafe { self.transform.GetOutputStreamInfo(self.output_stream) }
-            .map_err(|error| MediaFoundationError::OutputInfoFailed(error.code().0))?;
-        let caller_allocates =
-            stream_info.dwFlags & (MFT_OUTPUT_STREAM_PROVIDES_SAMPLES.0 as u32) == 0;
-
-        let supplied_sample = if caller_allocates {
-            let frame_bytes = self
-                .width
-                .checked_mul(self.height)
-                .and_then(|pixels| pixels.checked_mul(3))
-                .map(|bytes| bytes / 2)
-                .ok_or(MediaFoundationError::FrameSizeOverflow)?;
-            let buffer_size = stream_info.cbSize.max(frame_bytes);
-            if buffer_size as usize > MAX_DECODED_NV12_BYTES {
+                .map_err(|error| MediaFoundationError::OutputInfoFailed(error.code().0))?;
+            let caller_allocates =
+                stream_info.dwFlags & (MFT_OUTPUT_STREAM_PROVIDES_SAMPLES.0 as u32) == 0;
+    
+            let supplied_sample = if caller_allocates {
+                let frame_bytes = self
+                    .width
+                    .checked_mul(self.height)
+                    .and_then(|pixels| pixels.checked_mul(3))
+                    .map(|bytes| bytes / 2)
+                    .ok_or(MediaFoundationError::FrameSizeOverflow)?;
+                let buffer_size = stream_info.cbSize.max(frame_bytes);
+                if buffer_size as usize > MAX_DECODED_NV12_BYTES {
+                    return Err(MediaFoundationError::OutputBufferTooLarge);
+                }
+                let buffer = unsafe { MFCreateMemoryBuffer(buffer_size) }
+                    .map_err(|error| MediaFoundationError::BufferFailed(error.code().0))?;
+                let sample = unsafe { MFCreateSample() }
+                    .map_err(|error| MediaFoundationError::SampleFailed(error.code().0))?;
+                unsafe { sample.AddBuffer(&buffer) }
+                    .map_err(|error| MediaFoundationError::SampleFailed(error.code().0))?;
+                Some(sample)
+            } else {
+                None
+            };
+    
+            let mut output = MFT_OUTPUT_DATA_BUFFER {
+                dwStreamID: self.output_stream,
+                pSample: ManuallyDrop::new(supplied_sample),
+                dwStatus: 0,
+                pEvents: ManuallyDrop::new(None),
+            };
+            let mut status = 0u32;
+            let result = unsafe {
+                self.transform
+                    .ProcessOutput(0, std::slice::from_mut(&mut output), &mut status)
+            };
+            // These generated fields are ManuallyDrop because COM references may
+            // be returned even when ProcessOutput reports a stream-change status.
+            let sample = unsafe { ManuallyDrop::take(&mut output.pSample) };
+            let events = unsafe { ManuallyDrop::take(&mut output.pEvents) };
+            drop(events);
+    
+            if let Err(error) = result {
+                if error.code().0 == MF_E_TRANSFORM_NEED_MORE_INPUT_HR {
+                    return Ok(None);
+                }
+                if error.code().0 == MF_E_TRANSFORM_STREAM_CHANGE_HR {
+                    drop(sample);
+                    stream_change_retries += 1;
+                    if stream_change_retries > MAX_STREAM_CHANGE_RETRIES {
+                        return Err(MediaFoundationError::RepeatedOutputStreamChange);
+                    }
+                    self.refresh_output_type()?;
+                    continue;
+                }
+                return Err(MediaFoundationError::ProcessOutputFailed(error.code().0));
+            }
+            let Some(sample) = sample else {
+                return Ok(None);
+            };
+    
+            let buffer = unsafe { sample.ConvertToContiguousBuffer() }
+                .map_err(|error| MediaFoundationError::BufferFailed(error.code().0))?;
+            let current_length = unsafe { buffer.GetCurrentLength() }
+                .map_err(|error| MediaFoundationError::BufferFailed(error.code().0))?
+                as usize;
+            if current_length > MAX_DECODED_NV12_BYTES {
                 return Err(MediaFoundationError::OutputBufferTooLarge);
             }
-            let buffer = unsafe { MFCreateMemoryBuffer(buffer_size) }
+            let mut source = std::ptr::null_mut();
+            unsafe { buffer.Lock(&mut source, None, None) }
                 .map_err(|error| MediaFoundationError::BufferFailed(error.code().0))?;
-            let sample = unsafe { MFCreateSample() }
-                .map_err(|error| MediaFoundationError::SampleFailed(error.code().0))?;
-            unsafe { sample.AddBuffer(&buffer) }
-                .map_err(|error| MediaFoundationError::SampleFailed(error.code().0))?;
-            Some(sample)
-        } else {
-            None
-        };
-
-        let mut output = MFT_OUTPUT_DATA_BUFFER {
-            dwStreamID: self.output_stream,
-            pSample: ManuallyDrop::new(supplied_sample),
-            dwStatus: 0,
-            pEvents: ManuallyDrop::new(None),
-        };
-        let mut status = 0u32;
-        let result = unsafe {
-            self.transform
-                .ProcessOutput(0, std::slice::from_mut(&mut output), &mut status)
-        };
-        // These generated fields are ManuallyDrop because COM references may
-        // be returned even when ProcessOutput reports a stream-change status.
-        let sample = unsafe { ManuallyDrop::take(&mut output.pSample) };
-        let events = unsafe { ManuallyDrop::take(&mut output.pEvents) };
-        drop(events);
-
-        if let Err(error) = result {
-            if error.code().0 == MF_E_TRANSFORM_NEED_MORE_INPUT_HR {
-                return Ok(None);
+            if source.is_null() {
+                let _ = unsafe { buffer.Unlock() };
+                return Err(MediaFoundationError::NullBuffer);
             }
-            if error.code().0 == MF_E_TRANSFORM_STREAM_CHANGE_HR {
-                drop(sample);
-                stream_change_retries += 1;
-                if stream_change_retries > MAX_STREAM_CHANGE_RETRIES {
-                    return Err(MediaFoundationError::RepeatedOutputStreamChange);
-                }
-                self.refresh_output_type()?;
-                continue;
+            // SAFETY: current_length is the valid data length reported by MF.
+            let mut data = unsafe { std::slice::from_raw_parts(source, current_length) }.to_vec();
+            unsafe { buffer.Unlock() }
+                .map_err(|error| MediaFoundationError::BufferFailed(error.code().0))?;
+    
+            let output_type = unsafe { self.transform.GetOutputCurrentType(self.output_stream) }
+                .map_err(|error| MediaFoundationError::OutputInfoFailed(error.code().0))?;
+            let signed_stride = unsafe { output_type.GetUINT32(&MF_MT_DEFAULT_STRIDE) }
+                .map(|value| value as i32)
+                .unwrap_or(self.width as i32);
+            let stride = signed_stride.unsigned_abs() as usize;
+            if signed_stride < 0 {
+                crate::airplay::video::normalize_nv12_bottom_up(
+                    &mut data,
+                    self.width,
+                    self.height,
+                    stride,
+                )
+                .map_err(MediaFoundationError::FrameConversion)?;
             }
-            return Err(MediaFoundationError::ProcessOutputFailed(error.code().0));
-        }
-        let Some(sample) = sample else {
-            return Ok(None);
-        };
-
-        let buffer = unsafe { sample.ConvertToContiguousBuffer() }
-            .map_err(|error| MediaFoundationError::BufferFailed(error.code().0))?;
-        let current_length = unsafe { buffer.GetCurrentLength() }
-            .map_err(|error| MediaFoundationError::BufferFailed(error.code().0))?
-            as usize;
-        if current_length > MAX_DECODED_NV12_BYTES {
-            return Err(MediaFoundationError::OutputBufferTooLarge);
-        }
-        let mut source = std::ptr::null_mut();
-        unsafe { buffer.Lock(&mut source, None, None) }
-            .map_err(|error| MediaFoundationError::BufferFailed(error.code().0))?;
-        if source.is_null() {
-            let _ = unsafe { buffer.Unlock() };
-            return Err(MediaFoundationError::NullBuffer);
-        }
-        // SAFETY: current_length is the valid data length reported by MF.
-        let mut data = unsafe { std::slice::from_raw_parts(source, current_length) }.to_vec();
-        unsafe { buffer.Unlock() }
-            .map_err(|error| MediaFoundationError::BufferFailed(error.code().0))?;
-
-        let output_type = unsafe { self.transform.GetOutputCurrentType(self.output_stream) }
-            .map_err(|error| MediaFoundationError::OutputInfoFailed(error.code().0))?;
-        let signed_stride = unsafe { output_type.GetUINT32(&MF_MT_DEFAULT_STRIDE) }
-            .map(|value| value as i32)
-            .unwrap_or(self.width as i32);
-        let stride = signed_stride.unsigned_abs() as usize;
-        if signed_stride < 0 {
-            crate::airplay::video::normalize_nv12_bottom_up(
-                &mut data,
-                self.width,
-                self.height,
-                stride,
-            )
-            .map_err(MediaFoundationError::FrameConversion)?;
-        }
-
+    
             Ok(Some(DecodedNv12Frame {
                 width: self.width,
                 height: self.height,
