@@ -745,10 +745,9 @@ impl<'runtime> H264FramePipeline<'runtime> {
         width: u32,
         height: u32,
     ) -> Result<(), MediaFoundationError> {
-        let replacement = H264Decoder::new(self.decoder._runtime, width, height)?;
+        let mut replacement = H264Decoder::new(self.decoder._runtime, width, height)?;
         if !self.parameter_sets.is_empty() {
-            let _ = replacement
-                .transform;
+            let _ = replacement.submit_access_unit_and_drain_bgra(&self.parameter_sets)?;
         }
         self.frames
             .clear()
