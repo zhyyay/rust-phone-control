@@ -144,7 +144,19 @@ pub fn scroll(amount: i32) -> Result<()> {
     send(Command::Scroll(amount))
 }
 
-/// Type a basic ASCII sample string.
+/// Type basic ASCII text on the connected HID host.
+////
+//// The complete payload is validated by the controller before the first key is sent.
+//// Keep the queue bounded so an accidental huge paste cannot monopolize the worker.
+pub fn type_text(text: impl Into<String>) -> Result<()> {
+    let text = text.into();
+    if text.chars().count() > 512 {
+        anyhow::bail!("BLE text input is limited to 512 characters per command");
+    }
+    send(Command::TypeText(text))
+}
+
+/// Type a short basic ASCII sample string.
 pub fn type_sample() -> Result<()> {
-    send(Command::TypeText("BLE OK".to_string()))
+    type_text("BLE OK")
 }
