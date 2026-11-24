@@ -756,11 +756,7 @@ pub fn serve(mut stream: TcpStream) -> std::io::Result<()> {
             ("TEARDOWN", _, "RTSP/1.0") => {
                 fairplay_ekey = None;
                 fairplay_eiv = None;
-                stop_session_channels(
-                    &mut event_channel,
-                    &mut timing_client,
-                    &mut media_receiver,
-                );
+                stop_session_channels(&mut event_channel, &mut timing_client, &mut media_receiver);
                 let response = format!(
                     "RTSP/1.0 200 OK\r\nCSeq: {}\r\nServer: RustPhoneControl/0.1\r\nContent-Length: 0\r\n\r\n",
                     request.cseq
@@ -1516,11 +1512,7 @@ mod tests {
         let timing_port = timing_client.as_ref().expect("timing client").port();
         let media_port = media_receiver.as_ref().expect("media session").port();
 
-        super::stop_session_channels(
-            &mut event_channel,
-            &mut timing_client,
-            &mut media_receiver,
-        );
+        super::stop_session_channels(&mut event_channel, &mut timing_client, &mut media_receiver);
 
         assert!(event_channel.is_none());
         assert!(timing_client.is_none());
