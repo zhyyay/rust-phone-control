@@ -458,6 +458,35 @@ mod tests {
     use x25519_dalek::{PublicKey, StaticSecret};
 
     #[test]
+    fn hap_pair_verify_rejects_all_zero_x25519_shared_secret() {
+        let m1 = tlv8::encode(&[
+            Tlv {
+                kind: STATE,
+                value: vec![1],
+            },
+            Tlv {
+                kind: PUBLIC_KEY,
+                value: vec![0; 32],
+            },
+        ]);
+
+        let error = PairVerifySession::start(&m1).unwrap_err();
+        assert!(error.contains("all-zero X25519 shared secret"));
+    }
+
+    #[test]
+    fn legacy_pair_verify_rejects_all_zero_x25519_shared_secret() {
+        use super::LegacyPairVerifySession;
+
+        let mut m1 = vec![1, 0, 0, 0];
+        m1.extend_from_slice(&[0; 32]);
+        m1.extend_from_slice(&[7; 32]);
+
+        let error = LegacyPairVerifySession::start(&m1).unwrap_err();
+        assert!(error.contains("all-zero ECDH shared secret"));
+    }
+
+    #[test]
     fn completes_authenticated_pair_verify_m1_to_m4() {
         let mut ephemeral_bytes = [0u8; 32];
         OsRng.fill_bytes(&mut ephemeral_bytes);
