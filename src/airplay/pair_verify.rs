@@ -154,7 +154,12 @@ impl LegacyPairVerifySession {
         }
         // UxPlay's legacy implementation advances the AES-CTR stream by
         // one 64-byte signature block after M2 before processing M3.
-        let signature = Zeroizing::new(legacy_aes_ctr_at_offset(&self.aes_key, &self.aes_iv, &body[4..], 64)?);
+        let signature = Zeroizing::new(legacy_aes_ctr_at_offset(
+            &self.aes_key,
+            &self.aes_iv,
+            &body[4..],
+            64,
+        )?);
         let verifying_key = VerifyingKey::from_bytes(&self.controller_public_key)
             .map_err(|_| "invalid legacy Pair-Verify controller Ed25519 public key")?;
         let signature = Signature::from_slice(signature.as_slice())
@@ -352,9 +357,11 @@ impl HapPairVerifySession {
         let encrypted = unique_field(&fields, ENCRYPTED_DATA)?;
         let cipher = ChaCha20Poly1305::new_from_slice(&self.encryption_key)
             .map_err(|_| "invalid Pair-Verify encryption key")?;
-        let plaintext = Zeroizing::new(cipher
-            .decrypt(Nonce::from_slice(NONCE_M3), encrypted)
-            .map_err(|_| "Pair-Verify M3 authentication tag verification failed")?);
+        let plaintext = Zeroizing::new(
+            cipher
+                .decrypt(Nonce::from_slice(NONCE_M3), encrypted)
+                .map_err(|_| "Pair-Verify M3 authentication tag verification failed")?,
+        );
         let inner = tlv8::decode(&plaintext).map_err(|error| error.to_string())?;
         let controller_identifier = unique_field(&inner, IDENTIFIER)?;
         let controller_signature = unique_field(&inner, SIGNATURE)?;
