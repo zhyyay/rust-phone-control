@@ -59,6 +59,8 @@ impl Render for PhoneControlApp {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crate::logging::startup_checkpoint("render: entered");
         #[cfg(windows)]
+        crate::logging::startup_checkpoint("render: before quit subscription");
+        #[cfg(windows)]
         if self.quit_subscription.is_none() {
             tracing::debug!(
                 "Registering GPUI application-quit cleanup for AirPlay preview resources"
@@ -85,11 +87,15 @@ impl Render for PhoneControlApp {
                     tracing::info!("GPUI application-quit cleanup: complete");
                 }
             }));
+            crate::logging::startup_checkpoint("render: quit subscription registered");
         }
+        #[cfg(windows)]
+        crate::logging::startup_checkpoint("render: after quit subscription");
 
         #[cfg(windows)]
         if self.frame_poll_task.is_none() {
             tracing::debug!("Starting GPUI AirPlay frame and device-state poll task");
+            crate::logging::startup_checkpoint("render: before frame poll spawn");
             self.frame_poll_task = Some(cx.spawn(async move |this, cx| {
                 let mut pairing_refresh_ticks = 0u8;
                 loop {
@@ -161,7 +167,10 @@ impl Render for PhoneControlApp {
                     }
                 }
             }));
+            crate::logging::startup_checkpoint("render: frame poll spawned");
         }
+        #[cfg(windows)]
+        crate::logging::startup_checkpoint("render: after frame poll setup");
 
         // Build each major region in its own function. Keeping the opaque GPUI
         // element types shallow avoids a single enormous nested builder tree.
