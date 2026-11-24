@@ -975,6 +975,18 @@ pub fn serve_with_fairplay_provider(
                 }
             }
             ("POST", "/pair-verify", "RTSP/1.0") => {
+                // Pair-Verify changes the authenticated transport context. Stop
+                // any media workers created with the previous shared secret and
+                // discard FairPlay material before accepting a new exchange.
+                stop_session_channels(&mut event_channel, &mut timing_client, &mut media_receiver);
+                pair_verify_shared_secret = None;
+                fairplay_ekey = None;
+                fairplay_eiv = None;
+                fairplay_video_key = None;
+                fairplay_initial = None;
+                fairplay_challenge = None;
+                fairplay_session = None;
+
                 let response_body =
                     match handle_pair_verify(&request.body, &mut pair_verify_session) {
                         Ok((body, Some(shared_secret))) => {
