@@ -1009,9 +1009,9 @@ fn handle_setup_request(
     let setup = setup::parse_setup_request(body).map_err(|reason| (400, reason))?;
     match setup {
         SetupRequest::Session(session) => {
-            let channel = EventChannel::bind(peer_ip)
-                .map_err(|error| (503, format!("could not bind event channel: {error}")))?;
-            let event_port = channel.port();
+            // Validate and start the requested clock protocol before allocating
+            // the event listener. Unsupported or malformed timing requests must
+            // not create transient sockets or disturb the active session.
             let new_timing_client = match session.timing_protocol.as_deref() {
                 Some("NTP") => {
                     let sender_port = session.timing_port.ok_or_else(|| {
@@ -1030,6 +1030,9 @@ fn handle_setup_request(
                 Some(other) => return Err((400, format!("unsupported timing protocol {other}"))),
                 None => None,
             };
+            let channel = EventChannel::bind(peer_ip)
+                .map_err(|error| (503, format!("could not bind event channel: {error}")))?;
+            let event_port = channel.port();
             let timing_port = new_timing_client.as_ref().map_or(0, TimingClient::port);
 
             tracing::info!(
@@ -2144,6 +2147,60 @@ mod tests {
         reply[1] = 0xD3;
         reply[2..4].copy_from_slice(&request[2..4]);
         sender.send_to(&reply, peer).expect("send NTP timing reply");
+    }
+
+    #[test]
+    fn rejected_ptp_replacement_keeps_active_session_channels() {
+        use std::net::{TcpStream, UdpSocket};
+
+        let sender = UdpSocket::bind("127.0.0.1:0").expect("bind NTP sender");
+        let peer_ip = "127.0.0.1".parse().expect("loopback IP");
+        let make_session = |protocol: &str, session_id: &str| {
+            let mut session = Dictionary::new();
+            session.insert("sessionUUID".into(), Value::String(session_id.into()));
+            session.insert("timingProtocol".into(), Value::String(protocol.into()));
+            if protocol == "NTP" {
+                session.insert(
+                    "timingPort".into(),
+                    Value::Integer(sender.local_addr().unwrap().port().into()),
+                );
+            }
+            plist::encode_binary(&Value::Dictionary(session)).expect("encode session SETUP")
+        };
+
+        let mut event = None;
+        let mut timing = None;
+        let mut media = None;
+        handle_setup_request(
+            &make_session("NTP", "active-session"),
+            peer_ip,
+            &mut event,
+            &mut timing,
+            &mut media,
+            &mut None,
+            &mut None,
+            None,
+        )
+        .expect("initial NTP session");
+
+        let event_port = event.as_ref().expect("active event channel").port();
+        let timing_port = timing.as_ref().expect("active timing client").port();
+        let error = handle_setup_request(
+            &make_session("PTP", "unsupported-replacement"),
+            peer_ip,
+            &mut event,
+            &mut timing,
+            &mut media,
+            &mut None,
+            &mut None,
+            None,
+        )
+        .expect_err("PTP is not implemented");
+        assert_eq!(error.0, 501);
+        assert_eq!(event.as_ref().expect("event channel retained").port(), event_port);
+        assert_eq!(timing.as_ref().expect("timing client retained").port(), timing_port);
+        assert!(TcpStream::connect((peer_ip, event_port)).is_ok());
+        assert!(UdpSocket::bind(("0.0.0.0", timing_port)).is_err());
     }
 
     #[test]
