@@ -33,6 +33,8 @@ mod server;
 mod setup;
 mod srp;
 #[allow(dead_code)]
+mod srp_ct;
+#[allow(dead_code)]
 mod timing;
 mod tlv8;
 #[allow(dead_code)]
