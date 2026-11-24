@@ -805,7 +805,7 @@ fn read_request(stream: &mut TcpStream, pending: &mut Vec<u8>) -> std::io::Resul
     let path = parts.next().unwrap_or_default().to_owned();
     let protocol = parts.next().unwrap_or_default().to_owned();
 
-    if method.is_empty() || path.is_empty() || protocol.is_empty() {
+    if method.is_empty() || path.is_empty() || protocol.is_empty() || parts.next().is_some() {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
             "invalid AirPlay request line",
@@ -815,6 +815,7 @@ fn read_request(stream: &mut TcpStream, pending: &mut Vec<u8>) -> std::io::Resul
     let mut content_length = 0usize;
     let mut content_length_seen = false;
     let mut cseq = "0".to_owned();
+    let mut cseq_seen = false;
     let mut connection_close = false;
     let mut headers = Vec::new();
 
@@ -860,6 +861,22 @@ fn read_request(stream: &mut TcpStream, pending: &mut Vec<u8>) -> std::io::Resul
                 "AirPlay Transfer-Encoding is not supported",
             ));
         } else if name.eq_ignore_ascii_case("CSeq") {
+            if cseq_seen {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "duplicate AirPlay CSeq header",
+                ));
+            }
+            if value.is_empty()
+                || value.len() > 10
+                || !value.bytes().all(|byte| byte.is_ascii_digit())
+            {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "invalid AirPlay CSeq",
+                ));
+            }
+            cseq_seen = true;
             cseq = value.to_owned();
         } else if name.eq_ignore_ascii_case("Connection") {
             connection_close = value
@@ -1413,6 +1430,48 @@ mod tests {
     };
     use crate::airplay::tlv8::{self, Tlv};
     use ::plist::{Dictionary, Value};
+
+    fn read_request_from_bytes(bytes: &[u8]) -> std::io::Result<Option<Request>> {
+        use std::io::Write;
+        use std::net::TcpListener;
+        use std::time::Duration;
+
+        let listener = TcpListener::bind("127.0.0.1:0")?;
+        let mut client = TcpStream::connect(listener.local_addr()?)?;
+        let (mut server, _) = listener.accept()?;
+        server.set_read_timeout(Some(Duration::from_secs(1)))?;
+        client.write_all(bytes)?;
+        let mut pending = Vec::new();
+        super::read_request(&mut server, &mut pending)
+    }
+
+    #[test]
+    fn rejects_duplicate_and_malformed_cseq_headers() {
+        let duplicate = b"OPTIONS * RTSP/1.0\\r\\nCSeq: 1\\r\\nCSeq: 2\\r\\n\\r\\n";
+        let error = read_request_from_bytes(duplicate).expect_err("duplicate CSeq rejected");
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+
+        let malformed = b"OPTIONS * RTSP/1.0\\r\\nCSeq: one\\r\\n\\r\\n";
+        let error = read_request_from_bytes(malformed).expect_err("non-numeric CSeq rejected");
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn rejects_extra_tokens_in_request_line() {
+        let request = b"OPTIONS * RTSP/1.0 ignored\\r\\nCSeq: 1\\r\\n\\r\\n";
+        let error = read_request_from_bytes(request).expect_err("extra request token rejected");
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn parses_valid_request_after_strict_request_line_validation() {
+        let request = b"OPTIONS * RTSP/1.0\\r\\nCSeq: 42\\r\\n\\r\\n";
+        let parsed = read_request_from_bytes(request)
+            .expect("valid request read")
+            .expect("request present");
+        assert_eq!(parsed.method, "OPTIONS");
+        assert_eq!(parsed.cseq, "42");
+    }
 
     #[test]
     fn finds_header_terminator() {
