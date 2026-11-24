@@ -1803,8 +1803,18 @@ mod tests {
     fn media_session_starts_and_stops_its_workers() {
         let peer_ip = "127.0.0.1".parse().expect("loopback IP");
         let mut session = super::MediaSession::start(peer_ip).expect("start media session");
-        assert_ne!(session.port(), 0);
+        let port = session.port();
+        assert_ne!(port, 0);
+        assert!(
+            TcpStream::connect((peer_ip, port)).is_ok(),
+            "media listener must accept connections before stop"
+        );
+
         session.stop();
+        assert!(
+            TcpListener::bind(("0.0.0.0", port)).is_ok(),
+            "media listener port must be released after stop"
+        );
         assert!(session.accept_worker.is_none());
         assert!(session.worker.is_none());
 
