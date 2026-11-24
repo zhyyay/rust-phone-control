@@ -1294,7 +1294,7 @@ fn handle_pair_setup(
                             value: result.proof.to_vec(),
                         },
                     ]);
-                    *session_key = Some(Zeroizing::new(*result.session_key));
+                    *session_key = Some(Zeroizing::new(result.session_key));
                     Ok(response)
                 }
                 Err(error) => {
@@ -1490,7 +1490,6 @@ mod tests {
         use std::io::Write;
         use std::net::TcpListener;
         use std::time::Duration;
-        use zeroize::Zeroizing;
 
         let listener = TcpListener::bind("127.0.0.1:0")?;
         let mut client = TcpStream::connect(listener.local_addr()?)?;
