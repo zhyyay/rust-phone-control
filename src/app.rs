@@ -27,6 +27,22 @@ pub struct PhoneControlApp {
     frame_poll_task: Option<Task<()>>,
 }
 
+impl Drop for PhoneControlApp {
+    fn drop(&mut self) {
+        #[cfg(windows)]
+        {
+            tracing::info!("PhoneControlApp is being dropped; cancelling its GPUI polling task");
+            // Stop the periodic task before releasing the preview image. This
+            // makes UI teardown order explicit and prevents a late poll from
+            // retaining presentation resources during window destruction.
+            if self.frame_poll_task.take().is_some() {
+                tracing::debug!("GPUI AirPlay frame poll task handle released");
+            }
+            self.preview_image.take();
+        }
+    }
+}
+
 impl Render for PhoneControlApp {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         #[cfg(windows)]
