@@ -6,11 +6,12 @@
 
 use num_bigint::BigUint;
 use num_traits::Zero;
+use super::srp_ct;
 use rand::RngCore;
 use rand::rngs::OsRng;
 use sha2::{Digest, Sha512};
 use subtle::ConstantTimeEq;
-use zeroize::{ZeroizeOnDrop, Zeroizing};
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 const MODULUS_BYTES: usize = 384;
 const USERNAME: &[u8] = b"Pair-Setup";
@@ -268,7 +269,7 @@ fn pad(value: &BigUint) -> Result<Vec<u8>, SrpError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{SrpError, SrpServer, generator, hash, modulus, pad, password_exponent};
+    use super::{MODULUS_BYTES, SrpError, SrpServer, generator, hash, modulus, pad, password_exponent};
     use num_bigint::BigUint;
     use num_traits::Zero;
 
