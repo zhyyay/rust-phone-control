@@ -791,10 +791,6 @@ mod tests {
         m1.extend_from_slice(&controller_identity.verifying_key().to_bytes());
 
         let (session, _) = LegacyPairVerifySession::start(&m1).expect("legacy M2");
-        let mut accessory_ephemeral = [0u8; 32];
-        accessory_ephemeral.copy_from_slice(&m1[4..36]);
-        let _ = &mut accessory_ephemeral;
-
         // The M3 body is encrypted with the session's derived AES material;
         // encrypting an invalid Ed25519 signature must never complete verify.
         let shared = controller_secret.diffie_hellman(&PublicKey::from(
