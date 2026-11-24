@@ -25,6 +25,8 @@ pub struct PhoneControlApp {
     preview_status: String,
     #[cfg(windows)]
     frame_poll_task: Option<Task<()>>,
+    #[cfg(windows)]
+    quit_subscription: Option<Subscription>,
 }
 
 impl Drop for PhoneControlApp {
@@ -56,6 +58,25 @@ impl Drop for PhoneControlApp {
 
 impl Render for PhoneControlApp {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        #[cfg(windows)]
+        if self.quit_subscription.is_none() {
+            tracing::debug!("Registering GPUI application-quit cleanup for AirPlay preview resources");
+            self.quit_subscription = Some(cx.on_app_quit(|this, _cx| async move {
+                tracing::info!("GPUI application-quit cleanup: begin");
+                if let Some(task) = this.frame_poll_task.take() {
+                    tracing::debug!("GPUI application-quit cleanup: cancelling frame poll task");
+                    drop(task);
+                    tracing::debug!("GPUI application-quit cleanup: frame poll task cancelled");
+                }
+                if let Some(image) = this.preview_image.take() {
+                    tracing::debug!("GPUI application-quit cleanup: releasing preview image");
+                    drop(image);
+                    tracing::debug!("GPUI application-quit cleanup: preview image released");
+                }
+                tracing::info!("GPUI application-quit cleanup: complete");
+            }));
+        }
+
         #[cfg(windows)]
         if self.frame_poll_task.is_none() {
             tracing::debug!("Starting GPUI AirPlay frame and device-state poll task");
