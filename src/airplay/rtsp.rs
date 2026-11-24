@@ -822,6 +822,8 @@ pub fn serve_with_fairplay_provider(
                         // A new M1 starts a new negotiation on this RTSP
                         // connection. Never let a previous exchange's media
                         // key survive a renegotiation attempt.
+                        fairplay_ekey = None;
+                        fairplay_eiv = None;
                         fairplay_video_key = None;
                         fairplay_initial = None;
                         fairplay_challenge = None;
@@ -882,6 +884,14 @@ pub fn serve_with_fairplay_provider(
                             tracing::warn!(
                                 "FairPlay M3 received without an active authenticated SAP negotiation"
                             );
+                            // A late or unsolicited M3 cannot inherit any
+                            // wrapped key material from an earlier exchange.
+                            fairplay_ekey = None;
+                            fairplay_eiv = None;
+                            fairplay_video_key = None;
+                            fairplay_initial = None;
+                            fairplay_challenge = None;
+                            fairplay_session = None;
                             let response = fairplay_error_response(403, "Forbidden", &request.cseq);
                             write_response(&mut stream, &response, 403)?;
                             continue;
@@ -915,6 +925,8 @@ pub fn serve_with_fairplay_provider(
                             Err(error) => {
                                 // Authentication failure invalidates the entire
                                 // exchange, not just its derived media key.
+                                fairplay_ekey = None;
+                                fairplay_eiv = None;
                                 fairplay_video_key = None;
                                 fairplay_initial = None;
                                 fairplay_challenge = None;
