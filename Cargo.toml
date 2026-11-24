@@ -26,6 +26,7 @@ hkdf = "0.12"
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 x25519-dalek = { version = "2", features = ["static_secrets"] }
 subtle = "2"
+zeroize = "1"
 sha2 = "0.10"
 rand = "0.8"
 num-traits = "0.2"
