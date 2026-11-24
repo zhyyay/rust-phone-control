@@ -359,7 +359,7 @@ fn process_media_packets(
         let outcome = processor.process_packet(packet.packet_type, &packet.payload);
         let duplicate_configuration = is_codec_configuration
             && matches!(
-                outcome,
+                &outcome,
                 super::video::MirrorPacketOutcome::CodecConfigurationUpdated { .. }
             )
             && previous_configuration.as_ref() == processor.configuration();
