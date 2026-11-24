@@ -1874,7 +1874,10 @@ mod tests {
         let first = first.as_dictionary().expect("first session dictionary");
         let old_event_port = first
             .get("eventPort")
-            .and_then(Value::as_unsigned)
+            .and_then(|value| match value {
+                Value::Integer(integer) => integer.as_unsigned(),
+                _ => None,
+            })
             .expect("first event port") as u16;
         let old_timing_port = first
             .get("timingPort")
