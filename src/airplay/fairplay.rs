@@ -901,4 +901,5 @@ mod tests {
             Err(FairPlayParseError::InvalidPayloadLength { .. })
                 | Err(FairPlayParseError::InvalidAcknowledgementLength(_))
         ));
-   }
+    }
+}
