@@ -1345,7 +1345,7 @@ fn handle_pair_verify(
             super::queue_pending_controller(completion.controller_public_key)?;
             return Err("Legacy Pair-Verify controller is awaiting local approval".into());
         }
-        return Ok((completion.response, Some(completion.shared_secret)));
+        return Ok((completion.response, Some(*completion.shared_secret)));
     }
 
     // HAP Pair-Verify uses TLV8 with State=1 for M1 and State=3 for M3.
