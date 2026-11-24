@@ -1878,7 +1878,7 @@ mod tests {
     use super::plist;
     use super::{
         Request, SCREEN_MIRROR_HEADER_SIZE, TcpStream, build_info_response, find_header_end,
-        handle_pair_setup, handle_setup_request, server_info_plist,
+        handle_pair_setup, handle_pair_verify, handle_setup_request, server_info_plist,
     };
     use crate::airplay::tlv8::{self, Tlv};
     use ::plist::{Dictionary, Value};
@@ -2861,6 +2861,63 @@ mod tests {
             .0,
             501
         );
+    }
+
+    #[test]
+    fn pair_verify_state_machine_rejects_invalid_transitions_and_discards_failed_m3() {
+        use crate::airplay::pair_verify::PairVerifySession;
+        use x25519_dalek::{PublicKey, StaticSecret};
+
+        let m3_without_m1 = tlv8::encode(&[
+            Tlv {
+                kind: 0x06,
+                value: vec![3],
+            },
+            Tlv {
+                kind: 0x05,
+                value: vec![0; 32],
+            },
+        ]);
+        let mut session: Option<PairVerifySession> = None;
+        let error = handle_pair_verify(&m3_without_m1, &mut session)
+            .expect_err("M3 without M1 must be rejected");
+        assert!(error.contains("M3 received without M1"));
+        assert!(session.is_none());
+
+        let controller_secret = StaticSecret::random_from_rng(rand::rngs::OsRng);
+        let controller_public = PublicKey::from(&controller_secret);
+        let m1 = tlv8::encode(&[
+            Tlv {
+                kind: 0x06,
+                value: vec![1],
+            },
+            Tlv {
+                kind: 0x03,
+                value: controller_public.as_bytes().to_vec(),
+            },
+        ]);
+        handle_pair_verify(&m1, &mut session).expect("valid M1 starts exchange");
+        assert!(session.is_some());
+
+        let error = handle_pair_verify(&m1, &mut session)
+            .expect_err("duplicate M1 must be rejected");
+        assert!(error.contains("another exchange is active"));
+        assert!(session.is_some());
+
+        let invalid_m3 = tlv8::encode(&[
+            Tlv {
+                kind: 0x06,
+                value: vec![3],
+            },
+            Tlv {
+                kind: 0x05,
+                value: vec![0xA5; 32],
+            },
+        ]);
+        let error = handle_pair_verify(&invalid_m3, &mut session)
+            .expect_err("unauthenticated M3 must be rejected");
+        assert!(error.contains("authentication tag verification failed"));
+        assert!(session.is_none(), "failed M3 must consume the pending session");
     }
 
     #[test]
