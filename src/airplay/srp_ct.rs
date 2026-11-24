@@ -61,6 +61,53 @@ pub(super) fn modpow(
     Ok(output)
 }
 
+/// Multiply two SRP group values modulo N using fixed-width Montgomery arithmetic.
+pub(super) fn mul_mod(
+    left: &[u8],
+    right: &[u8],
+) -> Result<Zeroizing<[u8; INTEGER_BYTES]>, SrpCtError> {
+    let left = decode_fixed(left)?;
+    let right = decode_fixed(right)?;
+    let left = Zeroizing::new(FixedMontyForm::new(&left, &PARAMS));
+    let right = Zeroizing::new(FixedMontyForm::new(&right, &PARAMS));
+    encode_fixed(&left.mul(&right))
+}
+
+/// Add two SRP group values modulo N using fixed-width Montgomery arithmetic.
+pub(super) fn add_mod(
+    left: &[u8],
+    right: &[u8],
+) -> Result<Zeroizing<[u8; INTEGER_BYTES]>, SrpCtError> {
+    let left = decode_fixed(left)?;
+    let right = decode_fixed(right)?;
+    let left = Zeroizing::new(FixedMontyForm::new(&left, &PARAMS));
+    let right = Zeroizing::new(FixedMontyForm::new(&right, &PARAMS));
+    encode_fixed(&left.add(&right))
+}
+
+/// Subtract two SRP group values modulo N using fixed-width Montgomery arithmetic.
+pub(super) fn sub_mod(
+    left: &[u8],
+    right: &[u8],
+) -> Result<Zeroizing<[u8; INTEGER_BYTES]>, SrpCtError> {
+    let left = decode_fixed(left)?;
+    let right = decode_fixed(right)?;
+    let left = Zeroizing::new(FixedMontyForm::new(&left, &PARAMS));
+    let right = Zeroizing::new(FixedMontyForm::new(&right, &PARAMS));
+    encode_fixed(&left.sub(&right))
+}
+
+fn encode_fixed(
+    value: &FixedMontyForm<{ U3072::LIMBS }>,
+) -> Result<Zeroizing<[u8; INTEGER_BYTES]>, SrpCtError> {
+    let retrieved = Zeroizing::new(value.retrieve());
+    let mut encoded = retrieved.to_be_bytes();
+    let mut output = Zeroizing::new([0u8; INTEGER_BYTES]);
+    output.copy_from_slice(encoded.as_ref());
+    encoded.as_mut().zeroize();
+    Ok(output)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{INTEGER_BYTES, SrpCtError, modpow};
