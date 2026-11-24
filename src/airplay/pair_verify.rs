@@ -1012,9 +1012,18 @@ mod tests {
     #[test]
     fn m1_rejects_duplicate_state_and_public_key_fields() {
         let duplicate_state = tlv8::encode(&[
-            Tlv { kind: STATE, value: vec![1] },
-            Tlv { kind: STATE, value: vec![1] },
-            Tlv { kind: PUBLIC_KEY, value: vec![1; 32] },
+            Tlv {
+                kind: STATE,
+                value: vec![1],
+            },
+            Tlv {
+                kind: STATE,
+                value: vec![1],
+            },
+            Tlv {
+                kind: PUBLIC_KEY,
+                value: vec![1; 32],
+            },
         ]);
         let error = PairVerifySession::start(&duplicate_state)
             .err()
@@ -1022,9 +1031,18 @@ mod tests {
         assert!(error.contains("duplicate TLV"));
 
         let duplicate_public_key = tlv8::encode(&[
-            Tlv { kind: STATE, value: vec![1] },
-            Tlv { kind: PUBLIC_KEY, value: vec![1; 32] },
-            Tlv { kind: PUBLIC_KEY, value: vec![2; 32] },
+            Tlv {
+                kind: STATE,
+                value: vec![1],
+            },
+            Tlv {
+                kind: PUBLIC_KEY,
+                value: vec![1; 32],
+            },
+            Tlv {
+                kind: PUBLIC_KEY,
+                value: vec![2; 32],
+            },
         ]);
         let error = PairVerifySession::start(&duplicate_public_key)
             .err()
@@ -1037,7 +1055,10 @@ mod tests {
         let controller_secret = StaticSecret::random_from_rng(OsRng);
         let controller_public = PublicKey::from(&controller_secret);
         let m1 = tlv8::encode(&[
-            Tlv { kind: STATE, value: vec![1] },
+            Tlv {
+                kind: STATE,
+                value: vec![1],
+            },
             Tlv {
                 kind: PUBLIC_KEY,
                 value: controller_public.as_bytes().to_vec(),
@@ -1045,9 +1066,18 @@ mod tests {
         ]);
         let (session, _) = PairVerifySession::start(&m1).expect("Pair-Verify M2");
         let m3 = tlv8::encode(&[
-            Tlv { kind: STATE, value: vec![3] },
-            Tlv { kind: ENCRYPTED_DATA, value: vec![0x11; 32] },
-            Tlv { kind: ENCRYPTED_DATA, value: vec![0x22; 32] },
+            Tlv {
+                kind: STATE,
+                value: vec![3],
+            },
+            Tlv {
+                kind: ENCRYPTED_DATA,
+                value: vec![0x11; 32],
+            },
+            Tlv {
+                kind: ENCRYPTED_DATA,
+                value: vec![0x22; 32],
+            },
         ]);
 
         let error = session
