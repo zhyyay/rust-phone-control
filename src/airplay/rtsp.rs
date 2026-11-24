@@ -2100,7 +2100,7 @@ mod tests {
 
         fn send_request(stream: &mut TcpStream, cseq: u32, body: &[u8]) {
             let header = format!(
-                "SETUP * RTSP/1.0\\r\\nCSeq: {cseq}\\r\\nContent-Type: application/x-apple-binary-plist\\r\\nContent-Length: {}\\r\\n\\r\\n",
+                "SETUP * RTSP/1.0\r\nCSeq: {cseq}\r\nContent-Type: application/x-apple-binary-plist\r\nContent-Length: {}\r\n\r\n",
                 body.len()
             );
             stream.write_all(header.as_bytes()).expect("write RTSP headers");
@@ -2111,7 +2111,7 @@ mod tests {
         fn read_response_body(stream: &mut TcpStream) -> Vec<u8> {
             let mut header = Vec::new();
             let mut byte = [0u8; 1];
-            while !header.ends_with(b"\\r\\n\\r\\n") {
+            while !header.ends_with(b"\r\n\r\n") {
                 stream.read_exact(&mut byte).expect("read RTSP response header");
                 header.push(byte[0]);
                 assert!(header.len() < 16 * 1024, "RTSP response header too large");
@@ -2321,8 +2321,14 @@ mod tests {
         )
         .expect_err("PTP is not implemented");
         assert_eq!(error.0, 501);
-        assert_eq!(event.as_ref().expect("event channel retained").port(), event_port);
-        assert_eq!(timing.as_ref().expect("timing client retained").port(), timing_port);
+        assert_eq!(
+            event.as_ref().expect("event channel retained").port(),
+            event_port
+        );
+        assert_eq!(
+            timing.as_ref().expect("timing client retained").port(),
+            timing_port
+        );
         assert!(TcpStream::connect((peer_ip, event_port)).is_ok());
         assert!(UdpSocket::bind(("0.0.0.0", timing_port)).is_err());
     }
