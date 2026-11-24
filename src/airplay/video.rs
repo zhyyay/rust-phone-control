@@ -1503,6 +1503,41 @@ mod tests {
     }
 
     #[test]
+    fn mirror_stream_processors_keep_codec_state_isolated_between_sessions() {
+        use super::super::media::ScreenMirrorPacketType;
+
+        let valid_avcc = [
+            0x01, 0x64, 0xc0, 0x28, 0xff, 0xe1, 0x00, 0x04, 0x67, 0x64, 0xc0, 0x28, 0x01, 0x00,
+            0x02, 0x68, 0xee,
+        ];
+        let mut first_session = MirrorStreamProcessor::new();
+        let mut second_session = MirrorStreamProcessor::new();
+
+        assert!(matches!(
+            first_session.process_packet(
+                ScreenMirrorPacketType::CodecConfiguration,
+                &valid_avcc
+            ),
+            MirrorPacketOutcome::CodecConfigurationUpdated { .. }
+        ));
+        assert!(first_session.configuration().is_some());
+        assert!(second_session.configuration().is_none());
+
+        assert!(matches!(
+            second_session.process_packet(
+                ScreenMirrorPacketType::CodecConfiguration,
+                &[1, 2, 3]
+            ),
+            MirrorPacketOutcome::InvalidCodecConfiguration(_)
+        ));
+
+        // A malformed reconfiguration in one RTSP media session must not
+        // erase the active codec configuration owned by another session.
+        assert!(first_session.configuration().is_some());
+        assert!(second_session.configuration().is_none());
+    }
+
+    #[test]
     fn stream_processor_decrypts_video_only_after_codec_configuration() {
         use super::super::media::ScreenMirrorPacketType;
         use super::super::mirror_crypto::{MirrorStreamCipher, derive_mirror_stream_keys};
