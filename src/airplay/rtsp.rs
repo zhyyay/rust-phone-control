@@ -296,7 +296,7 @@ fn read_exact_while_running<R: Read>(
             Ok(read) => {
                 offset += read;
                 last_progress = Instant::now();
-            },
+            }
             Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
             Err(error)
                 if matches!(
@@ -1496,9 +1496,8 @@ mod tests {
         use std::time::Duration;
 
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind local listener");
-        let mut client =
-            TcpStream::connect(listener.local_addr().expect("listener address"))
-                .expect("connect local client");
+        let mut client = TcpStream::connect(listener.local_addr().expect("listener address"))
+            .expect("connect local client");
         let (mut server, _) = listener.accept().expect("accept local client");
         server
             .set_read_timeout(Some(Duration::from_millis(5)))
@@ -1750,8 +1749,8 @@ mod tests {
     fn mirror_listener_accepts_a_new_client_after_disconnect() {
         use std::io::Write;
         use std::net::TcpListener;
-        use std::sync::{Arc, mpsc};
         use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::{Arc, mpsc};
         use std::thread;
         use std::time::Duration;
 
