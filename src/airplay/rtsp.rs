@@ -1605,10 +1605,12 @@ mod tests {
         body[12..16].copy_from_slice(&[0x02, 0x00, 0x02, 0xbb]);
 
         let request = format!(
-            "POST /fp-setup RTSP/1.0\\r\\nCSeq: 77\\r\\nContent-Type: application/octet-stream\\r\\nContent-Length: {}\\r\\n\\r\\n",
+            "POST /fp-setup RTSP/1.0\r\nCSeq: 77\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\n\r\n",
             body.len()
         );
-        client.write_all(request.as_bytes()).expect("write RTSP headers");
+        client
+            .write_all(request.as_bytes())
+            .expect("write RTSP headers");
         client.write_all(&body).expect("write FairPlay M1 body");
 
         let mut response = Vec::new();
@@ -1619,7 +1621,7 @@ mod tests {
                 break;
             }
             response.extend_from_slice(&chunk[..read]);
-            if response.windows(4).any(|window| window == b"\\r\\n\\r\\n") {
+            if response.windows(4).any(|window| window == b"\r\n\r\n") {
                 break;
             }
         }
