@@ -125,7 +125,7 @@ impl LegacyPairVerifySession {
         let mut signed = Zeroizing::new(Vec::with_capacity(64));
         signed.extend_from_slice(&accessory_ephemeral);
         signed.extend_from_slice(&controller_ephemeral);
-        let signature = pair_setup::sign_accessory_identity_message(&signed)?;
+        let signature = pair_setup::sign_accessory_identity_message(signed.as_slice())?;
         if signature.len() != 64 {
             return Err("accessory Ed25519 signature must be 64 bytes".into());
         }
@@ -140,7 +140,7 @@ impl LegacyPairVerifySession {
                 controller_ephemeral,
                 controller_public_key,
                 accessory_ephemeral,
-                shared_secret,
+                shared_secret: *shared_secret,
                 aes_key,
                 aes_iv,
             },
@@ -160,7 +160,7 @@ impl LegacyPairVerifySession {
         let signature = Signature::from_slice(signature.as_slice())
             .map_err(|_| "invalid legacy Pair-Verify controller signature length")?;
 
-        let mut signed = Vec::with_capacity(64);
+        let mut signed = Zeroizing::new(Vec::with_capacity(64));
         signed.extend_from_slice(&self.controller_ephemeral);
         signed.extend_from_slice(&self.accessory_ephemeral);
         verifying_key
@@ -303,7 +303,7 @@ impl HapPairVerifySession {
         signed.extend_from_slice(&controller_ephemeral);
         let signature = pair_setup::sign_accessory_identity_message(&signed)?;
 
-        let encrypted_inner = tlv8::encode(&[
+        let encrypted_inner = Zeroizing::new(tlv8::encode(&[
             Tlv {
                 kind: IDENTIFIER,
                 value: accessory_identifier,
@@ -312,11 +312,11 @@ impl HapPairVerifySession {
                 kind: SIGNATURE,
                 value: signature,
             },
-        ]);
+        ]));
         let cipher = ChaCha20Poly1305::new_from_slice(encryption_key.as_slice())
             .map_err(|_| "invalid Pair-Verify encryption key")?;
         let encrypted = cipher
-            .encrypt(Nonce::from_slice(NONCE_M2), encrypted_inner.as_ref())
+            .encrypt(Nonce::from_slice(NONCE_M2), encrypted_inner.as_slice())
             .map_err(|_| "Pair-Verify M2 encryption failed")?;
 
         let response = tlv8::encode(&[
@@ -387,7 +387,7 @@ impl HapPairVerifySession {
         let signature = Signature::from_slice(controller_signature)
             .map_err(|_| "invalid Pair-Verify controller signature length")?;
         verifying_key
-            .verify(&signed, &signature)
+            .verify(signed.as_slice(), &signature)
             .map_err(|_| "Pair-Verify controller signature verification failed")?;
 
         Ok(PairVerifyCompletion {
