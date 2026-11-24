@@ -523,7 +523,7 @@ impl<'runtime> H264Decoder<'runtime> {
                 .map_err(|error| MediaFoundationError::OutputInfoFailed(error.code().0))?;
             let caller_allocates =
                 stream_info.dwFlags & (MFT_OUTPUT_STREAM_PROVIDES_SAMPLES.0 as u32) == 0;
-    
+
             let supplied_sample = if caller_allocates {
                 let frame_bytes = self
                     .width
@@ -545,7 +545,7 @@ impl<'runtime> H264Decoder<'runtime> {
             } else {
                 None
             };
-    
+
             let mut output = MFT_OUTPUT_DATA_BUFFER {
                 dwStreamID: self.output_stream,
                 pSample: ManuallyDrop::new(supplied_sample),
@@ -562,7 +562,7 @@ impl<'runtime> H264Decoder<'runtime> {
             let sample = unsafe { ManuallyDrop::take(&mut output.pSample) };
             let events = unsafe { ManuallyDrop::take(&mut output.pEvents) };
             drop(events);
-    
+
             if let Err(error) = result {
                 if error.code().0 == MF_E_TRANSFORM_NEED_MORE_INPUT_HR {
                     return Ok(None);
@@ -581,7 +581,7 @@ impl<'runtime> H264Decoder<'runtime> {
             let Some(sample) = sample else {
                 return Ok(None);
             };
-    
+
             let buffer = unsafe { sample.ConvertToContiguousBuffer() }
                 .map_err(|error| MediaFoundationError::BufferFailed(error.code().0))?;
             let current_length = unsafe { buffer.GetCurrentLength() }
@@ -601,7 +601,7 @@ impl<'runtime> H264Decoder<'runtime> {
             let mut data = unsafe { std::slice::from_raw_parts(source, current_length) }.to_vec();
             unsafe { buffer.Unlock() }
                 .map_err(|error| MediaFoundationError::BufferFailed(error.code().0))?;
-    
+
             let output_type = unsafe { self.transform.GetOutputCurrentType(self.output_stream) }
                 .map_err(|error| MediaFoundationError::OutputInfoFailed(error.code().0))?;
             let signed_stride = unsafe { output_type.GetUINT32(&MF_MT_DEFAULT_STRIDE) }
@@ -617,7 +617,7 @@ impl<'runtime> H264Decoder<'runtime> {
                 )
                 .map_err(MediaFoundationError::FrameConversion)?;
             }
-    
+
             Ok(Some(DecodedNv12Frame {
                 width: self.width,
                 height: self.height,
