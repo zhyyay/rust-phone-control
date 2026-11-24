@@ -10,7 +10,7 @@ use rand::RngCore;
 use rand::rngs::OsRng;
 use sha2::{Digest, Sha512};
 use subtle::ConstantTimeEq;
-use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
+use zeroize::{ZeroizeOnDrop, Zeroizing};
 
 const MODULUS_BYTES: usize = 384;
 const USERNAME: &[u8] = b"Pair-Setup";
@@ -111,13 +111,13 @@ impl SrpServer {
 
         let private_b = fixed_width(private_bytes)?;
         let x = password_exponent(&salt, setup_code);
-        let generator = [5u8];
-        let verifier = srp_ct::modpow(&generator, &x[..])
+        let generator_bytes = [5u8];
+        let verifier = srp_ct::modpow(&generator_bytes, &x[..])
             .map_err(|_| SrpError::ArithmeticFailure)?;
         let n = modulus();
         let g = generator();
         let k = multiplier(&n, &g);
-        let g_b = srp_ct::modpow(&generator, &private_b[..])
+        let g_b = srp_ct::modpow(&generator_bytes, &private_b[..])
             .map_err(|_| SrpError::ArithmeticFailure)?;
         let k_v = srp_ct::mul_mod(&k, &verifier[..])
             .map_err(|_| SrpError::ArithmeticFailure)?;
