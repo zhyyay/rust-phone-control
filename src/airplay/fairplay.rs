@@ -1,3 +1,5 @@
+use zeroize::Zeroizing;
+
 //! FairPlay SAP wire framing and session-state validation.
 //!
 //! This module does not implement the SAP cryptographic transform or ekey
@@ -27,7 +29,7 @@ pub struct FairPlayMessage {
     pub local_sap: Option<[u8; 128]>,
     pub key_response: Option<[u8; 20]>,
     pub acknowledgement: Option<[u8; 20]>,
-    pub body: Vec<u8>,
+    pub body: Zeroizing<Vec<u8>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -151,7 +153,7 @@ pub fn parse_message(body: &[u8]) -> Result<FairPlayMessage, FairPlayParseError>
                 local_sap: None,
                 key_response: None,
                 acknowledgement: None,
-                body: body.to_vec(),
+                body: Zeroizing::new(body.to_vec()),
             })
         }
         2 => {
@@ -275,9 +277,9 @@ pub fn build_m4(acknowledgement: &[u8; 20]) -> [u8; 32] {
 pub struct FairPlaySession {
     initial_parameters: Option<[u8; 4]>,
     challenge_sent: bool,
-    key_message: Option<Vec<u8>>,
+    key_message: Option<Zeroizing<Vec<u8>>>,
     challenge_mode: Option<u8>,
-    challenge: Option<[u8; 128]>,
+    challenge: Option<Zeroizing<[u8; 128]>>,
 }
 
 impl FairPlaySession {
@@ -350,7 +352,7 @@ impl FairPlaySession {
             return Err(format!("unsupported FairPlay challenge mode {mode}"));
         }
         self.challenge_mode = Some(mode);
-        self.challenge = Some(challenge);
+        self.challenge = Some(Zeroizing::new(challenge));
         self.challenge_sent = true;
         Ok(())
     }
@@ -364,7 +366,7 @@ impl FairPlaySession {
     }
 
     pub fn challenge(&self) -> Option<&[u8; 128]> {
-        self.challenge.as_ref()
+        self.challenge.as_deref()
     }
 }
 
