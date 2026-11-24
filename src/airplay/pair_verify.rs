@@ -13,6 +13,7 @@ use rand::RngCore;
 use rand::rngs::OsRng;
 use sha2::{Digest, Sha512};
 use x25519_dalek::{PublicKey, StaticSecret};
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 use super::{
     pair_setup,
@@ -28,6 +29,7 @@ const ERROR: u8 = 0x07;
 const NONCE_M2: &[u8; 12] = b"PV-Msg02\0\0\0\0";
 const NONCE_M3: &[u8; 12] = b"PV-Msg03\0\0\0\0";
 
+#[derive(Zeroize, ZeroizeOnDrop)]
 struct HapPairVerifySession {
     controller_ephemeral: [u8; 32],
     accessory_ephemeral: [u8; 32],
@@ -40,6 +42,7 @@ enum PairVerifyMode {
     Legacy(LegacyPairVerifySession),
 }
 
+#[derive(Zeroize, ZeroizeOnDrop)]
 struct LegacyPairVerifySession {
     controller_ephemeral: [u8; 32],
     controller_public_key: [u8; 32],
@@ -56,7 +59,7 @@ pub struct PairVerifySession {
 /// Values made available only after the controller's signature is verified.
 pub(super) struct PairVerifyCompletion {
     pub(super) response: Vec<u8>,
-    pub(super) shared_secret: [u8; 32],
+    pub(super) shared_secret: Zeroizing<[u8; 32]>,
     pub(super) controller_public_key: [u8; 32],
 }
 
@@ -106,7 +109,7 @@ impl LegacyPairVerifySession {
         let mut secret_bytes = [0u8; 32];
         OsRng.fill_bytes(&mut secret_bytes);
         let accessory_secret = StaticSecret::from(secret_bytes);
-        secret_bytes.fill(0);
+        secret_bytes.zeroize();
 
         let accessory_public = PublicKey::from(&accessory_secret);
         let shared = accessory_secret.diffie_hellman(&PublicKey::from(controller_ephemeral));
@@ -164,7 +167,7 @@ impl LegacyPairVerifySession {
 
         Ok(PairVerifyCompletion {
             response: Vec::new(),
-            shared_secret: self.shared_secret,
+            shared_secret: Zeroizing::new(self.shared_secret),
             controller_public_key: self.controller_public_key,
         })
     }
