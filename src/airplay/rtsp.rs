@@ -1703,6 +1703,13 @@ mod tests {
         let mut session = super::MediaSession::start(peer_ip).expect("start media session");
         assert_ne!(session.port(), 0);
         session.stop();
+        assert!(session.accept_worker.is_none());
+        assert!(session.worker.is_none());
+
+        // Stop is intentionally idempotent so TEARDOWN and Drop may both
+        // release the same session without joining a worker twice.
+        session.stop();
+        assert!(session.accept_worker.is_none());
         assert!(session.worker.is_none());
     }
 
