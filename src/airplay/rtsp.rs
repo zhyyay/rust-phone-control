@@ -446,7 +446,7 @@ fn process_media_packets(
                                     decoder_init_attempts,
                                     "Could not initialize Windows H.264 decoder pipeline"
                                 );
-                            },
+                            }
                         }
                     } else {
                         decoder_init_attempts = decoder_init_attempts.saturating_add(1);
