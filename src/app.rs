@@ -224,10 +224,7 @@ fn render_header(app: &PhoneControlApp) -> impl IntoElement {
         .child(Label::new("⚙"))
 }
 
-fn render_workspace(
-    app: &PhoneControlApp,
-    cx: &Context<PhoneControlApp>,
-) -> impl IntoElement {
+fn render_workspace(app: &PhoneControlApp, cx: &Context<PhoneControlApp>) -> impl IntoElement {
     div()
         .flex()
         .flex_1()
@@ -237,10 +234,7 @@ fn render_workspace(
         .child(render_right_controls(cx))
 }
 
-fn render_left_sidebar(
-    app: &PhoneControlApp,
-    cx: &Context<PhoneControlApp>,
-) -> impl IntoElement {
+fn render_left_sidebar(app: &PhoneControlApp, cx: &Context<PhoneControlApp>) -> impl IntoElement {
     div()
         .flex()
         .flex_col()
@@ -255,9 +249,7 @@ fn render_left_sidebar(
             Button::new("connect-new-device")
                 .primary()
                 .label("+ 连接新设备")
-                .on_click(|_, _, _| {
-                    tracing::info!("Connect-new-device entry selected")
-                }),
+                .on_click(|_, _, _| tracing::info!("Connect-new-device entry selected")),
         )
         .child(Label::new("我的设备"))
         .child(
@@ -271,13 +263,11 @@ fn render_left_sidebar(
                 .border_1()
                 .border_color(gpui_kit::rgb(0xC9CCFF))
                 .child(Label::new("📱  iPhone"))
-                .child(Label::new(
-                    if app.airplay_status.contains("Running") {
-                        "投屏中 · AirPlay"
-                    } else {
-                        "等待连接"
-                    },
-                )),
+                .child(Label::new(if app.airplay_status.contains("Running") {
+                    "投屏中 · AirPlay"
+                } else {
+                    "等待连接"
+                })),
         )
         .child(
             div()
@@ -322,14 +312,18 @@ fn render_left_sidebar(
                             cx.notify();
                         })),
                 )
-                .child(Button::new("connection-usb").label("USB").on_click(
-                    |_, _, _| {
-                        tracing::info!("USB transport adapter is not wired yet")
-                    },
-                ))
-                .child(Button::new("connection-qr").label("扫码").on_click(
-                    |_, _, _| tracing::info!("QR pairing entry selected"),
-                )),
+                .child(
+                    Button::new("connection-usb")
+                        .label("USB")
+                        .on_click(|_, _, _| {
+                            tracing::info!("USB transport adapter is not wired yet")
+                        }),
+                )
+                .child(
+                    Button::new("connection-qr")
+                        .label("扫码")
+                        .on_click(|_, _, _| tracing::info!("QR pairing entry selected")),
+                ),
         )
         .child(div().flex_1())
         .child(
@@ -342,14 +336,11 @@ fn render_left_sidebar(
                 .bg(gpui_kit::rgb(0xF7F8FA))
                 .child(Label::new("设备状态"))
                 .child(Label::new("电量  —"))
-                .child(Label::new("存储  —"))
+                .child(Label::new("存储  —")),
         )
 }
 
-fn render_preview_column(
-    app: &PhoneControlApp,
-    cx: &Context<PhoneControlApp>,
-) -> impl IntoElement {
+fn render_preview_column(app: &PhoneControlApp, cx: &Context<PhoneControlApp>) -> impl IntoElement {
     div()
         .flex()
         .flex_col()
@@ -366,29 +357,34 @@ fn render_preview_column(
                 .justify_center()
                 .gap_2()
                 .p_2()
-                .child(Button::new("mirror-refresh").label("⟳").on_click(
-                    cx.listener(|this, _, _, cx| {
-                        this.airplay_status = start_airplay_status();
-                        cx.notify();
-                    }),
-                ))
-                .child(Button::new("mirror-screenshot").label("▣").on_click(
-                    |_, _, _| tracing::info!("Screenshot action requested"),
-                ))
                 .child(
-                    Button::new("mirror-start").primary().label("●").on_click(
-                        cx.listener(|this, _, _, cx| {
+                    Button::new("mirror-refresh")
+                        .label("⟳")
+                        .on_click(cx.listener(|this, _, _, cx| {
                             this.airplay_status = start_airplay_status();
                             cx.notify();
-                        }),
-                    ),
+                        })),
                 )
-                .child(Button::new("mirror-stop").label("Ⅱ").on_click(
-                    cx.listener(|this, _, _, cx| {
+                .child(
+                    Button::new("mirror-screenshot")
+                        .label("▣")
+                        .on_click(|_, _, _| tracing::info!("Screenshot action requested")),
+                )
+                .child(
+                    Button::new("mirror-start")
+                        .primary()
+                        .label("●")
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.airplay_status = start_airplay_status();
+                            cx.notify();
+                        })),
+                )
+                .child(Button::new("mirror-stop").label("Ⅱ").on_click(cx.listener(
+                    |this, _, _, cx| {
                         this.airplay_status = stop_airplay_status();
                         cx.notify();
-                    }),
-                ))
+                    },
+                )))
                 .child(
                     Button::new("mirror-copy-code")
                         .label("配对码")
@@ -412,9 +408,7 @@ fn render_preview_column(
         .child(pending_airplay_approval_panel(app, cx))
 }
 
-fn render_right_controls(
-    cx: &Context<PhoneControlApp>,
-) -> impl IntoElement {
+fn render_right_controls(cx: &Context<PhoneControlApp>) -> impl IntoElement {
     div()
         .flex()
         .flex_col()
