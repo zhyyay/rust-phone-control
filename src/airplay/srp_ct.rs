@@ -4,15 +4,14 @@
 //! into fixed-width values, and secret intermediates are zeroized on drop.
 
 use crypto_bigint::{
-    U3072, Odd,
+    Odd, U3072,
     modular::{FixedMontyForm, FixedMontyParams},
 };
 use zeroize::{Zeroize, Zeroizing};
 
 const INTEGER_BYTES: usize = U3072::BYTES;
 const MODULUS: Odd<U3072> = Odd::from_be_hex(super::srp::MODULUS_HEX);
-const PARAMS: FixedMontyParams<{ U3072::LIMBS }> =
-    FixedMontyParams::new(MODULUS);
+const PARAMS: FixedMontyParams<{ U3072::LIMBS }> = FixedMontyParams::new(MODULUS);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum SrpCtError {
@@ -80,8 +79,15 @@ mod tests {
         let expected = base.modpow(&exponent, &modulus()).to_bytes_be();
 
         assert!(expected.len() <= INTEGER_BYTES);
-        assert_eq!(&actual[INTEGER_BYTES - expected.len()..], expected.as_slice());
-        assert!(actual[..INTEGER_BYTES - expected.len()].iter().all(|byte| *byte == 0));
+        assert_eq!(
+            &actual[INTEGER_BYTES - expected.len()..],
+            expected.as_slice()
+        );
+        assert!(
+            actual[..INTEGER_BYTES - expected.len()]
+                .iter()
+                .all(|byte| *byte == 0)
+        );
     }
 
     #[test]
@@ -102,7 +108,13 @@ mod tests {
     #[test]
     fn fixed_width_modpow_rejects_oversized_inputs() {
         let oversized = vec![1u8; INTEGER_BYTES + 1];
-        assert_eq!(modpow(&oversized, &[2]).unwrap_err(), SrpCtError::InputTooWide);
-        assert_eq!(modpow(&[2], &oversized).unwrap_err(), SrpCtError::InputTooWide);
+        assert_eq!(
+            modpow(&oversized, &[2]).unwrap_err(),
+            SrpCtError::InputTooWide
+        );
+        assert_eq!(
+            modpow(&[2], &oversized).unwrap_err(),
+            SrpCtError::InputTooWide
+        );
     }
 }
