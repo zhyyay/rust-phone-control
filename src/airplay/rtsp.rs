@@ -842,11 +842,26 @@ fn read_request(stream: &mut TcpStream, pending: &mut Vec<u8>) -> std::io::Resul
             ));
         }
         let value = raw_value.trim();
+        if value
+            .bytes()
+            .any(|byte| (byte < 0x20 && byte != b'\\t') || byte == 0x7f)
+        {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "invalid control character in AirPlay request header",
+            ));
+        }
         if name.eq_ignore_ascii_case("Content-Length") {
             if content_length_seen {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
                     "duplicate AirPlay Content-Length header",
+                ));
+            }
+            if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "invalid AirPlay Content-Length",
                 ));
             }
             content_length_seen = true;
@@ -1462,6 +1477,23 @@ mod tests {
 
         let malformed = b"OPTIONS * RTSP/1.0\r\nCSeq: one\r\n\r\n";
         let error = read_request_from_bytes(malformed).expect_err("non-numeric CSeq rejected");
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn rejects_signed_content_length() {
+        let request = b"POST /info RTSP/1.0\r\nCSeq: 1\r\nContent-Length: +1\r\n\r\n";
+        let error =
+            read_request_from_bytes(request).expect_err("signed content length rejected");
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn rejects_control_characters_in_header_values() {
+        let request =
+            b"OPTIONS * RTSP/1.0\r\nCSeq: 1\r\nX-Test: bad\\x01value\r\n\r\n";
+        let error =
+            read_request_from_bytes(request).expect_err("control character rejected");
         assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
     }
 
