@@ -1490,7 +1490,7 @@ mod tests {
         use std::io::Write;
         use std::net::TcpListener;
         use std::time::Duration;
-use zeroize::Zeroizing;
+        use zeroize::Zeroizing;
 
         let listener = TcpListener::bind("127.0.0.1:0")?;
         let mut client = TcpStream::connect(listener.local_addr()?)?;
