@@ -918,12 +918,24 @@ mod tests {
         let controller_b_public = PublicKey::from(&controller_b_secret);
 
         let m1_a = tlv8::encode(&[
-            Tlv { kind: STATE, value: vec![1] },
-            Tlv { kind: PUBLIC_KEY, value: controller_a_public.as_bytes().to_vec() },
+            Tlv {
+                kind: STATE,
+                value: vec![1],
+            },
+            Tlv {
+                kind: PUBLIC_KEY,
+                value: controller_a_public.as_bytes().to_vec(),
+            },
         ]);
         let m1_b = tlv8::encode(&[
-            Tlv { kind: STATE, value: vec![1] },
-            Tlv { kind: PUBLIC_KEY, value: controller_b_public.as_bytes().to_vec() },
+            Tlv {
+                kind: STATE,
+                value: vec![1],
+            },
+            Tlv {
+                kind: PUBLIC_KEY,
+                value: controller_b_public.as_bytes().to_vec(),
+            },
         ]);
 
         let (_session_a, m2_a) = PairVerifySession::start(&m1_a).expect("session A M2");
@@ -937,22 +949,30 @@ mod tests {
             .as_slice()
             .try_into()
             .expect("32-byte accessory public key");
-        let shared_a =
-            controller_a_secret.diffie_hellman(&PublicKey::from(accessory_a));
+        let shared_a = controller_a_secret.diffie_hellman(&PublicKey::from(accessory_a));
         let encryption_key_a = derive_key(
             shared_a.as_bytes(),
             b"Pair-Verify-Encrypt-Salt",
             b"Pair-Verify-Encrypt-Info",
         )
         .expect("derive session A encryption key");
-        let cipher_a = ChaCha20Poly1305::new_from_slice(&encryption_key_a)
-            .expect("session A cipher");
+        let cipher_a =
+            ChaCha20Poly1305::new_from_slice(&encryption_key_a).expect("session A cipher");
         let encrypted_a = cipher_a
-            .encrypt(Nonce::from_slice(NONCE_M3), b"session A private payload".as_ref())
+            .encrypt(
+                Nonce::from_slice(NONCE_M3),
+                b"session A private payload".as_ref(),
+            )
             .expect("encrypt session A payload");
         let replayed_m3 = tlv8::encode(&[
-            Tlv { kind: STATE, value: vec![3] },
-            Tlv { kind: ENCRYPTED_DATA, value: encrypted_a },
+            Tlv {
+                kind: STATE,
+                value: vec![3],
+            },
+            Tlv {
+                kind: ENCRYPTED_DATA,
+                value: encrypted_a,
+            },
         ]);
 
         let error = session_b
