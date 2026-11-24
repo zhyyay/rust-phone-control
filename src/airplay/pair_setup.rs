@@ -719,6 +719,60 @@ mod tests {
             .unwrap();
     }
 
+    fn encrypted_m5(
+        session_key: &[u8; 64],
+        controller_id: &[u8],
+        public_key: &[u8],
+        signature: &[u8],
+    ) -> Vec<u8> {
+        let inner = tlv8::encode(&[
+            Tlv {
+                kind: 0x01,
+                value: controller_id.to_vec(),
+            },
+            Tlv {
+                kind: 0x03,
+                value: public_key.to_vec(),
+            },
+            Tlv {
+                kind: 0x0a,
+                value: signature.to_vec(),
+            },
+        ]);
+        let key = derive_key(
+            session_key,
+            b"Pair-Setup-Encrypt-Salt",
+            b"Pair-Setup-Encrypt-Info",
+        )
+        .unwrap();
+        ChaCha20Poly1305::new_from_slice(&key)
+            .unwrap()
+            .encrypt(Nonce::from_slice(NONCE_M5), inner.as_ref())
+            .unwrap()
+    }
+
+    #[test]
+    fn m5_rejects_controller_public_key_with_invalid_length() {
+        let session_key = [0x27u8; 64];
+        let encrypted = encrypted_m5(&session_key, b"bad-key-length", &[0x42; 31], &[0; 64]);
+        let error = handle_m5(&session_key, &encrypted).unwrap_err();
+        assert!(error.contains("public key length"));
+    }
+
+    #[test]
+    fn m5_rejects_invalid_controller_signature() {
+        let session_key = [0x39u8; 64];
+        let controller = SigningKey::generate(&mut OsRng);
+        let encrypted = encrypted_m5(
+            &session_key,
+            b"bad-signature",
+            &controller.verifying_key().to_bytes(),
+            &[0; 64],
+        );
+        let error = handle_m5(&session_key, &encrypted).unwrap_err();
+        assert!(error.contains("signature verification failed"));
+    }
+
     #[test]
     fn m5_rejects_tampered_authentication_tag() {
         let session_key = [0x11u8; 64];
