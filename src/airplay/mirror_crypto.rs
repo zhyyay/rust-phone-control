@@ -96,7 +96,7 @@ pub fn derive_mirror_stream_keys(
     // The legacy path uses the unmodified 16-byte FairPlay key.
     // These paths follow independently documented AirPlay receiver behavior;
     // they still require validation against a captured iPhone session.
-    let seed: [u8; FAIRPLAY_KEY_BYTES] = match pair_verify_shared_secret {
+    let mut seed: [u8; FAIRPLAY_KEY_BYTES] = match pair_verify_shared_secret {
         Some(shared_secret) => {
             if shared_secret.len() != X25519_SHARED_SECRET_BYTES {
                 return Err(MirrorCryptoError::InvalidSharedSecretLength(
@@ -136,6 +136,7 @@ pub fn derive_mirror_stream_keys(
     let mut iv = [0u8; AES_BLOCK_BYTES];
     key.copy_from_slice(&key_hash[..AES_BLOCK_BYTES]);
     iv.copy_from_slice(&iv_hash[..AES_BLOCK_BYTES]);
+    seed.zeroize();
 
     Ok(MirrorStreamKeyMaterial { key, iv })
 }
