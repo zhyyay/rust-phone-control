@@ -5639,6 +5639,7 @@ dependencies = [
  "tracing-subscriber",
  "windows 0.62.2",
  "x25519-dalek",
+ "zeroize",
 ]
 
 [[package]]
