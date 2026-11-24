@@ -127,7 +127,10 @@ fn run_listener(listener: TcpListener, stop: Arc<AtomicBool>) {
 
     // Closing the cloned sockets interrupts blocked RTSP reads immediately.
     // Join every handler before the listener owner and its runtime are dropped.
-    tracing::info!(active_clients = clients.len(), "Stopping AirPlay client handlers");
+    tracing::info!(
+        active_clients = clients.len(),
+        "Stopping AirPlay client handlers"
+    );
     for client in &clients {
         let _ = client.shutdown_socket.shutdown(std::net::Shutdown::Both);
     }
