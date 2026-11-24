@@ -888,6 +888,13 @@ fn read_request(stream: &mut TcpStream, pending: &mut Vec<u8>) -> std::io::Resul
         headers.push((name.to_ascii_lowercase(), value.to_owned()));
     }
 
+    if protocol == "RTSP/1.0" && !cseq_seen {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "RTSP request is missing required CSeq header",
+        ));
+    }
+
     if content_length > MAX_BODY_BYTES {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
@@ -1455,6 +1462,14 @@ mod tests {
 
         let malformed = b"OPTIONS * RTSP/1.0\r\nCSeq: one\r\n\r\n";
         let error = read_request_from_bytes(malformed).expect_err("non-numeric CSeq rejected");
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn rejects_rtsp_request_without_cseq() {
+        let request = b"OPTIONS * RTSP/1.0\r\n\r\n";
+        let error =
+            read_request_from_bytes(request).expect_err("RTSP request without CSeq rejected");
         assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
     }
 
