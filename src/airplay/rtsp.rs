@@ -1491,9 +1491,8 @@ mod tests {
         use std::time::Duration;
 
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback listener");
-        let mut client =
-            TcpStream::connect(listener.local_addr().expect("listener address"))
-                .expect("connect loopback");
+        let mut client = TcpStream::connect(listener.local_addr().expect("listener address"))
+            .expect("connect loopback");
         let (mut server, _) = listener.accept().expect("accept loopback");
         server
             .set_read_timeout(Some(Duration::from_secs(1)))
