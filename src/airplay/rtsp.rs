@@ -2092,6 +2092,130 @@ mod tests {
     }
 
     #[test]
+    fn rtsp_peer_disconnect_releases_event_timing_and_media_channels() {
+        use std::io::{Read, Write};
+        use std::net::{TcpListener, UdpSocket};
+        use std::thread;
+        use std::time::Duration;
+
+        fn send_request(stream: &mut TcpStream, cseq: u32, body: &[u8]) {
+            let header = format!(
+                "SETUP * RTSP/1.0\\r\\nCSeq: {cseq}\\r\\nContent-Type: application/x-apple-binary-plist\\r\\nContent-Length: {}\\r\\n\\r\\n",
+                body.len()
+            );
+            stream.write_all(header.as_bytes()).expect("write RTSP headers");
+            stream.write_all(body).expect("write RTSP body");
+            stream.flush().expect("flush RTSP request");
+        }
+
+        fn read_response_body(stream: &mut TcpStream) -> Vec<u8> {
+            let mut header = Vec::new();
+            let mut byte = [0u8; 1];
+            while !header.ends_with(b"\\r\\n\\r\\n") {
+                stream.read_exact(&mut byte).expect("read RTSP response header");
+                header.push(byte[0]);
+                assert!(header.len() < 16 * 1024, "RTSP response header too large");
+            }
+            let header = String::from_utf8(header).expect("RTSP response header is ASCII");
+            let content_length = header
+                .lines()
+                .find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    name.eq_ignore_ascii_case("content-length")
+                        .then(|| value.trim().parse::<usize>().expect("valid content length"))
+                })
+                .unwrap_or(0);
+            let mut body = vec![0u8; content_length];
+            stream.read_exact(&mut body).expect("read RTSP response body");
+            body
+        }
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind RTSP listener");
+        let address = listener.local_addr().expect("RTSP listener address");
+        let server = thread::spawn(move || {
+            let (stream, _) = listener.accept().expect("accept RTSP peer");
+            super::serve(stream).expect("serve RTSP session");
+        });
+        let mut client = TcpStream::connect(address).expect("connect RTSP peer");
+        client
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .expect("set RTSP response timeout");
+
+        let sender = UdpSocket::bind("127.0.0.1:0").expect("bind timing sender");
+        let mut session = Dictionary::new();
+        session.insert("sessionUUID".into(), Value::String("disconnect-test".into()));
+        session.insert("isScreenMirroringSession".into(), Value::Boolean(true));
+        session.insert("timingProtocol".into(), Value::String("NTP".into()));
+        session.insert(
+            "timingPort".into(),
+            Value::Integer(sender.local_addr().expect("sender address").port().into()),
+        );
+        let session_body = plist::encode_binary(&Value::Dictionary(session))
+            .expect("encode session SETUP");
+        send_request(&mut client, 1, &session_body);
+        let session_response =
+            plist::decode(&read_response_body(&mut client)).expect("decode session response");
+        let session_response = session_response
+            .as_dictionary()
+            .expect("session response dictionary");
+        let event_port = session_response
+            .get("eventPort")
+            .and_then(|value| match value {
+                Value::Integer(integer) => integer.as_unsigned(),
+                _ => None,
+            })
+            .expect("event port") as u16;
+        let timing_port = session_response
+            .get("timingPort")
+            .and_then(|value| match value {
+                Value::Integer(integer) => integer.as_unsigned(),
+                _ => None,
+            })
+            .expect("timing port") as u16;
+
+        let mut stream_descriptor = Dictionary::new();
+        stream_descriptor.insert("type".into(), Value::Integer(110.into()));
+        let mut stream_setup = Dictionary::new();
+        stream_setup.insert(
+            "streams".into(),
+            Value::Array(vec![Value::Dictionary(stream_descriptor)]),
+        );
+        let stream_body = plist::encode_binary(&Value::Dictionary(stream_setup))
+            .expect("encode stream SETUP");
+        send_request(&mut client, 2, &stream_body);
+        let stream_response =
+            plist::decode(&read_response_body(&mut client)).expect("decode stream response");
+        let media_port = stream_response
+            .as_dictionary()
+            .and_then(|root| root.get("streams"))
+            .and_then(Value::as_array)
+            .and_then(|streams| streams.first())
+            .and_then(Value::as_dictionary)
+            .and_then(|stream| stream.get("dataPort"))
+            .and_then(|value| match value {
+                Value::Integer(integer) => integer.as_unsigned(),
+                _ => None,
+            })
+            .expect("media port") as u16;
+
+        drop(client);
+        server.join().expect("RTSP server thread");
+
+        assert!(
+            TcpListener::bind(("0.0.0.0", event_port)).is_ok(),
+            "event listener must be released after peer disconnect"
+        );
+        assert!(
+            UdpSocket::bind(("0.0.0.0", timing_port)).is_ok(),
+            "timing socket must be released after peer disconnect"
+        );
+        assert!(
+            TcpListener::bind(("0.0.0.0", media_port)).is_ok(),
+            "media listener must be released after peer disconnect"
+        );
+    }
+
+    #[test]
     fn ntp_session_setup_returns_live_timing_port() {
         use std::net::UdpSocket;
         use std::time::Duration;
