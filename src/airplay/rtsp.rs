@@ -1667,6 +1667,37 @@ mod tests {
     }
 
     #[test]
+    fn mirror_reader_stops_when_session_is_cancelled_mid_header() {
+        use std::net::TcpListener;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::{Arc, mpsc};
+        use std::thread;
+        use std::time::Duration;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("TCP listener binds");
+        let client = TcpStream::connect(listener.local_addr().expect("listener address"))
+            .expect("TCP client connects");
+        let (server, peer_addr) = listener.accept().expect("accept TCP client");
+        server
+            .set_read_timeout(Some(Duration::from_millis(50)))
+            .expect("set read timeout");
+
+        let running = Arc::new(AtomicBool::new(true));
+        let worker_running = Arc::clone(&running);
+        let (sender, _receiver) = mpsc::sync_channel(1);
+        let worker = thread::spawn(move || {
+            super::read_mirror_stream(server, peer_addr, &sender, &worker_running);
+        });
+
+        thread::sleep(Duration::from_millis(10));
+        running.store(false, Ordering::Release);
+        worker
+            .join()
+            .expect("mirror reader exits after session cancellation");
+        drop(client);
+    }
+
+    #[test]
     fn media_session_starts_and_stops_its_workers() {
         let peer_ip = "127.0.0.1".parse().expect("loopback IP");
         let mut session = super::MediaSession::start(peer_ip).expect("start media session");
