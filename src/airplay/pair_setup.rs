@@ -490,16 +490,18 @@ pub fn handle_m5(session_key: &[u8; 64], encrypted_data: &[u8]) -> Result<Vec<u8
         return Err("Pair-Setup M5 encrypted data is shorter than its authentication tag".into());
     }
 
-    let encryption_key = derive_key(
+    let encryption_key = Zeroizing::new(derive_key(
         session_key,
         b"Pair-Setup-Encrypt-Salt",
         b"Pair-Setup-Encrypt-Info",
-    )?;
+    )?);
     let cipher = ChaCha20Poly1305::new_from_slice(&encryption_key)
         .map_err(|_| "invalid Pair-Setup encryption key")?;
-    let plaintext = cipher
-        .decrypt(Nonce::from_slice(NONCE_M5), encrypted_data)
-        .map_err(|_| "Pair-Setup M5 authentication tag verification failed")?;
+    let plaintext = Zeroizing::new(
+        cipher
+            .decrypt(Nonce::from_slice(NONCE_M5), encrypted_data)
+            .map_err(|_| "Pair-Setup M5 authentication tag verification failed")?,
+    );
 
     let fields = tlv8::decode(&plaintext).map_err(|error| error.to_string())?;
     let controller_id = unique_field(&fields, TLV_IDENTIFIER)?;
@@ -515,13 +517,14 @@ pub fn handle_m5(session_key: &[u8; 64], encrypted_data: &[u8]) -> Result<Vec<u8
     let signature = Signature::from_slice(controller_signature)
         .map_err(|_| "invalid Pair-Setup controller signature length")?;
 
-    let controller_x = derive_key(
+    let controller_x = Zeroizing::new(derive_key(
         session_key,
         b"Pair-Setup-Controller-Sign-Salt",
         b"Pair-Setup-Controller-Sign-Info",
-    )?;
-    let mut controller_info =
-        Vec::with_capacity(controller_x.len() + controller_id.len() + controller_public_key.len());
+    )?);
+    let mut controller_info = Zeroizing::new(Vec::with_capacity(
+        controller_x.len() + controller_id.len() + controller_public_key.len(),
+    ));
     controller_info.extend_from_slice(&controller_x);
     controller_info.extend_from_slice(controller_id);
     controller_info.extend_from_slice(&controller_public_key);
@@ -538,20 +541,20 @@ pub fn handle_m5(session_key: &[u8; 64], encrypted_data: &[u8]) -> Result<Vec<u8
         .map_err(|_| "AirPlay pairing state lock poisoned")?;
     let accessory = &state.accessory;
     let accessory_public_key = accessory.public_key();
-    let accessory_x = derive_key(
+    let accessory_x = Zeroizing::new(derive_key(
         session_key,
         b"Pair-Setup-Accessory-Sign-Salt",
         b"Pair-Setup-Accessory-Sign-Info",
-    )?;
-    let mut accessory_info = Vec::with_capacity(
+    )?);
+    let mut accessory_info = Zeroizing::new(Vec::with_capacity(
         accessory_x.len() + accessory.identifier.len() + accessory_public_key.len(),
-    );
+    ));
     accessory_info.extend_from_slice(&accessory_x);
     accessory_info.extend_from_slice(&accessory.identifier);
     accessory_info.extend_from_slice(&accessory_public_key);
     let accessory_signature = accessory.signing_key.sign(&accessory_info);
 
-    let inner = tlv8::encode(&[
+    let inner = Zeroizing::new(tlv8::encode(&[
         Tlv {
             kind: TLV_IDENTIFIER,
             value: accessory.identifier.clone(),
@@ -564,9 +567,9 @@ pub fn handle_m5(session_key: &[u8; 64], encrypted_data: &[u8]) -> Result<Vec<u8
             kind: TLV_SIGNATURE,
             value: accessory_signature.to_bytes().to_vec(),
         },
-    ]);
+    ]));
     let encrypted_response = cipher
-        .encrypt(Nonce::from_slice(NONCE_M6), inner.as_ref())
+        .encrypt(Nonce::from_slice(NONCE_M6), inner.as_slice())
         .map_err(|_| "Pair-Setup M6 encryption failed")?;
 
     // Explicit Pair-Setup with the setup code may re-authorize a previously
