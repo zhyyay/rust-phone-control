@@ -73,9 +73,7 @@ impl Render for PhoneControlApp {
                 // been cleared. Release window-backed preview resources now,
                 // synchronously in the observer, rather than in the future.
                 if let Some(task) = this.frame_poll_task.take() {
-                    tracing::debug!(
-                        "GPUI application-quit cleanup: cancelling frame poll task"
-                    );
+                    tracing::debug!("GPUI application-quit cleanup: cancelling frame poll task");
                     drop(task);
                     tracing::debug!("GPUI application-quit cleanup: frame poll task cancelled");
                 }
