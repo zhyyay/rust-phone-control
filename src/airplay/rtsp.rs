@@ -47,6 +47,7 @@ const MIRROR_CLIENT_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 struct MirrorStreamContext {
     connection_id: Option<u64>,
     pair_verify_shared_secret: Option<Zeroizing<[u8; 32]>>,
+    fairplay_video_key: Option<Zeroizing<[u8; 16]>>,
     media_foundation: Option<Arc<super::decoder::MediaFoundationRuntime>>,
     frames: Arc<super::video::LatestFrameMailbox>,
 }
@@ -72,6 +73,7 @@ impl MediaSession {
             MirrorStreamContext {
                 connection_id: None,
                 pair_verify_shared_secret: None,
+                fairplay_video_key: None,
                 media_foundation: None,
                 frames: Arc::new(super::video::LatestFrameMailbox::new()),
             },
@@ -343,12 +345,45 @@ fn process_media_packets(
         "AirPlay media worker initialized with negotiated stream context"
     );
     let mut received = 0u64;
+    let pair_verify_shared_secret = stream_context.pair_verify_shared_secret;
+    let fairplay_video_key = stream_context.fairplay_video_key;
     let media_foundation = stream_context.media_foundation;
     let frames = stream_context.frames;
+    let mut mirror_cipher = match (fairplay_video_key.as_ref(), stream_connection_id) {
+        (Some(video_key), Some(connection_id)) => {
+            let pair_secret = pair_verify_shared_secret.as_ref().map(|secret| secret.as_ref());
+            match super::mirror_crypto::derive_mirror_stream_keys(
+                video_key.as_ref(),
+                pair_secret,
+                connection_id,
+            ) {
+                Ok(material) => {
+                    tracing::info!(
+                        stream_connection_id = connection_id,
+                        pair_verify_complete = pair_secret.is_some(),
+                        "FairPlay video key installed for mirror stream"
+                    );
+                    Some(super::mirror_crypto::MirrorStreamCipher::new(&material))
+                }
+                Err(error) => {
+                    tracing::error!(%error, "Could not derive AirPlay mirror stream cipher");
+                    None
+                }
+            }
+        }
+        (Some(_), None) => {
+            tracing::warn!("FairPlay video key received without a stream connection ID");
+            None
+        }
+        (None, _) => {
+            tracing::debug!("FairPlay video key unavailable; encrypted mirror packets will be held");
+            None
+        }
+    };
     let mut frame_pipeline = None;
     let mut decoder_init_policy = super::video::DecoderInitializationPolicy::default();
     let mut processor = super::video::MirrorStreamProcessor::new();
-    while let Ok(packet) = packets.recv() {
+    while let Ok(mut packet) = packets.recv() {
         received = received.saturating_add(1);
         // Video packets are the hot path; only clone codec metadata when
         // the packet can actually replace that metadata.
@@ -489,15 +524,73 @@ fn process_media_packets(
             super::video::MirrorPacketOutcome::VideoWaitingForDecryption {
                 payload_bytes,
                 has_configuration,
-            } => tracing::debug!(
-                %packet.peer_addr,
-                timestamp = packet.timestamp,
-                payload_bytes,
-                has_configuration,
-                decoder_ready = frame_pipeline.is_some(),
-                received,
-                "AirPlay video packet received; waiting for FairPlay media decryption"
-            ),
+            } => {
+                if let Some(cipher) = mirror_cipher.as_mut() {
+                    if let Some(pipeline) = frame_pipeline.as_mut() {
+                        match pipeline.submit_encrypted_access_unit(
+                            &processor,
+                            cipher,
+                            &packet.payload,
+                        ) {
+                            Ok(published_frames) => tracing::debug!(
+                                %packet.peer_addr,
+                                timestamp = packet.timestamp,
+                                payload_bytes,
+                                published_frames,
+                                received,
+                                "Decrypted and submitted AirPlay H.264 access unit"
+                            ),
+                            Err(error) => {
+                                // A failed access-unit operation may have advanced
+                                // the stream counter. Disable decryption rather than
+                                // risk using a desynchronized cipher for later packets.
+                                mirror_cipher = None;
+                                frame_pipeline = None;
+                                if let Err(clear_error) = frames.clear() {
+                                    tracing::warn!(%clear_error, "Could not clear preview after media decryption failure");
+                                }
+                                tracing::warn!(
+                                    %packet.peer_addr,
+                                    timestamp = packet.timestamp,
+                                    %error,
+                                    "AirPlay encrypted access unit rejected; stream decryption disabled"
+                                );
+                            }
+                        }
+                    } else {
+                        // Keep the per-stream CTR position synchronized even when
+                        // Media Foundation is unavailable or codec setup is pending.
+                        if let Err(error) = cipher.decrypt_packet(&mut packet.payload) {
+                            mirror_cipher = None;
+                            tracing::warn!(
+                                %packet.peer_addr,
+                                timestamp = packet.timestamp,
+                                %error,
+                                "AirPlay mirror cipher failed while advancing an unrendered packet"
+                            );
+                        } else {
+                            tracing::trace!(
+                                %packet.peer_addr,
+                                timestamp = packet.timestamp,
+                                payload_bytes,
+                                has_configuration,
+                                received,
+                                "Decrypted and discarded AirPlay packet because decoder is not ready"
+                            );
+                        }
+                    }
+                } else {
+                    tracing::debug!(
+                        %packet.peer_addr,
+                        timestamp = packet.timestamp,
+                        payload_bytes,
+                        has_configuration,
+                        decoder_ready = frame_pipeline.is_some(),
+                        received,
+                        "AirPlay video packet received; waiting for FairPlay media key"
+                    );
+                }
+            },
             super::video::MirrorPacketOutcome::Heartbeat => {
                 tracing::trace!(%packet.peer_addr, "AirPlay mirror heartbeat received");
             }
@@ -580,6 +673,7 @@ pub fn serve_with_fairplay_provider(
     let mut pair_verify_shared_secret: Option<Zeroizing<[u8; 32]>> = None;
     let mut fairplay_ekey: Option<Zeroizing<[u8; 72]>> = None;
     let mut fairplay_eiv: Option<Zeroizing<[u8; 16]>> = None;
+    let mut fairplay_video_key: Option<Zeroizing<[u8; 16]>> = None;
     let mut fairplay_session: Option<super::fairplay::FairPlaySession> = None;
     let mut fairplay_initial: Option<super::fairplay::FairPlayMessage> = None;
     let mut fairplay_challenge: Option<super::fairplay::FairPlayChallenge> = None;
@@ -793,8 +887,7 @@ pub fn serve_with_fairplay_provider(
                             Ok(keys) => {
                                 let response_body =
                                     super::fairplay::build_m4(&keys.acknowledgement);
-                                *fairplay_ekey = Some(keys.ekey);
-                                *fairplay_eiv = Some(keys.eiv);
+                                fairplay_video_key = Some(keys.video_key);
                                 write_binary_response(&mut stream, &request.cseq, &response_body)?;
                                 tracing::info!(
                                     has_fairplay_ekey = fairplay_ekey.is_some(),
@@ -803,8 +896,7 @@ pub fn serve_with_fairplay_provider(
                                 );
                             }
                             Err(error) => {
-                                fairplay_ekey = None;
-                                fairplay_eiv = None;
+                                fairplay_video_key = None;
                                 let status = fairplay_provider_error_status(&error);
                                 tracing::warn!(%error, status, "FairPlay SAP provider rejected M3");
                                 let response = fairplay_error_response(
@@ -1284,6 +1376,8 @@ fn handle_setup_request(
                     connection_id: stream.connection_id,
                     pair_verify_shared_secret: pair_verify_shared_secret
                         .map(|secret| Zeroizing::new(*secret)),
+                    fairplay_video_key: fairplay_video_key
+                        .map(|video_key| Zeroizing::new(*video_key)),
                     media_foundation,
                     frames,
                 },
