@@ -531,6 +531,36 @@ mod tests {
     }
 
     #[test]
+    fn fairplay_negotiation_state_is_isolated_between_sessions() {
+        let mut first = FairPlaySession::new();
+        let mut second = FairPlaySession::new();
+
+        first
+            .accept(parse_message(&initial_message(3)).unwrap())
+            .expect("first session accepts M1");
+        first
+            .mark_challenge_sent(3, [0x5a; 128])
+            .expect("first session records its challenge");
+
+        // A valid-looking M3 must not inherit another RTSP connection's M1
+        // or challenge state.
+        let second_session_m3 = parse_message(&key_message()).unwrap();
+        assert!(
+            second.accept(second_session_m3).is_err(),
+            "a fresh RTSP session must reject M3 without its own M1 and M2"
+        );
+        assert!(!second.has_key_message());
+
+        let first_m3 = parse_message(&key_message()).unwrap();
+        assert_eq!(
+            first.accept(first_m3).unwrap(),
+            FairPlayState::KeyMessageReceivedUnverified
+        );
+        assert!(first.has_key_message());
+        assert!(!second.has_key_message());
+    }
+
+    #[test]
     fn rejects_invalid_m1_payload_marker_and_trailer() {
         let mut body = initial_message(3);
         body[12] = 0;
