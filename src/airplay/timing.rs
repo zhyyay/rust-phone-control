@@ -179,5 +179,12 @@ mod tests {
         sender
             .send_to(&response, peer)
             .expect("send timing response");
+
+        let client_port = client.port();
+        drop(client);
+        assert!(
+            UdpSocket::bind(("0.0.0.0", client_port)).is_ok(),
+            "timing UDP port must be released after client drop"
+        );
     }
 }
