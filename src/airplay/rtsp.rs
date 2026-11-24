@@ -1380,8 +1380,9 @@ fn handle_setup_request(
                     connection_id: stream.connection_id,
                     pair_verify_shared_secret: pair_verify_shared_secret
                         .map(|secret| Zeroizing::new(*secret)),
-                    fairplay_video_key: fairplay_video_key
-                        .map(|video_key| Zeroizing::new(*video_key)),
+                    // FairPlay key recovery is not yet wired into the media pipeline.
+                    // Keep the stream fail-closed rather than referencing unavailable key material.
+                    fairplay_video_key: None,
                     media_foundation,
                     frames,
                 },
