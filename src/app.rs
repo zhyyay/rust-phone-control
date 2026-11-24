@@ -57,6 +57,7 @@ impl Drop for PhoneControlApp {
 
 impl Render for PhoneControlApp {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        crate::logging::startup_checkpoint("render: entered");
         #[cfg(windows)]
         if self.quit_subscription.is_none() {
             tracing::debug!(
@@ -163,7 +164,7 @@ impl Render for PhoneControlApp {
         }
 
         // MirrorDeck three-column workspace; live frames still come from the existing AirPlay poller.
-        div()
+        let root = div()
             .flex()
             .flex_col()
             .size_full()
@@ -490,7 +491,9 @@ impl Render for PhoneControlApp {
                     .child(Label::new("▦ FPS —"))
                     .child(Label::new("▥ 码率 —"))
                     .child(Label::new("🔒 本地加密")),
-            )
+            );
+        crate::logging::startup_checkpoint("render: element tree built");
+        root
     }
 }
 
