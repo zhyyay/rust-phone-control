@@ -23,12 +23,12 @@ pub struct FairPlayMessage {
     pub initial_parameters: Option<[u8; 4]>,
     pub initial_capabilities: Option<u8>,
     pub challenge_mode: Option<u8>,
-    pub challenge: Option<[u8; 128]>,
+    pub challenge: Option<Zeroizing<[u8; 128]>>,
     pub key_mode: Option<u8>,
     pub key_label: Option<[u8; 3]>,
-    pub local_sap: Option<[u8; 128]>,
-    pub key_response: Option<[u8; 20]>,
-    pub acknowledgement: Option<[u8; 20]>,
+    pub local_sap: Option<Zeroizing<[u8; 128]>>,
+    pub key_response: Option<Zeroizing<[u8; 20]>>,
+    pub acknowledgement: Option<Zeroizing<[u8; 20]>>,
     pub body: Zeroizing<Vec<u8>>,
 }
 
@@ -172,11 +172,11 @@ pub fn parse_message(body: &[u8]) -> Result<FairPlayMessage, FairPlayParseError>
                 initial_parameters: None,
                 initial_capabilities: None,
                 challenge_mode: Some(mode),
-                challenge: Some(
+                challenge: Some(Zeroizing::new(
                     body[14..142]
                         .try_into()
                         .expect("128-byte FairPlay challenge"),
-                ),
+                )),
                 key_mode: None,
                 key_label: None,
                 local_sap: None,
@@ -205,16 +205,16 @@ pub fn parse_message(body: &[u8]) -> Result<FairPlayMessage, FairPlayParseError>
                         .try_into()
                         .expect("three-byte FairPlay M3 label"),
                 ),
-                local_sap: Some(
+                local_sap: Some(Zeroizing::new(
                     body[16..144]
                         .try_into()
                         .expect("128-byte FairPlay local SAP"),
-                ),
-                key_response: Some(
+                )),
+                key_response: Some(Zeroizing::new(
                     body[144..164]
                         .try_into()
                         .expect("20-byte FairPlay key response"),
-                ),
+                )),
                 acknowledgement: None,
                 body: Zeroizing::new(body.to_vec()),
             })
@@ -233,11 +233,11 @@ pub fn parse_message(body: &[u8]) -> Result<FairPlayMessage, FairPlayParseError>
                 key_label: None,
                 local_sap: None,
                 key_response: None,
-                acknowledgement: Some(
+                acknowledgement: Some(Zeroizing::new(
                     body[12..32]
                         .try_into()
                         .expect("20-byte FairPlay acknowledgement"),
-                ),
+                )),
                 body: Zeroizing::new(body.to_vec()),
             })
         }
@@ -415,7 +415,7 @@ mod tests {
         let parsed_m2 = parse_message(&m2).unwrap();
         assert_eq!(parsed_m2.phase, MessagePhase::Challenge);
         assert_eq!(parsed_m2.challenge_mode, Some(3));
-        assert_eq!(parsed_m2.challenge, Some(challenge));
+        assert_eq!(parsed_m2.challenge.as_deref(), Some(&challenge));
 
         let acknowledgement = [0xa5u8; 20];
         let m4 = build_m4(&acknowledgement);
@@ -423,7 +423,7 @@ mod tests {
         assert_eq!(&m4[12..], &acknowledgement);
         let parsed_m4 = parse_message(&m4).unwrap();
         assert_eq!(parsed_m4.phase, MessagePhase::Acknowledgement);
-        assert_eq!(parsed_m4.acknowledgement, Some(acknowledgement));
+        assert_eq!(parsed_m4.acknowledgement.as_deref(), Some(&acknowledgement));
     }
 
     #[test]
@@ -584,8 +584,8 @@ mod tests {
         assert_eq!(message.initial_parameters, None);
         assert_eq!(message.key_mode, Some(3));
         assert_eq!(message.key_label, Some([0x8f, 0x1a, 0x9c]));
-        assert_eq!(message.local_sap, Some([0u8; 128]));
-        assert_eq!(message.key_response, Some([0u8; 20]));
+        assert_eq!(message.local_sap.as_deref(), Some(&[0u8; 128]));
+        assert_eq!(message.key_response.as_deref(), Some(&[0u8; 20]));
         assert_eq!(message.body.len(), 164);
     }
 
