@@ -59,6 +59,17 @@ struct ReceiverRuntime {
 #[cfg(windows)]
 static RECEIVER: OnceLock<Mutex<Option<ReceiverRuntime>>> = OnceLock::new();
 
+// Serialize start/stop transitions without holding the receiver data lock
+// while network workers are joined. RTSP workers only need RECEIVER, never
+// this lifecycle mutex.
+#[cfg(windows)]
+static RECEIVER_LIFECYCLE: OnceLock<Mutex<()>> = OnceLock::new();
+
+#[cfg(windows)]
+fn receiver_lifecycle() -> &'static Mutex<()> {
+    RECEIVER_LIFECYCLE.get_or_init(|| Mutex::new(()))
+}
+
 #[cfg(windows)]
 static PAIRING_CODE: OnceLock<String> = OnceLock::new();
 
@@ -192,6 +203,9 @@ pub fn setup_code() -> String {
 
 #[cfg(windows)]
 pub fn start() -> anyhow::Result<()> {
+    let _lifecycle = receiver_lifecycle()
+        .lock()
+        .map_err(|_| anyhow::anyhow!("AirPlay lifecycle lock is poisoned"))?;
     let mut runtime = receiver_slot()
         .lock()
         .map_err(|_| anyhow::anyhow!("AirPlay runtime lock is poisoned"))?;
@@ -289,6 +303,9 @@ pub fn take_latest_video_frame() -> anyhow::Result<Option<FrameSnapshot>> {
 
 #[cfg(windows)]
 pub fn stop() -> anyhow::Result<()> {
+    let _lifecycle = receiver_lifecycle()
+        .lock()
+        .map_err(|_| anyhow::anyhow!("AirPlay lifecycle lock is poisoned"))?;
     // Detach the runtime while holding the global lock, then release the lock
     // before joining network workers. A client may still be finishing a
     // request that needs to inspect the runtime; joining while locked could
