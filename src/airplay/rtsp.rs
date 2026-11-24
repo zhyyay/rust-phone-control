@@ -1748,7 +1748,11 @@ mod tests {
 
     #[test]
     fn mirror_listener_accepts_a_new_client_after_disconnect() {
+        use std::io::Write;
+        use std::net::TcpListener;
+        use std::sync::{Arc, mpsc};
         use std::sync::atomic::{AtomicBool, Ordering};
+        use std::thread;
         use std::time::Duration;
 
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind mirror listener");
@@ -2004,7 +2008,10 @@ mod tests {
             .expect("replacement session dictionary");
         let new_event_port = second
             .get("eventPort")
-            .and_then(Value::as_unsigned)
+            .and_then(|value| match value {
+                Value::Integer(integer) => integer.as_unsigned(),
+                _ => None,
+            })
             .expect("replacement event port") as u16;
         let new_timing_port = second
             .get("timingPort")
