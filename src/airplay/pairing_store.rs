@@ -351,7 +351,10 @@ mod tests {
         assert_eq!(actual.accessory_identifier, expected.accessory_identifier);
         assert_eq!(actual.accessory_secret_key, expected.accessory_secret_key);
         assert_eq!(actual.controllers.len(), expected.controllers.len());
-        assert_eq!(actual.denied_controllers.len(), expected.denied_controllers.len());
+        assert_eq!(
+            actual.denied_controllers.len(),
+            expected.denied_controllers.len()
+        );
         assert_eq!(
             actual.controllers[0].public_key,
             expected.controllers[0].public_key
