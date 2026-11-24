@@ -137,10 +137,7 @@ pub struct FairPlayKeys {
 pub trait FairPlaySapProvider: Send + Sync {
     /// Process the sender's initial FPLY record and return an authenticated
     /// receiver challenge. Implementations must reject unsupported modes.
-    fn begin(
-        &self,
-        initial: &FairPlayMessage,
-    ) -> Result<FairPlayChallenge, FairPlayProviderError>;
+    fn begin(&self, initial: &FairPlayMessage) -> Result<FairPlayChallenge, FairPlayProviderError>;
 
     /// Authenticate the sender's key message against the exact M1/M2 exchange.
     /// Returning keys is an authorization boundary: implementations must not
@@ -165,8 +162,13 @@ pub enum FairPlayProviderError {
 impl std::fmt::Display for FairPlayProviderError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Unavailable => write!(formatter, "no authorized FairPlay SAP provider is configured"),
-            Self::UnsupportedMode(mode) => write!(formatter, "FairPlay SAP mode {mode} is unsupported"),
+            Self::Unavailable => write!(
+                formatter,
+                "no authorized FairPlay SAP provider is configured"
+            ),
+            Self::UnsupportedMode(mode) => {
+                write!(formatter, "FairPlay SAP mode {mode} is unsupported")
+            }
             Self::InvalidMessage => write!(formatter, "FairPlay SAP message is invalid"),
             Self::AuthenticationFailed => write!(formatter, "FairPlay SAP authentication failed"),
             Self::Internal(reason) => write!(formatter, "FairPlay SAP provider error: {reason}"),
