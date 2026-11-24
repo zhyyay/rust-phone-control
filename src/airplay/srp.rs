@@ -13,6 +13,7 @@ use rand::RngCore;
 use rand::rngs::OsRng;
 use sha2::{Digest, Sha512};
 use subtle::ConstantTimeEq;
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 const MODULUS_BYTES: usize = 384;
 const USERNAME: &[u8] = b"Pair-Setup";
@@ -56,10 +57,20 @@ impl std::fmt::Display for SrpError {
 
 impl std::error::Error for SrpError {}
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, Zeroize, ZeroizeOnDrop)]
 pub struct SrpServerProof {
     pub session_key: [u8; 64],
     pub proof: [u8; 64],
+}
+
+impl std::fmt::Debug for SrpServerProof {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("SrpServerProof")
+            .field("session_key", &"[REDACTED]")
+            .field("proof", &"[REDACTED]")
+            .finish()
+    }
 }
 
 pub struct SrpServer {
@@ -80,7 +91,7 @@ impl SrpServer {
         OsRng.fill_bytes(&mut salt);
         OsRng.fill_bytes(&mut private);
         let private_b = BigUint::from_bytes_be(&private);
-        private.fill(0);
+        private.zeroize();
         Self::new_with_parameters(setup_code, salt, private_b)
     }
 
