@@ -3097,13 +3097,8 @@ mod tests {
         ] {
             let mut srp = Some(SrpServer::new("518-08-582").expect("create SRP server"));
             let mut session_key = Some(Zeroizing::new([0xA5; 64]));
-            let error = handle_pair_setup(
-                &request,
-                &mut srp,
-                &mut session_key,
-                Some("518-08-582"),
-            )
-            .expect_err("invalid Pair-Setup state must be rejected");
+            let error = handle_pair_setup(&request, &mut srp, &mut session_key, Some("518-08-582"))
+                .expect_err("invalid Pair-Setup state must be rejected");
             assert_eq!(error.status, 400);
             assert!(srp.is_none(), "invalid state must discard SRP state");
             assert!(
