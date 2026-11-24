@@ -119,8 +119,11 @@ pub fn controller_fingerprint(public_key: &[u8; 32]) -> [u8; 32] {
 /// Load and decrypt the store. None means that no store exists yet.
 /// Existing but unreadable or invalid data is an error; it is never overwritten.
 pub fn load() -> io::Result<Option<StoredPairingState>> {
-    let path = store_path()?;
-    let mut file = match OpenOptions::new().read(true).open(&path) {
+    load_from_path(&store_path()?)
+}
+
+fn load_from_path(path: &Path) -> io::Result<Option<StoredPairingState>> {
+    let mut file = match OpenOptions::new().read(true).open(path) {
         Ok(file) => file,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error),
@@ -144,8 +147,11 @@ pub fn load() -> io::Result<Option<StoredPairingState>> {
 
 /// Encrypt and atomically replace the store for the current Windows user.
 pub fn save(state: &StoredPairingState) -> io::Result<()> {
+    save_to_path(state, &store_path()?)
+}
+
+fn save_to_path(state: &StoredPairingState, path: &Path) -> io::Result<()> {
     state.validate()?;
-    let path = store_path()?;
     let directory = path
         .parent()
         .ok_or_else(|| invalid_data("AirPlay pairing store has no parent directory"))?;
@@ -156,7 +162,7 @@ pub fn save(state: &StoredPairingState) -> io::Result<()> {
     })?);
     let encrypted = crate::platform::windows::dpapi::protect(plaintext.as_slice())?;
 
-    let temp_path = temporary_path(&path);
+    let temp_path = temporary_path(path);
     let mut file = OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -165,7 +171,7 @@ pub fn save(state: &StoredPairingState) -> io::Result<()> {
         file.write_all(&encrypted)?;
         file.sync_all()?;
         drop(file);
-        replace_file(&temp_path, &path)
+        replace_file(&temp_path, path)
     })();
 
     if write_result.is_err() {
@@ -309,5 +315,52 @@ mod tests {
         store.version = 2;
 
         assert!(store.validate().is_err());
+    }
+
+    #[test]
+    fn dpapi_store_round_trips_accessory_and_controller_identities() {
+        use super::{load_from_path, save_to_path};
+        use std::fs;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock")
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "rust-phone-control-pairing-store-{}-{nonce}",
+            std::process::id()
+        ));
+        let path = directory.join("airplay-pairing.bin");
+
+        let mut expected = state();
+        expected.accessory_identifier = b"rpc-test-accessory".to_vec();
+        expected.accessory_secret_key = vec![0x6a; 32];
+        expected.trust_controller([0x71; 32]).unwrap();
+        expected.denied_controllers.push(StoredController {
+            identifier: b"denied-test-controller".to_vec(),
+            public_key: vec![0x72; 32],
+        });
+
+        save_to_path(&expected, &path).expect("save DPAPI-protected store");
+        let actual = load_from_path(&path)
+            .expect("load DPAPI-protected store")
+            .expect("store exists");
+
+        assert_eq!(actual.version, expected.version);
+        assert_eq!(actual.accessory_identifier, expected.accessory_identifier);
+        assert_eq!(actual.accessory_secret_key, expected.accessory_secret_key);
+        assert_eq!(actual.controllers.len(), expected.controllers.len());
+        assert_eq!(actual.denied_controllers.len(), expected.denied_controllers.len());
+        assert_eq!(
+            actual.controllers[0].public_key,
+            expected.controllers[0].public_key
+        );
+        assert_eq!(
+            actual.denied_controllers[0].public_key,
+            expected.denied_controllers[0].public_key
+        );
+
+        fs::remove_dir_all(directory).expect("remove temporary pairing store");
     }
 }
