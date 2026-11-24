@@ -1897,6 +1897,7 @@ fn txt_airplay_dictionary() -> Dictionary {
 
 #[cfg(test)]
 mod tests {
+    use super::SrpServer;
     use super::Zeroizing;
     use super::plist;
     use super::{
