@@ -2899,8 +2899,8 @@ mod tests {
         handle_pair_verify(&m1, &mut session).expect("valid M1 starts exchange");
         assert!(session.is_some());
 
-        let error = handle_pair_verify(&m1, &mut session)
-            .expect_err("duplicate M1 must be rejected");
+        let error =
+            handle_pair_verify(&m1, &mut session).expect_err("duplicate M1 must be rejected");
         assert!(error.contains("another exchange is active"));
         assert!(session.is_some());
 
@@ -2917,7 +2917,10 @@ mod tests {
         let error = handle_pair_verify(&invalid_m3, &mut session)
             .expect_err("unauthenticated M3 must be rejected");
         assert!(error.contains("authentication tag verification failed"));
-        assert!(session.is_none(), "failed M3 must consume the pending session");
+        assert!(
+            session.is_none(),
+            "failed M3 must consume the pending session"
+        );
     }
 
     #[test]
