@@ -1449,11 +1449,11 @@ mod tests {
 
     #[test]
     fn rejects_duplicate_and_malformed_cseq_headers() {
-        let duplicate = b"OPTIONS * RTSP/1.0\\r\\nCSeq: 1\\r\\nCSeq: 2\\r\\n\\r\\n";
+        let duplicate = b"OPTIONS * RTSP/1.0\r\nCSeq: 1\r\nCSeq: 2\r\n\r\n";
         let error = read_request_from_bytes(duplicate).expect_err("duplicate CSeq rejected");
         assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
 
-        let malformed = b"OPTIONS * RTSP/1.0\\r\\nCSeq: one\\r\\n\\r\\n";
+        let malformed = b"OPTIONS * RTSP/1.0\r\nCSeq: one\r\n\r\n";
         let error = read_request_from_bytes(malformed).expect_err("non-numeric CSeq rejected");
         assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
     }
@@ -1461,13 +1461,13 @@ mod tests {
     #[test]
     fn rejects_ambiguous_body_framing_headers() {
         let duplicate_length =
-            b"POST /info RTSP/1.0\\r\\nCSeq: 1\\r\\nContent-Length: 0\\r\\ncontent-length: 0\\r\\n\\r\\n";
+            b"POST /info RTSP/1.0\r\nCSeq: 1\r\nContent-Length: 0\r\ncontent-length: 0\r\n\r\n";
         let error = read_request_from_bytes(duplicate_length)
             .expect_err("duplicate content length rejected");
         assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
 
         let transfer_encoding =
-            b"POST /info RTSP/1.0\\r\\nCSeq: 1\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n";
+            b"POST /info RTSP/1.0\r\nCSeq: 1\r\nTransfer-Encoding: chunked\r\n\r\n";
         let error = read_request_from_bytes(transfer_encoding)
             .expect_err("transfer encoding rejected");
         assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
@@ -1476,28 +1476,28 @@ mod tests {
     #[test]
     fn rejects_request_body_larger_than_configured_limit() {
         let request =
-            b"POST /info RTSP/1.0\\r\\nCSeq: 1\\r\\nContent-Length: 65537\\r\\n\\r\\n";
+            b"POST /info RTSP/1.0\r\nCSeq: 1\r\nContent-Length: 65537\r\n\r\n";
         let error = read_request_from_bytes(request).expect_err("oversized body rejected");
         assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
     }
 
     #[test]
     fn rejects_cseq_values_outside_rfc_integer_range() {
-        let request = b"OPTIONS * RTSP/1.0\\r\\nCSeq: 4294967296\\r\\n\\r\\n";
+        let request = b"OPTIONS * RTSP/1.0\r\nCSeq: 4294967296\r\n\r\n";
         let error = read_request_from_bytes(request).expect_err("overflowing CSeq rejected");
         assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
     }
 
     #[test]
     fn rejects_extra_tokens_in_request_line() {
-        let request = b"OPTIONS * RTSP/1.0 ignored\\r\\nCSeq: 1\\r\\n\\r\\n";
+        let request = b"OPTIONS * RTSP/1.0 ignored\r\nCSeq: 1\r\n\r\n";
         let error = read_request_from_bytes(request).expect_err("extra request token rejected");
         assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
     }
 
     #[test]
     fn parses_valid_request_after_strict_request_line_validation() {
-        let request = b"OPTIONS * RTSP/1.0\\r\\nCSeq: 42\\r\\n\\r\\n";
+        let request = b"OPTIONS * RTSP/1.0\r\nCSeq: 42\r\n\r\n";
         let parsed = read_request_from_bytes(request)
             .expect("valid request read")
             .expect("request present");
@@ -1813,7 +1813,7 @@ mod tests {
             let response = super::fairplay_error_response(status, reason, "3");
             assert!(response.starts_with(&format!("RTSP/1.0 {status} {reason}\r\n")));
             assert!(response.ends_with("\r\n\r\n"));
-            assert!(!response.contains("\\r\\n"));
+            assert!(!response.contains("\r\n"));
             assert!(response.contains("\r\nCSeq: 3\r\n"));
         }
     }
