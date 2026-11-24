@@ -266,7 +266,7 @@ impl HapPairVerifySession {
         let mut secret_bytes = [0u8; 32];
         OsRng.fill_bytes(&mut secret_bytes);
         let accessory_secret = StaticSecret::from(secret_bytes);
-        secret_bytes.fill(0);
+        secret_bytes.zeroize();
 
         let accessory_public = PublicKey::from(&accessory_secret);
         let controller_public = PublicKey::from(controller_ephemeral);
