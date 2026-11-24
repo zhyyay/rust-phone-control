@@ -71,7 +71,9 @@ impl Render for PhoneControlApp {
                 let image = this.preview_image.take();
                 async move {
                     if let Some(task) = task {
-                        tracing::debug!("GPUI application-quit cleanup: cancelling frame poll task");
+                        tracing::debug!(
+                            "GPUI application-quit cleanup: cancelling frame poll task"
+                        );
                         drop(task);
                         tracing::debug!("GPUI application-quit cleanup: frame poll task cancelled");
                     }
