@@ -669,7 +669,7 @@ impl MirrorStreamProcessor {
                         // could decode packets using the wrong stream geometry.
                         self.configuration = None;
                         MirrorPacketOutcome::InvalidCodecConfiguration(error)
-                    },
+                    }
                 }
             }
             super::media::ScreenMirrorPacketType::Video => {
