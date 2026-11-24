@@ -619,7 +619,11 @@ fn unique_field(fields: &[Tlv], kind: u8) -> Result<&[u8], String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{NONCE_M5, NONCE_M6, derive_key, handle_m5};
+    use super::{
+        NONCE_M5, NONCE_M6, Sha256, deny_legacy_controller, derive_key, handle_m5,
+        is_controller_public_key_denied, is_controller_public_key_paired, revoke_legacy_controller,
+        trust_legacy_controller,
+    };
     use crate::airplay::tlv8::{self, Tlv};
     use chacha20poly1305::aead::{Aead, KeyInit};
     use chacha20poly1305::{ChaCha20Poly1305, Nonce};
