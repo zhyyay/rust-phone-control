@@ -428,8 +428,7 @@ mod tests {
     fn deterministic_parameters_produce_stable_public_server_key() {
         let salt = [0x6bu8; 16];
         let private = BigUint::from(0x123456789abcdefu64);
-        let first =
-            SrpServer::new_with_parameters("518-08-582", salt, private.clone()).unwrap();
+        let first = SrpServer::new_with_parameters("518-08-582", salt, private.clone()).unwrap();
         let second = SrpServer::new_with_parameters("518-08-582", salt, private).unwrap();
 
         assert_eq!(first.salt(), second.salt());
