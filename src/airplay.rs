@@ -19,8 +19,7 @@ mod event;
 mod fairplay;
 pub use fairplay::{
     FairPlayChallenge, FairPlayKeys, FairPlayMessage, FairPlayParseError, FairPlayProviderError,
-    FairPlaySapProvider, MessagePhase,
-    parse_message as parse_fairplay_message,
+    FairPlaySapProvider, MessagePhase, parse_message as parse_fairplay_message,
 };
 #[allow(dead_code)]
 mod media;
@@ -215,16 +214,12 @@ pub fn start() -> anyhow::Result<()> {
 /// The ordinary start() entry point remains fail-closed when no provider is
 /// configured.
 #[cfg(windows)]
-pub fn start_with_fairplay_provider(
-    provider: Arc<dyn FairPlaySapProvider>,
-) -> anyhow::Result<()> {
+pub fn start_with_fairplay_provider(provider: Arc<dyn FairPlaySapProvider>) -> anyhow::Result<()> {
     start_inner(Some(provider))
 }
 
 #[cfg(windows)]
-fn start_inner(
-    fairplay_provider: Option<Arc<dyn FairPlaySapProvider>>,
-) -> anyhow::Result<()> {
+fn start_inner(fairplay_provider: Option<Arc<dyn FairPlaySapProvider>>) -> anyhow::Result<()> {
     let _lifecycle = receiver_lifecycle()
         .lock()
         .map_err(|_| anyhow::anyhow!("AirPlay lifecycle lock is poisoned"))?;
