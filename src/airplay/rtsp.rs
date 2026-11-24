@@ -819,6 +819,14 @@ pub fn serve_with_fairplay_provider(
 
                 match super::fairplay::parse_message(&request.body) {
                     Ok(message) if message.phase == super::fairplay::MessagePhase::Initial => {
+                        // A new M1 starts a new negotiation on this RTSP
+                        // connection. Never let a previous exchange's media
+                        // key survive a renegotiation attempt.
+                        fairplay_video_key = None;
+                        fairplay_initial = None;
+                        fairplay_challenge = None;
+                        fairplay_session = None;
+
                         let Some(provider) = fairplay_provider.as_ref() else {
                             tracing::warn!(
                                 "FairPlay SAP unavailable: no authorized provider configured"
@@ -879,8 +887,13 @@ pub fn serve_with_fairplay_provider(
                             continue;
                         };
 
-                        if let Err(error) = session.accept(message.clone()) {
+                        let state_validation = session.accept(message.clone());
+                        if let Err(error) = state_validation {
                             tracing::warn!(%error, "FairPlay M3 state validation failed");
+                            fairplay_video_key = None;
+                            fairplay_initial = None;
+                            fairplay_challenge = None;
+                            fairplay_session = None;
                             let response =
                                 fairplay_error_response(400, "Bad Request", &request.cseq);
                             write_response(&mut stream, &response, 400)?;
@@ -900,7 +913,12 @@ pub fn serve_with_fairplay_provider(
                                 );
                             }
                             Err(error) => {
+                                // Authentication failure invalidates the entire
+                                // exchange, not just its derived media key.
                                 fairplay_video_key = None;
+                                fairplay_initial = None;
+                                fairplay_challenge = None;
+                                fairplay_session = None;
                                 let status = fairplay_provider_error_status(&error);
                                 tracing::warn!(%error, status, "FairPlay SAP provider rejected M3");
                                 let response = fairplay_error_response(
