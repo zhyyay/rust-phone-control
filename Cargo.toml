@@ -49,4 +49,4 @@ lto = "thin"
 codegen-units = 1
 
 [target.'cfg(windows)'.dependencies]
-windows_062 = { package = "windows", version = "0.62.2", features = ["Foundation", "Devices_Bluetooth", "Devices_Bluetooth_GenericAttributeProfile", "Storage_Streams", "Win32_Media_MediaFoundation", "Win32_System_Com", "Win32_NetworkManagement_Dns"] }
+windows_062 = { package = "windows", version = "0.62.2", features = ["Foundation", "Devices_Bluetooth", "Devices_Bluetooth_GenericAttributeProfile", "Storage_Streams", "Win32_Media_MediaFoundation", "Win32_System_Com", "Win32_NetworkManagement_Dns", "Win32_Graphics_Direct3D", "Win32_Graphics_Direct3D11"] }
