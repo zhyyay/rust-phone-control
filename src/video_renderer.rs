@@ -224,8 +224,8 @@ pub(crate) fn upload_bgra_frame(
         if elapsed >= std::time::Duration::from_secs(1) {
             let fps = device.stats_frames as f64 / elapsed.as_secs_f64();
             tracing::info!(
-                fps = format_args!("{fps:.1}"),
-                present_ms = format_args!("{:.2}", present_time.as_secs_f64() * 1000.0),
+                fps,
+                present_ms = present_time.as_secs_f64() * 1000.0,
                 frames = device.stats_frames,
                 "D3D11 preview performance"
             );
