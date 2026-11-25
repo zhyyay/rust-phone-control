@@ -56,6 +56,10 @@ thread_local! {
     /// Parent HWND captured when the owned child was created. A recreated GPUI
     /// window invalidates the old child and requires a fresh native surface.
     static NATIVE_VIDEO_CHILD_PARENT_HWND: Cell<isize> = const { Cell::new(0) };
+    /// Last applied child rectangle; avoids redundant SetWindowPos calls on
+    /// every GPUI prepaint when the preview layout has not changed.
+    static NATIVE_VIDEO_CHILD_BOUNDS: Cell<Option<(i32, i32, i32, i32)>> =
+        const { Cell::new(None) };
 }
 
 /// Resolve GPUI's current Windows window handle and initialize the thread-local D3D11 device.
@@ -141,6 +145,7 @@ pub(crate) fn sync_native_video_surface(
             child_raw = created.0 as isize;
             child_cell.set(child_raw);
             NATIVE_VIDEO_CHILD_PARENT_HWND.with(|stored_parent| stored_parent.set(parent));
+            NATIVE_VIDEO_CHILD_BOUNDS.with(|bounds| bounds.set(None));
             tracing::info!(
                 hwnd = format!("{child_raw:#x}"),
                 parent = format!("{parent:#x}"),
@@ -149,20 +154,25 @@ pub(crate) fn sync_native_video_surface(
         }
 
         let child_hwnd = HWND(child_raw as *mut c_void);
-        // SAFETY: child_hwnd is owned by this thread-local host and remains
-        // parented to the current GPUI HWND.
-        unsafe {
-            SetWindowPos(
-                child_hwnd,
-                None,
-                x,
-                y,
-                width,
-                height,
-                SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOZORDER | SWP_NOREDRAW,
-            )
+        let requested_bounds = (x, y, width, height);
+        let previous_bounds = NATIVE_VIDEO_CHILD_BOUNDS.with(Cell::get);
+        if previous_bounds != Some(requested_bounds) {
+            // SAFETY: child_hwnd is owned by this thread-local host and remains
+            // parented to the current GPUI HWND.
+            unsafe {
+                SetWindowPos(
+                    child_hwnd,
+                    None,
+                    x,
+                    y,
+                    width,
+                    height,
+                    SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOZORDER | SWP_NOREDRAW,
+                )
+            }
+            .context("SetWindowPos failed while synchronizing the video child surface")?;
+            NATIVE_VIDEO_CHILD_BOUNDS.with(|bounds| bounds.set(Some(requested_bounds)));
         }
-        .context("SetWindowPos failed while synchronizing the video child surface")?;
 
         // Bring up the HWND-bound swap chain on the same GPUI thread as the
         // D3D11 immediate context. It remains hidden until a real decoded frame
@@ -188,6 +198,7 @@ pub(crate) fn destroy_native_video_surface() {
     NATIVE_VIDEO_CHILD_HWND.with(|child_cell| {
         let child_raw = child_cell.replace(0);
         NATIVE_VIDEO_CHILD_PARENT_HWND.with(|stored_parent| stored_parent.set(0));
+        NATIVE_VIDEO_CHILD_BOUNDS.with(|bounds| bounds.set(None));
         if child_raw == 0 {
             return;
         }
