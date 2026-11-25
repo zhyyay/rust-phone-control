@@ -1068,6 +1068,7 @@ pub fn serve_with_fairplay_provider(
                     &mut media_receiver,
                     &mut fairplay_ekey,
                     &mut fairplay_eiv,
+                    fairplay_video_key.as_deref(),
                     pair_verify_shared_secret.as_deref(),
                 ) {
                     Ok(body) => write_binary_plist_response(&mut stream, &request.cseq, &body)?,
@@ -1365,6 +1366,7 @@ fn handle_setup_request(
     media_receiver: &mut Option<MediaSession>,
     fairplay_ekey: &mut Option<Zeroizing<[u8; 72]>>,
     fairplay_eiv: &mut Option<Zeroizing<[u8; 16]>>,
+    fairplay_video_key: Option<&Zeroizing<[u8; 16]>>,
     pair_verify_shared_secret: Option<&[u8; 32]>,
 ) -> Result<Vec<u8>, (u16, String)> {
     let setup = setup::parse_setup_request(body).map_err(|reason| (400, reason))?;
@@ -1453,6 +1455,14 @@ fn handle_setup_request(
                 ));
             }
 
+            let Some(video_key) = fairplay_video_key else {
+                return Err((
+                    455,
+                    "screen mirroring stream SETUP requires completed FairPlay authentication"
+                        .to_owned(),
+                ));
+            };
+
             let (media_foundation, frames) =
                 super::media_pipeline_context().unwrap_or_else(|error| {
                     tracing::warn!(%error, "Could not obtain AirPlay decoder presentation context");
@@ -1464,9 +1474,7 @@ fn handle_setup_request(
                     connection_id: stream.connection_id,
                     pair_verify_shared_secret: pair_verify_shared_secret
                         .map(|secret| Zeroizing::new(*secret)),
-                    // FairPlay key recovery is not yet wired into the media pipeline.
-                    // Keep the stream fail-closed rather than referencing unavailable key material.
-                    fairplay_video_key: None,
+                    fairplay_video_key: Some(Zeroizing::new(**video_key)),
                     media_foundation,
                     frames,
                 },
@@ -2347,6 +2355,58 @@ mod tests {
     }
 
     #[test]
+    #[test]
+    fn screen_stream_setup_requires_completed_fairplay_authentication() {
+        let mut session = Dictionary::new();
+        session.insert("sessionUUID".into(), Value::String("test-session".into()));
+        session.insert("isScreenMirroringSession".into(), Value::Boolean(true));
+        let session_body =
+            plist::encode_binary(&Value::Dictionary(session)).expect("encode session setup");
+
+        let peer_ip = "127.0.0.1".parse().expect("loopback IP");
+        let mut event = None;
+        let mut timing = None;
+        let mut media = None;
+        handle_setup_request(
+            &session_body,
+            peer_ip,
+            &mut event,
+            &mut timing,
+            &mut media,
+            &mut None,
+            &mut None,
+            None,
+            None,
+        )
+        .expect("session SETUP");
+
+        let mut stream = Dictionary::new();
+        stream.insert("type".into(), Value::Integer(110.into()));
+        stream.insert("streamConnectionID".into(), Value::Integer(42.into()));
+        let mut root = Dictionary::new();
+        root.insert(
+            "streams".into(),
+            Value::Array(vec![Value::Dictionary(stream)]),
+        );
+        let stream_body =
+            plist::encode_binary(&Value::Dictionary(root)).expect("encode stream setup");
+
+        let error = handle_setup_request(
+            &stream_body,
+            peer_ip,
+            &mut event,
+            &mut timing,
+            &mut media,
+            &mut None,
+            &mut None,
+            None,
+            None,
+        )
+        .expect_err("stream SETUP without FairPlay must fail closed");
+        assert_eq!(error.0, 455);
+        assert!(media.is_none());
+    }
+
     fn session_and_video_stream_setup_negotiate_ephemeral_ports() {
         let mut session = Dictionary::new();
         session.insert("sessionUUID".into(), Value::String("test-session".into()));
