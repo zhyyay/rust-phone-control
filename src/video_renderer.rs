@@ -212,13 +212,70 @@ pub(crate) fn upload_bgra_frame(
     stride: usize,
     data: &[u8],
 ) -> anyhow::Result<()> {
-    THREAD_RENDERER.with(|renderer| {
+    let initial_result = THREAD_RENDERER.with(|renderer| {
         let mut renderer = renderer.borrow_mut();
         let device = renderer
             .as_mut()
             .ok_or_else(|| anyhow!("D3D11 renderer has not been initialized for a GPUI window"))?;
         device.upload_bgra(width, height, stride, data)?;
-        let present_time = device.draw_video_frame()?;
+        device.draw_video_frame()
+    });
+
+    let present_time = match initial_result {
+        Ok(elapsed) => elapsed,
+        Err(original_error) => {
+            // Rebuild only when the driver reports device removal/reset. Shader,
+            // validation, and ordinary resize errors remain visible to the caller.
+            let removed = THREAD_RENDERER.with(|renderer| {
+                let renderer = renderer.borrow();
+                renderer.as_ref().and_then(|device| {
+                    device
+                        .device
+                        .GetDeviceRemovedReason()
+                        .err()
+                        .map(|reason| (reason, device.swap_chain_size))
+                })
+            });
+            let Some((reason, Some((surface_width, surface_height)))) = removed else {
+                return Err(original_error);
+            };
+            let child_raw = NATIVE_VIDEO_CHILD_HWND.with(Cell::get);
+            if child_raw == 0 {
+                return Err(original_error);
+            }
+
+            tracing::warn!(
+                error = %reason,
+                "D3D11 device was removed; rebuilding preview device and resources"
+            );
+            let mut replacement = D3d11Device::create_hardware()
+                .context("could not recreate D3D11 device after device removal")?;
+            replacement.ensure_swap_chain(
+                HWND(child_raw as *mut c_void),
+                surface_width,
+                surface_height,
+            )?;
+            THREAD_RENDERER.with(|renderer| {
+                *renderer.borrow_mut() = Some(replacement);
+            });
+
+            THREAD_RENDERER.with(|renderer| {
+                let mut renderer = renderer.borrow_mut();
+                let device = renderer
+                    .as_mut()
+                    .ok_or_else(|| anyhow!("replacement D3D11 device is unavailable"))?;
+                device.upload_bgra(width, height, stride, data)?;
+                device.draw_video_frame()
+            })
+            .context("D3D11 preview retry failed after device recreation")?
+        }
+    };
+
+    THREAD_RENDERER.with(|renderer| {
+        let mut renderer = renderer.borrow_mut();
+        let device = renderer
+            .as_mut()
+            .ok_or_else(|| anyhow!("D3D11 renderer is unavailable after Present"))?;
         device.stats_frames += 1;
         let elapsed = device.stats_window_started.elapsed();
         if elapsed >= std::time::Duration::from_secs(1) {
@@ -232,14 +289,16 @@ pub(crate) fn upload_bgra_frame(
             device.stats_frames = 0;
             device.stats_window_started = Instant::now();
         }
-        let child_raw = NATIVE_VIDEO_CHILD_HWND.with(Cell::get);
-        if child_raw != 0 {
-            // SAFETY: this module owns the child HWND and reveals it only after
-            // a successful draw and Present on the same UI thread.
-            unsafe { ShowWindow(HWND(child_raw as *mut c_void), SW_SHOW) };
-        }
         Ok(())
-    })
+    })?;
+
+    let child_raw = NATIVE_VIDEO_CHILD_HWND.with(Cell::get);
+    if child_raw != 0 {
+        // SAFETY: this module owns the child HWND and reveals it only after
+        // a successful draw and Present on the same UI thread.
+        unsafe { ShowWindow(HWND(child_raw as *mut c_void), SW_SHOW) };
+    }
+    Ok(())
 }
 
 /// Owns D3D11 objects on the thread that created them.
