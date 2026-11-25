@@ -1082,8 +1082,8 @@ impl LatestFrameMailbox {
         }
         // The final row only needs its visible pixel bytes; decoder buffers
         // are not required to include padding after the last row.
-        let rows_before_last = usize::try_from(frame.height - 1)
-            .map_err(|_| FrameMailboxError::InvalidStride)?;
+        let rows_before_last =
+            usize::try_from(frame.height - 1).map_err(|_| FrameMailboxError::InvalidStride)?;
         let required_bytes = frame
             .stride
             .checked_mul(rows_before_last)
@@ -1139,7 +1139,8 @@ impl LatestFrameMailbox {
         let mut slot = self.frame.lock().map_err(|_| FrameMailboxError::Poisoned)?;
         let sequence = self.sequence.fetch_add(1, Ordering::AcqRel).wrapping_add(1);
         if slot.is_some() {
-            self.replaced_before_consumption.fetch_add(1, Ordering::Relaxed);
+            self.replaced_before_consumption
+                .fetch_add(1, Ordering::Relaxed);
         }
         *slot = Some((sequence, Arc::new(frame), Instant::now()));
         self.published.fetch_add(1, Ordering::Relaxed);
