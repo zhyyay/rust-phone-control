@@ -1897,6 +1897,45 @@ mod tests {
     }
 
     #[test]
+    fn latest_frame_mailbox_retains_nv12_without_bgra_conversion() {
+        let mailbox = LatestFrameMailbox::new();
+        let mut data = vec![128u8; 6 * 4 + 6 + 4];
+        data[..24].fill(100);
+        assert_eq!(
+            mailbox.publish_nv12(OwnedNv12Frame {
+                width: 4,
+                height: 4,
+                stride: 6,
+                data,
+            }),
+            Ok(1)
+        );
+        let snapshot = mailbox.take_latest().unwrap().unwrap();
+        match snapshot.frame.as_ref() {
+            DecodedVideoFrame::Nv12(frame) => {
+                assert_eq!((frame.width, frame.height, frame.stride), (4, 4, 6));
+                assert_eq!(frame.data.len(), 34);
+            }
+            DecodedVideoFrame::Bgra(_) => panic!("expected native NV12 frame"),
+        }
+    }
+
+    #[test]
+    fn latest_frame_mailbox_rejects_truncated_nv12_buffer() {
+        let mailbox = LatestFrameMailbox::new();
+        assert_eq!(
+            mailbox.publish_nv12(OwnedNv12Frame {
+                width: 4,
+                height: 4,
+                stride: 6,
+                data: vec![0; 33],
+            }),
+            Err(FrameMailboxError::BufferTooSmall)
+        );
+        assert!(!mailbox.has_pending_frame().unwrap());
+    }
+
+    #[test]
     fn latest_frame_mailbox_accepts_bgra_without_trailing_last_row_padding() {
         let mailbox = LatestFrameMailbox::new();
         let frame = BgraFrame {
