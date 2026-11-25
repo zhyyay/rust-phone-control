@@ -1112,9 +1112,7 @@ fn decoded_frame_to_bmp(
         return Err("frame conversion cancelled");
     }
     match frame {
-        crate::airplay::DecodedVideoFrame::Bgra(frame) => {
-            bgra_frame_to_bmp(frame, is_cancelled)
-        }
+        crate::airplay::DecodedVideoFrame::Bgra(frame) => bgra_frame_to_bmp(frame, is_cancelled),
         crate::airplay::DecodedVideoFrame::Nv12(frame) => crate::airplay::Nv12Frame {
             width: frame.width,
             height: frame.height,
