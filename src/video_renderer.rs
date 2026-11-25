@@ -1225,6 +1225,20 @@ float4 PSMain(VertexOutput input) : SV_Target {
         let uv_full_len = uv_stride
             .checked_mul(height as usize / 2)
             .ok_or_else(|| anyhow!("NV12 UV upload size overflow"))?;
+        let full_frame_bytes = y_bytes
+            .checked_add(uv_full_len)
+            .ok_or_else(|| anyhow!("NV12 full upload size overflow"))?;
+        const MAX_NV12_UPLOAD_BYTES: usize = 128 * 1024 * 1024;
+        if full_frame_bytes > MAX_NV12_UPLOAD_BYTES {
+            bail!(
+                "NV12 padded upload exceeds the 128 MiB limit: {full_frame_bytes} bytes"
+            );
+        }
+        let y_row_pitch =
+            u32::try_from(y_stride).context("NV12 Y row pitch exceeds the D3D11 limit")?;
+        let uv_row_pitch =
+            u32::try_from(uv_stride).context("NV12 UV row pitch exceeds the D3D11 limit")?;
+
         // Most decoder buffers already include final-row padding. Only make a
         // padded scratch plane when the source omits that final padding.
         let uv_upload = if uv_required == uv_full_len {
@@ -1234,11 +1248,6 @@ float4 PSMain(VertexOutput input) : SV_Target {
             padded[..uv_required].copy_from_slice(&data[y_bytes..y_bytes + uv_required]);
             Some(padded)
         };
-        let y_row_pitch =
-            u32::try_from(y_stride).context("NV12 Y row pitch exceeds the D3D11 limit")?;
-        let uv_row_pitch =
-            u32::try_from(uv_stride).context("NV12 UV row pitch exceeds the D3D11 limit")?;
-
         if self.nv12_texture_size != Some((width, height)) {
             let make_desc = |texture_width, texture_height, format| D3D11_TEXTURE2D_DESC {
                 Width: texture_width,
