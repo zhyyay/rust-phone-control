@@ -271,7 +271,7 @@ impl Render for PhoneControlApp {
                                 }
                             };
                             let upload_elapsed = upload_started.elapsed();
-                            let (display_path, fallback_bytes, conversion_elapsed) =
+                            let (display_path, used_fallback, conversion_elapsed) =
                                 match native_present {
                                     Ok(()) => {
                                         // The native child surface owns the visible
@@ -306,12 +306,13 @@ impl Render for PhoneControlApp {
                                         };
                                         match fallback {
                                             Ok(bytes) => {
-                                                this.preview_image = Some(Arc::new(
-                                                    Image::from_bytes(ImageFormat::Bmp, bytes.clone()),
-                                                ));
+                                                this.preview_image = Some(Arc::new(Image::from_bytes(
+                                                    ImageFormat::Bmp,
+                                                    bytes,
+                                                )));
                                                 (
                                                     "GPUI 图像回退（D3D11 不可用）",
-                                                    Some(bytes),
+                                                    true,
                                                     conversion_started.elapsed(),
                                                 )
                                             }
@@ -335,7 +336,7 @@ impl Render for PhoneControlApp {
                                 mailbox_age_ms = mailbox_age.as_secs_f64() * 1000.0,
                                 fallback_conversion_ms = conversion_elapsed.as_secs_f64() * 1000.0,
                                 d3d11_upload_ms = upload_elapsed.as_secs_f64() * 1000.0,
-                                fallback_frame = fallback_bytes.is_some(),
+                                fallback_frame = used_fallback,
                                 "Video frame pipeline latency"
                             );
 
