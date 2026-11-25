@@ -11,7 +11,6 @@ use std::{
     marker::PhantomData,
     rc::Rc,
 };
-use windows_062::core::PCWSTR;
 use windows_062::Win32::{
     Foundation::{HMODULE, HWND},
     Graphics::{
@@ -29,6 +28,7 @@ use windows_062::Win32::{
         WS_CLIPCHILDREN, WS_CLIPSIBLINGS,
     },
 };
+use windows_062::core::PCWSTR;
 
 thread_local! {
     /// D3D11 immediate contexts remain on the GPUI thread that first initializes them.
