@@ -283,7 +283,7 @@ pub(crate) fn upload_bgra_frame(
         }
     };
 
-    THREAD_RENDERER.with(|renderer| {
+    let stats_result: anyhow::Result<()> = THREAD_RENDERER.with(|renderer| {
         let mut renderer = renderer.borrow_mut();
         let device = renderer
             .as_mut()
@@ -301,8 +301,9 @@ pub(crate) fn upload_bgra_frame(
             device.stats_frames = 0;
             device.stats_window_started = Instant::now();
         }
-        Ok::<(), anyhow::Error>(())
-    })?;
+        Ok(())
+    });
+    stats_result?;
 
     let child_raw = NATIVE_VIDEO_CHILD_HWND.with(Cell::get);
     if child_raw != 0 {
