@@ -378,28 +378,31 @@ impl<'runtime> H264Decoder<'runtime> {
         }
 
         let output_type = selected_output.ok_or(MediaFoundationError::Nv12OutputUnavailable)?;
-        let dimensions = unsafe { output_type.GetUINT64(&MF_MT_FRAME_SIZE) }.ok();
         unsafe {
             self.transform
                 .SetOutputType(self.output_stream, &output_type, 0)
         }
         .map_err(|error| MediaFoundationError::OutputTypeFailed(error.code().0))?;
 
-        if let Some(frame_size) = dimensions {
-            let width = (frame_size >> 32) as u32;
-            let height = frame_size as u32;
-            if width == 0
-                || height == 0
-                || width % 2 != 0
-                || height % 2 != 0
-                || width > crate::airplay::video::MAX_FRAME_DIMENSION
-                || height > crate::airplay::video::MAX_FRAME_DIMENSION
-            {
-                return Err(MediaFoundationError::InvalidDimensions);
-            }
-            self.width = width;
-            self.height = height;
+        // Read the committed type rather than trusting the enumerated
+        // candidate: transforms may adjust attributes while accepting it.
+        let current_type = unsafe { self.transform.GetOutputCurrentType(self.output_stream) }
+            .map_err(|error| MediaFoundationError::OutputInfoFailed(error.code().0))?;
+        let frame_size = unsafe { current_type.GetUINT64(&MF_MT_FRAME_SIZE) }
+            .map_err(|error| MediaFoundationError::OutputInfoFailed(error.code().0))?;
+        let width = (frame_size >> 32) as u32;
+        let height = frame_size as u32;
+        if width == 0
+            || height == 0
+            || width % 2 != 0
+            || height % 2 != 0
+            || width > crate::airplay::video::MAX_FRAME_DIMENSION
+            || height > crate::airplay::video::MAX_FRAME_DIMENSION
+        {
+            return Err(MediaFoundationError::InvalidDimensions);
         }
+        self.width = width;
+        self.height = height;
 
         tracing::info!(
             width = self.width,
@@ -585,20 +588,47 @@ impl<'runtime> H264Decoder<'runtime> {
             // current length must cover every pitched row in both NV12 planes.
             let output_type = unsafe { self.transform.GetOutputCurrentType(self.output_stream) }
                 .map_err(|error| MediaFoundationError::OutputInfoFailed(error.code().0))?;
+            // The current sample's negotiated media type is authoritative.
+            // Keep frame metadata synchronized even if a transform changes
+            // dimensions without a separate stream-change notification.
+            let frame_size = unsafe { output_type.GetUINT64(&MF_MT_FRAME_SIZE) }
+                .map_err(|error| MediaFoundationError::OutputInfoFailed(error.code().0))?;
+            let width = (frame_size >> 32) as u32;
+            let height = frame_size as u32;
+            if width == 0
+                || height == 0
+                || width % 2 != 0
+                || height % 2 != 0
+                || width > crate::airplay::video::MAX_FRAME_DIMENSION
+                || height > crate::airplay::video::MAX_FRAME_DIMENSION
+            {
+                return Err(MediaFoundationError::InvalidDimensions);
+            }
+            if (width, height) != (self.width, self.height) {
+                tracing::info!(
+                    old_width = self.width,
+                    old_height = self.height,
+                    width,
+                    height,
+                    "Media Foundation decoder output resolution changed"
+                );
+                self.width = width;
+                self.height = height;
+            }
             let signed_stride = unsafe { output_type.GetUINT32(&MF_MT_DEFAULT_STRIDE) }
                 .map(|value| value as i32)
-                .unwrap_or(self.width as i32);
+                .unwrap_or(width as i32);
             let stride = signed_stride.unsigned_abs() as usize;
-            if stride < self.width as usize {
+            if stride < width as usize {
                 return Err(MediaFoundationError::FrameConversion(
                     crate::airplay::video::FrameConversionError::InvalidStride,
                 ));
             }
             let y_bytes = stride
-                .checked_mul(self.height as usize)
+                .checked_mul(height as usize)
                 .ok_or(MediaFoundationError::FrameSizeOverflow)?;
             let uv_bytes = stride
-                .checked_mul(self.height as usize / 2)
+                .checked_mul(height as usize / 2)
                 .ok_or(MediaFoundationError::FrameSizeOverflow)?;
             let required_length = y_bytes
                 .checked_add(uv_bytes)
@@ -635,16 +665,16 @@ impl<'runtime> H264Decoder<'runtime> {
             if signed_stride < 0 {
                 crate::airplay::video::normalize_nv12_bottom_up(
                     &mut data,
-                    self.width,
-                    self.height,
+                    width,
+                    height,
                     stride,
                 )
                 .map_err(MediaFoundationError::FrameConversion)?;
             }
 
             return Ok(Some(DecodedNv12Frame {
-                width: self.width,
-                height: self.height,
+                width,
+                height,
                 stride,
                 data,
             }));
