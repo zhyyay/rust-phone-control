@@ -301,7 +301,7 @@ pub(crate) fn upload_bgra_frame(
             device.stats_frames = 0;
             device.stats_window_started = Instant::now();
         }
-        Ok(())
+        Ok::<(), anyhow::Error>(())
     })?;
 
     let child_raw = NATIVE_VIDEO_CHILD_HWND.with(Cell::get);
