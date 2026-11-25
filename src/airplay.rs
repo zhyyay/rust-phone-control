@@ -48,6 +48,8 @@ mod video;
 use sha2::Digest;
 #[cfg(windows)]
 use std::sync::{Arc, Mutex, OnceLock};
+#[cfg(windows)]
+use std::sync::atomic::{AtomicU8, Ordering};
 
 #[cfg(windows)]
 pub use video::{
@@ -64,6 +66,30 @@ struct ReceiverRuntime {
 
 #[cfg(windows)]
 static RECEIVER: OnceLock<Mutex<Option<ReceiverRuntime>>> = OnceLock::new();
+#[cfg(windows)]
+static PIPELINE_STAGE: AtomicU8 = AtomicU8::new(0);
+
+/// Current observed RTSP pipeline stage; this reports protocol events, not inferred readiness.
+#[cfg(windows)]
+pub fn pipeline_status_label() -> &'static str {
+    match PIPELINE_STAGE.load(Ordering::Acquire) {
+        0 => "AirPlay：未启动",
+        1 => "AirPlay：等待 iPhone 连接",
+        2 => "RTSP：iPhone 已连接，等待配对验证",
+        3 => "配对验证通过：等待 FairPlay SAP",
+        4 => "FairPlay 阻塞：未配置授权 SAP Provider",
+        5 => "FairPlay：Provider 已返回 M2，等待后续消息",
+        6 => "RTSP SETUP：媒体会话已协商",
+        7 => "RTSP RECORD：发送端已开始媒体会话",
+        _ => "AirPlay：状态未知",
+    }
+}
+
+#[cfg(windows)]
+pub(super) fn set_pipeline_stage(stage: u8) {
+    PIPELINE_STAGE.store(stage, Ordering::Release);
+}
+
 
 // Serialize start/stop transitions without holding the receiver data lock
 // while network workers are joined. RTSP workers only need RECEIVER, never
@@ -290,6 +316,7 @@ fn start_inner(fairplay_provider: Option<Arc<dyn FairPlaySapProvider>>) -> anyho
     let mut runtime = receiver_slot()
         .lock()
         .map_err(|_| anyhow::anyhow!("AirPlay runtime lock is poisoned"))?;
+    PIPELINE_STAGE.store(1, Ordering::Release);
     *runtime = Some(ReceiverRuntime {
         server,
         advertisement,
@@ -383,6 +410,7 @@ pub fn stop() -> anyhow::Result<()> {
         slot.take()
     };
 
+    PIPELINE_STAGE.store(0, Ordering::Release);
     let Some(runtime) = runtime else {
         tracing::debug!("AirPlay stop requested while receiver is already stopped");
         return Ok(());
