@@ -115,7 +115,9 @@ pub(crate) fn sync_native_video_surface(
     height: i32,
 ) -> anyhow::Result<()> {
     if width <= 0 || height <= 0 {
-        destroy_native_video_surface();
+        // A minimized/temporarily hidden preview is not a teardown. Keep the
+        // child HWND so restoring the window can reuse it without churn.
+        suspend_native_video_surface();
         return Ok(());
     }
 
@@ -209,6 +211,42 @@ pub(crate) fn sync_native_video_surface(
         }
         Ok(())
     })
+}
+
+/// Suspend the preview while its GPUI layout has no drawable area.
+///
+/// Keep the child HWND attached to its parent, but release the HWND-bound DXGI
+/// resources. On restore, sync_native_video_surface reuses the child and
+/// ensure_swap_chain creates a fresh chain for the new non-zero dimensions.
+fn suspend_native_video_surface() {
+    NATIVE_VIDEO_CHILD_HWND.with(|child_cell| {
+        let child_raw = child_cell.get();
+        NATIVE_VIDEO_CHILD_BOUNDS.with(|bounds| bounds.set(None));
+
+        if child_raw != 0 {
+            // SAFETY: this module owns the child HWND and this runs on its UI thread.
+            unsafe { ShowWindow(HWND(child_raw as *mut c_void), SW_HIDE) };
+        }
+
+        THREAD_RENDERER.with(|renderer| {
+            let mut renderer = renderer.borrow_mut();
+            if let Some(device) = renderer.as_mut() {
+                // The immediate context retains bound RTV references. Unbind
+                // before releasing the back buffer and swap chain.
+                // SAFETY: the RTV belongs to this renderer and its immediate context.
+                unsafe {
+                    device.immediate_context.OMSetRenderTargets(
+                        None,
+                        None::<&windows_062::Win32::Graphics::Direct3D11::ID3D11DepthStencilView>,
+                    );
+                }
+                device.render_target_view = None;
+                device.swap_chain = None;
+                device.swap_chain_size = None;
+                device.swap_chain_hwnd = 0;
+            }
+        });
+    });
 }
 
 /// Hide the native surface so the GPUI bitmap fallback is not covered by a stale frame.
