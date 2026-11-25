@@ -966,7 +966,7 @@ impl CodecParameterSets {
 /// from causing unbounded allocations in the presentation pipeline.
 pub const MAX_FRAME_DIMENSION: u32 = 8192;
 
-/// Maximum decoded BGRA frame retained by the preview mailbox (128 MiB).
+/// Maximum decoded frame retained by the preview mailbox (128 MiB).
 /// This caps retained memory independently of the dimension limit.
 pub const MAX_BGRA_FRAME_BYTES: usize = 128 * 1024 * 1024;
 
@@ -1114,11 +1114,18 @@ impl LatestFrameMailbox {
         if frame.stride < width {
             return Err(FrameMailboxError::InvalidStride);
         }
-        let y_bytes = frame.stride.checked_mul(height).ok_or(FrameMailboxError::InvalidStride)?;
-        let uv_required = frame.stride.checked_mul(height / 2 - 1)
+        let y_bytes = frame
+            .stride
+            .checked_mul(height)
+            .ok_or(FrameMailboxError::InvalidStride)?;
+        let uv_required = frame
+            .stride
+            .checked_mul(height / 2 - 1)
             .and_then(|bytes| bytes.checked_add(width))
             .ok_or(FrameMailboxError::InvalidStride)?;
-        let required = y_bytes.checked_add(uv_required).ok_or(FrameMailboxError::InvalidStride)?;
+        let required = y_bytes
+            .checked_add(uv_required)
+            .ok_or(FrameMailboxError::InvalidStride)?;
         if required > MAX_BGRA_FRAME_BYTES {
             return Err(FrameMailboxError::FrameTooLarge);
         }
@@ -1209,7 +1216,7 @@ impl std::fmt::Display for FrameMailboxError {
                 f.write_str("decoded frame buffer is smaller than its dimensions")
             }
             Self::FrameTooLarge => {
-                f.write_str("decoded frame exceeds the maximum retained BGRA frame size")
+                f.write_str("decoded frame exceeds the maximum retained frame size")
             }
         }
     }
