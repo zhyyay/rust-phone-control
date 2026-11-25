@@ -259,15 +259,16 @@ pub(crate) fn upload_bgra_frame(
                 *renderer.borrow_mut() = Some(replacement);
             });
 
-            THREAD_RENDERER.with(|renderer| {
-                let mut renderer = renderer.borrow_mut();
-                let device = renderer
-                    .as_mut()
-                    .ok_or_else(|| anyhow!("replacement D3D11 device is unavailable"))?;
-                device.upload_bgra(width, height, stride, data)?;
-                device.draw_video_frame()
-            })
-            .context("D3D11 preview retry failed after device recreation")?
+            THREAD_RENDERER
+                .with(|renderer| {
+                    let mut renderer = renderer.borrow_mut();
+                    let device = renderer
+                        .as_mut()
+                        .ok_or_else(|| anyhow!("replacement D3D11 device is unavailable"))?;
+                    device.upload_bgra(width, height, stride, data)?;
+                    device.draw_video_frame()
+                })
+                .context("D3D11 preview retry failed after device recreation")?
         }
     };
 
