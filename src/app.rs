@@ -271,8 +271,12 @@ impl Render for PhoneControlApp {
                             match result {
                                 Ok((sequence, frame, bytes, mailbox_age, conversion_elapsed)) => {
                                     let (width, height) = match frame.as_ref() {
-                                        crate::airplay::DecodedVideoFrame::Bgra(frame) => (frame.width, frame.height),
-                                        crate::airplay::DecodedVideoFrame::Nv12(frame) => (frame.width, frame.height),
+                                        crate::airplay::DecodedVideoFrame::Bgra(frame) => {
+                                            (frame.width, frame.height)
+                                        }
+                                        crate::airplay::DecodedVideoFrame::Nv12(frame) => {
+                                            (frame.width, frame.height)
+                                        }
                                     };
                                     let upload_started = Instant::now();
 
@@ -282,12 +286,18 @@ impl Render for PhoneControlApp {
                                     let native_present = match frame.as_ref() {
                                         crate::airplay::DecodedVideoFrame::Bgra(frame) => {
                                             crate::video_renderer::upload_bgra_frame(
-                                                width, height, frame.stride, &frame.data,
+                                                width,
+                                                height,
+                                                frame.stride,
+                                                &frame.data,
                                             )
                                         }
                                         crate::airplay::DecodedVideoFrame::Nv12(frame) => {
                                             crate::video_renderer::upload_nv12_frame(
-                                                width, height, frame.stride, &frame.data,
+                                                width,
+                                                height,
+                                                frame.stride,
+                                                &frame.data,
                                             )
                                         }
                                     };
