@@ -383,6 +383,8 @@ pub(crate) struct D3d11Device {
     video_texture_size: Option<(u32, u32)>,
     nv12_y_texture: Option<ID3D11Texture2D>,
     nv12_uv_texture: Option<ID3D11Texture2D>,
+    _nv12_y_view: Option<ID3D11ShaderResourceView>,
+    _nv12_uv_view: Option<ID3D11ShaderResourceView>,
     nv12_texture_size: Option<(u32, u32)>,
     swap_chain: Option<IDXGISwapChain1>,
     swap_chain_hwnd: isize,
@@ -436,6 +438,8 @@ impl D3d11Device {
             video_texture_size: None,
             nv12_y_texture: None,
             nv12_uv_texture: None,
+            _nv12_y_view: None,
+            _nv12_uv_view: None,
             nv12_texture_size: None,
             swap_chain: None,
             swap_chain_hwnd: 0,
@@ -909,8 +913,21 @@ float4 PSMain(VertexOutput input) : SV_Target {
                 self.device.CreateTexture2D(&uv_desc, None, Some(&mut uv_texture))
                     .context("could not create the D3D11 NV12 UV texture")?;
             }
-            self.nv12_y_texture = Some(y_texture.ok_or_else(|| anyhow!("D3D11 returned no NV12 Y texture"))?);
-            self.nv12_uv_texture = Some(uv_texture.ok_or_else(|| anyhow!("D3D11 returned no NV12 UV texture"))?);
+            let y_texture = y_texture.ok_or_else(|| anyhow!("D3D11 returned no NV12 Y texture"))?;
+            let uv_texture = uv_texture.ok_or_else(|| anyhow!("D3D11 returned no NV12 UV texture"))?;
+            let mut y_view = None;
+            let mut uv_view = None;
+            // SAFETY: both textures were created with D3D11_BIND_SHADER_RESOURCE.
+            unsafe {
+                self.device.CreateShaderResourceView(&y_texture, None, Some(&mut y_view))
+                    .context("could not create the D3D11 NV12 Y shader view")?;
+                self.device.CreateShaderResourceView(&uv_texture, None, Some(&mut uv_view))
+                    .context("could not create the D3D11 NV12 UV shader view")?;
+            }
+            self.nv12_y_texture = Some(y_texture);
+            self.nv12_uv_texture = Some(uv_texture);
+            self._nv12_y_view = y_view;
+            self._nv12_uv_view = uv_view;
             self.nv12_texture_size = Some((width, height));
             tracing::info!(width, height, stride, "D3D11 NV12 plane textures allocated");
         }
