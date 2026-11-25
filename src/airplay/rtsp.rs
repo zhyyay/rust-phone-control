@@ -2375,7 +2375,6 @@ mod tests {
             &mut None,
             &mut None,
             None,
-            None,
         )
         .expect("session SETUP");
 
@@ -2398,7 +2397,6 @@ mod tests {
             &mut media,
             &mut None,
             &mut None,
-            None,
             None,
         )
         .expect_err("stream SETUP without FairPlay must fail closed");
@@ -2898,8 +2896,8 @@ mod tests {
                 &mut media,
                 &mut None,
                 &mut None,
-                None
-            None,
+                None,
+                None,
         )
             .unwrap_err()
             .0,
@@ -2939,8 +2937,8 @@ mod tests {
                 &mut media,
                 &mut None,
                 &mut None,
-                None
-            None,
+                None,
+                None,
         )
             .unwrap_err()
             .0,
