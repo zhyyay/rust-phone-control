@@ -5,7 +5,17 @@ use gpui_kit::component::{
 use gpui_kit::*;
 
 #[cfg(windows)]
-use std::{sync::Arc, time::Duration};
+use std::{sync::{Arc, Mutex}, time::Duration};
+
+#[cfg(windows)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct PreviewSurfaceBounds {
+    /// Preview rectangle origin relative to the GPUI client-area origin, in device pixels.
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+}
 
 #[derive(Default)]
 pub struct PhoneControlApp {
@@ -22,6 +32,9 @@ pub struct PhoneControlApp {
     preview_image: Option<Arc<Image>>,
     #[cfg(windows)]
     preview_status: String,
+    /// Latest measured preview rectangle, shared with the future native-surface host.
+    #[cfg(windows)]
+    preview_surface_bounds: Arc<Mutex<Option<PreviewSurfaceBounds>>>,
     #[cfg(windows)]
     renderer_init_attempted: bool,
     #[cfg(windows)]
@@ -398,6 +411,9 @@ fn render_left_sidebar(app: &PhoneControlApp, cx: &Context<PhoneControlApp>) -> 
 }
 
 fn render_preview_column(app: &PhoneControlApp, cx: &Context<PhoneControlApp>) -> impl IntoElement {
+    #[cfg(windows)]
+    let preview_surface_bounds = Arc::clone(&app.preview_surface_bounds);
+
     div()
         .flex()
         .flex_col()
@@ -455,7 +471,35 @@ fn render_preview_column(app: &PhoneControlApp, cx: &Context<PhoneControlApp>) -
                 .items_center()
                 .justify_center()
                 .p_2()
-                .child(preview_panel_for_app(app)),
+                .child(preview_panel_for_app(app))
+                .on_children_prepainted(move |children, window, _cx| {
+                    let next = children.first().map(|bounds| {
+                        let scale = window.scale_factor();
+                        PreviewSurfaceBounds {
+                            x: (bounds.origin.x.0 * scale).round() as i32,
+                            y: (bounds.origin.y.0 * scale).round() as i32,
+                            width: (bounds.size.width.0 * scale).round() as i32,
+                            height: (bounds.size.height.0 * scale).round() as i32,
+                        }
+                    });
+
+                    if let Ok(mut current) = preview_surface_bounds.lock() {
+                        if *current != next {
+                            *current = next;
+                            if let Some(bounds) = next {
+                                tracing::debug!(
+                                    x = bounds.x,
+                                    y = bounds.y,
+                                    width = bounds.width,
+                                    height = bounds.height,
+                                    "Measured GPUI video preview bounds in client-area device pixels"
+                                );
+                            } else {
+                                tracing::debug!("GPUI video preview bounds are not currently available");
+                            }
+                        }
+                    }
+                }),
         )
         .child(Label::new(if app.preview_status.is_empty() {
             "等待手机画面 · FairPlay 尚未配置，当前无法完成安全镜像"
