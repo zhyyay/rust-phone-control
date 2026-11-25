@@ -18,16 +18,15 @@ use windows_062::Win32::{
         Direct3D11::{
             D3D11_BIND_SHADER_RESOURCE, D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_SDK_VERSION,
             D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT, D3D11CreateDevice, ID3D11Device,
-            ID3D11DeviceContext, ID3D11RenderTargetView, ID3D11ShaderResourceView,
-            ID3D11Texture2D,
+            ID3D11DeviceContext, ID3D11RenderTargetView, ID3D11ShaderResourceView, ID3D11Texture2D,
         },
         Dxgi::{
             Common::{
                 DXGI_ALPHA_MODE_IGNORE, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_UNKNOWN,
                 DXGI_SAMPLE_DESC,
             },
-            DXGI_SCALING_STRETCH, DXGI_SWAP_CHAIN_DESC1, DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL,
-            DXGI_USAGE_RENDER_TARGET_OUTPUT, DXGI_PRESENT, DXGI_SWAP_CHAIN_FLAG, IDXGIAdapter,
+            DXGI_PRESENT, DXGI_SCALING_STRETCH, DXGI_SWAP_CHAIN_DESC1, DXGI_SWAP_CHAIN_FLAG,
+            DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL, DXGI_USAGE_RENDER_TARGET_OUTPUT, IDXGIAdapter,
             IDXGIDevice, IDXGIFactory2, IDXGISwapChain1,
         },
     },
@@ -292,8 +291,8 @@ impl D3d11Device {
                 .cast()
                 .context("could not query IDXGIDevice from the D3D11 device")?;
             // SAFETY: the device is a live D3D11 device owned by this renderer.
-            let adapter = unsafe { dxgi_device.GetAdapter() }
-                .context("IDXGIDevice::GetAdapter failed")?;
+            let adapter =
+                unsafe { dxgi_device.GetAdapter() }.context("IDXGIDevice::GetAdapter failed")?;
             // SAFETY: adapter is a valid DXGI adapter returned by the device.
             let factory: IDXGIFactory2 = unsafe { adapter.GetParent() }
                 .context("IDXGIAdapter::GetParent(IDXGIFactory2) failed")?;
@@ -379,9 +378,8 @@ impl D3d11Device {
                 .CreateRenderTargetView(&back_buffer, None, Some(&mut render_target))
         }
         .context("ID3D11Device::CreateRenderTargetView failed")?;
-        self.render_target_view = Some(
-            render_target.ok_or_else(|| anyhow!("D3D11 returned no swap-chain RTV"))?,
-        );
+        self.render_target_view =
+            Some(render_target.ok_or_else(|| anyhow!("D3D11 returned no swap-chain RTV"))?);
         Ok(())
     }
 
