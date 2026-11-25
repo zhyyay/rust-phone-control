@@ -209,6 +209,18 @@ pub(crate) fn sync_native_video_surface(
     })
 }
 
+/// Hide the native surface so the GPUI bitmap fallback is not covered by a stale frame.
+pub(crate) fn hide_native_video_surface() {
+    NATIVE_VIDEO_CHILD_HWND.with(|child_cell| {
+        let child_raw = child_cell.get();
+        if child_raw == 0 {
+            return;
+        }
+        // SAFETY: the HWND is owned by this module and this runs on its UI thread.
+        unsafe { ShowWindow(HWND(child_raw as *mut c_void), SW_HIDE) };
+    });
+}
+
 /// Destroy only the native child owned by this module; the GPUI parent is borrowed.
 pub(crate) fn destroy_native_video_surface() {
     NATIVE_VIDEO_CHILD_HWND.with(|child_cell| {
