@@ -1160,10 +1160,9 @@ float4 PSMain(VertexOutput input) : SV_Target {
                 row_pitch,
                 0,
             );
-            let uv_source = uv_upload.as_ref().map_or_else(
-                || data.as_ptr().add(y_bytes),
-                |padded| padded.as_ptr(),
-            );
+            let uv_source = uv_upload
+                .as_ref()
+                .map_or_else(|| data.as_ptr().add(y_bytes), |padded| padded.as_ptr());
             self.immediate_context.UpdateSubresource(
                 uv_texture,
                 0,
