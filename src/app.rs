@@ -201,15 +201,15 @@ impl Render for PhoneControlApp {
                     }
 
                     let metrics = if refresh_pairing {
-                        let (presented, uploaded, recoveries) =
+                        let (presented, uploaded, recoveries, render_errors) =
                             crate::video_renderer::preview_metrics();
                         let elapsed = last_metrics_at.elapsed().as_secs_f64().max(0.001);
                         let fps = presented.saturating_sub(last_presented_frames) as f64 / elapsed;
                         last_presented_frames = presented;
                         last_metrics_at = Instant::now();
                         Some(format!(
-                            "D3D11 · {:.1} FPS · Present {} · 上传 {} · 恢复尝试 {}",
-                            fps, presented, uploaded, recoveries
+                            "D3D11 · {:.1} FPS · Present {} · 上传 {} · 设备重建 {} · 渲染错误 {}",
+                            fps, presented, uploaded, recoveries, render_errors
                         ))
                     } else {
                         None
