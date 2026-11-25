@@ -297,9 +297,7 @@ impl D3d11Device {
 
     /// Create the HWND-bound DXGI swap chain and its back-buffer render target.
     ///
-    /// This bootstrap deliberately clears and presents only while the child
-    /// remains hidden. The decoded video texture is not displayed until the
-    /// shader pipeline is added and validated.
+    /// Ensure the HWND swap chain and its render target match the preview surface.
     fn ensure_swap_chain(&mut self, hwnd: HWND, width: u32, height: u32) -> anyhow::Result<()> {
         if width == 0 || height == 0 || width > 16384 || height > 16384 {
             bail!("invalid DXGI surface dimensions: {width}x{height}");
@@ -547,24 +545,38 @@ float4 PSMain(VertexOutput input) : SV_Target {
         let (width, height) = self
             .swap_chain_size
             .ok_or_else(|| anyhow!("swap-chain dimensions are not initialized"))?;
+        let (frame_width, frame_height) = self
+            .video_texture_size
+            .ok_or_else(|| anyhow!("video texture dimensions are not initialized"))?;
+
+        // Fit the source frame inside the preview surface without stretching.
+        // The unused area is cleared to black (letterbox or pillarbox).
+        let surface_aspect = width as f32 / height as f32;
+        let frame_aspect = frame_width as f32 / frame_height as f32;
+        let (viewport_width, viewport_height) = if frame_aspect > surface_aspect {
+            (width as f32, width as f32 / frame_aspect)
+        } else {
+            (height as f32 * frame_aspect, height as f32)
+        };
+        let viewport = [D3D11_VIEWPORT {
+            TopLeftX: (width as f32 - viewport_width) * 0.5,
+            TopLeftY: (height as f32 - viewport_height) * 0.5,
+            Width: viewport_width,
+            Height: viewport_height,
+            MinDepth: 0.0,
+            MaxDepth: 1.0,
+        }];
         let vertex_shader = self.vertex_shader.as_ref().expect("pipeline initialized");
         let pixel_shader = self.pixel_shader.as_ref().expect("pipeline initialized");
         let sampler = self.sampler.as_ref().expect("pipeline initialized");
         let targets = [Some(target.clone())];
         let resources = [Some(shader_view.clone())];
         let samplers = [Some(sampler.clone())];
-        let viewport = [D3D11_VIEWPORT {
-            TopLeftX: 0.0,
-            TopLeftY: 0.0,
-            Width: width as f32,
-            Height: height as f32,
-            MinDepth: 0.0,
-            MaxDepth: 1.0,
-        }];
-
         // SAFETY: all resources belong to this D3D11 device and the immediate
         // context is confined to its creating GPUI thread.
         unsafe {
+            self.immediate_context
+                .ClearRenderTargetView(target, &[0.0, 0.0, 0.0, 1.0]);
             self.immediate_context.OMSetRenderTargets(
                 Some(&targets),
                 None::<&windows_062::Win32::Graphics::Direct3D11::ID3D11DepthStencilView>,
