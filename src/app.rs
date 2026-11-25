@@ -153,9 +153,18 @@ impl Render for PhoneControlApp {
                     let prepared_frame = match crate::airplay::take_latest_video_frame() {
                         Ok(Some(snapshot)) => {
                             let sequence = snapshot.sequence;
+                            let mailbox_age = snapshot.enqueued_at.elapsed();
                             let conversion = cx.background_executor().spawn(async move {
-                                bgra_frame_to_bmp(&snapshot.frame)
-                                    .map(|bytes| (sequence, snapshot.frame, bytes))
+                                let conversion_started = Instant::now();
+                                bgra_frame_to_bmp(&snapshot.frame).map(|bytes| {
+                                    (
+                                        sequence,
+                                        snapshot.frame,
+                                        bytes,
+                                        mailbox_age,
+                                        conversion_started.elapsed(),
+                                    )
+                                })
                             });
                             Some(conversion.await)
                         }
@@ -210,9 +219,10 @@ impl Render for PhoneControlApp {
                         }
                         if let Some(result) = prepared_frame {
                             match result {
-                                Ok((sequence, frame, bytes)) => {
+                                Ok((sequence, frame, bytes, mailbox_age, conversion_elapsed)) => {
                                     let width = frame.width;
                                     let height = frame.height;
+                                    let upload_started = Instant::now();
 
                                     // Entity::update runs on GPUI's foreground executor.
                                     // Keep immediate-context work here, on the same thread
@@ -231,6 +241,13 @@ impl Render for PhoneControlApp {
                                             "D3D11 frame upload unavailable; retaining GPUI image fallback"
                                         );
                                     }
+                                    tracing::trace!(
+                                        sequence,
+                                        mailbox_age_ms = mailbox_age.as_secs_f64() * 1000.0,
+                                        bgra_to_bmp_ms = conversion_elapsed.as_secs_f64() * 1000.0,
+                                        d3d11_upload_ms = upload_started.elapsed().as_secs_f64() * 1000.0,
+                                        "Video frame pipeline latency"
+                                    );
 
                                     this.preview_status = format!(
                                         "Frame {width} × {height} · sequence {sequence}"
