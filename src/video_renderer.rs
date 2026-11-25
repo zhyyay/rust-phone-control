@@ -253,9 +253,8 @@ pub(crate) fn upload_bgra_frame(
                 return Err(original_error);
             };
             let now = Instant::now();
-            let cooling_down = DEVICE_RECOVERY_RETRY_AFTER.with(|retry_after| {
-                retry_after.get().is_some_and(|deadline| now < deadline)
-            });
+            let cooling_down = DEVICE_RECOVERY_RETRY_AFTER
+                .with(|retry_after| retry_after.get().is_some_and(|deadline| now < deadline));
             if cooling_down {
                 return Err(original_error);
             }
