@@ -544,7 +544,7 @@ float4 PSMain(VertexOutput input) : SV_Target {
                     PCSTR(target.as_ptr().cast()),
                     D3DCOMPILE_ENABLE_STRICTNESS,
                     0,
-                    Some(&mut bytecode),
+                    &mut bytecode,
                     None,
                 )
             }
