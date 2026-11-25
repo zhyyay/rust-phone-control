@@ -307,7 +307,8 @@ pub(crate) fn destroy_native_video_surface() {
 pub(crate) fn upload_nv12_frame(
     width: u32,
     height: u32,
-    stride: usize,
+    y_stride: usize,
+    uv_stride: usize,
     data: &[u8],
 ) -> anyhow::Result<()> {
     let initial_result = THREAD_RENDERER.with(|renderer| {
@@ -315,7 +316,7 @@ pub(crate) fn upload_nv12_frame(
         let device = renderer
             .as_mut()
             .ok_or_else(|| anyhow!("D3D11 renderer has not been initialized for a GPUI window"))?;
-        device.upload_nv12(width, height, stride, data)?;
+        device.upload_nv12(width, height, y_stride, uv_stride, data)?;
         UPLOADED_FRAMES.fetch_add(1, Ordering::Relaxed);
         device.draw_nv12_frame()
     });
@@ -373,7 +374,7 @@ pub(crate) fn upload_nv12_frame(
                     let device = renderer
                         .as_mut()
                         .ok_or_else(|| anyhow!("replacement D3D11 device is unavailable"))?;
-                    device.upload_nv12(width, height, stride, data)?;
+                    device.upload_nv12(width, height, y_stride, uv_stride, data)?;
                     UPLOADED_FRAMES.fetch_add(1, Ordering::Relaxed);
                     device.draw_nv12_frame()
                 })
@@ -1186,7 +1187,8 @@ float4 PSMain(VertexOutput input) : SV_Target {
         &mut self,
         width: u32,
         height: u32,
-        stride: usize,
+        y_stride: usize,
+        uv_stride: usize,
         data: &[u8],
     ) -> anyhow::Result<()> {
         if width == 0
@@ -1198,14 +1200,16 @@ float4 PSMain(VertexOutput input) : SV_Target {
         {
             bail!("invalid D3D11 NV12 texture dimensions: {width}x{height}");
         }
-        if stride < width as usize {
-            bail!("NV12 stride {stride} is smaller than frame width {width}");
+        if y_stride < width as usize || uv_stride < width as usize {
+            bail!(
+                "NV12 plane strides are smaller than frame width {width}: Y={y_stride}, UV={uv_stride}"
+            );
         }
-        let y_bytes = stride
+        let y_bytes = y_stride
             .checked_mul(height as usize)
             .ok_or_else(|| anyhow!("NV12 Y-plane size overflow"))?;
         let uv_rows_before_last = height as usize / 2 - 1;
-        let uv_required = stride
+        let uv_required = uv_stride
             .checked_mul(uv_rows_before_last)
             .and_then(|bytes| bytes.checked_add(width as usize))
             .ok_or_else(|| anyhow!("NV12 UV-plane size overflow"))?;
@@ -1218,7 +1222,7 @@ float4 PSMain(VertexOutput input) : SV_Target {
                 data.len()
             );
         }
-        let uv_full_len = stride
+        let uv_full_len = uv_stride
             .checked_mul(height as usize / 2)
             .ok_or_else(|| anyhow!("NV12 UV upload size overflow"))?;
         // Most decoder buffers already include final-row padding. Only make a
@@ -1230,7 +1234,10 @@ float4 PSMain(VertexOutput input) : SV_Target {
             padded[..uv_required].copy_from_slice(&data[y_bytes..y_bytes + uv_required]);
             Some(padded)
         };
-        let row_pitch = u32::try_from(stride).context("NV12 row pitch exceeds the D3D11 limit")?;
+        let y_row_pitch =
+            u32::try_from(y_stride).context("NV12 Y row pitch exceeds the D3D11 limit")?;
+        let uv_row_pitch =
+            u32::try_from(uv_stride).context("NV12 UV row pitch exceeds the D3D11 limit")?;
 
         if self.nv12_texture_size != Some((width, height)) {
             let make_desc = |texture_width, texture_height, format| D3D11_TEXTURE2D_DESC {
@@ -1280,7 +1287,7 @@ float4 PSMain(VertexOutput input) : SV_Target {
             self._nv12_y_view = y_view;
             self._nv12_uv_view = uv_view;
             self.nv12_texture_size = Some((width, height));
-            tracing::info!(width, height, stride, "D3D11 NV12 plane textures allocated");
+            tracing::info!(width, height, y_stride, uv_stride, "D3D11 NV12 plane textures allocated");
         }
 
         let y_texture = self
@@ -1299,7 +1306,7 @@ float4 PSMain(VertexOutput input) : SV_Target {
                 0,
                 None,
                 data.as_ptr().cast::<c_void>(),
-                row_pitch,
+                y_row_pitch,
                 0,
             );
             let uv_source = if let Some(padded) = uv_upload.as_ref() {
@@ -1312,7 +1319,7 @@ float4 PSMain(VertexOutput input) : SV_Target {
                 0,
                 None,
                 uv_source.cast::<c_void>(),
-                row_pitch,
+                uv_row_pitch,
                 0,
             );
         }
