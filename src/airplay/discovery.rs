@@ -251,6 +251,37 @@ pub struct Advertisement {
 }
 
 impl Advertisement {
+    /// Re-register both DNS-SD records after a controller is approved.
+    ///
+    /// iOS may remove a receiver from the Screen Mirroring picker after an
+    /// unauthenticated connection attempt. Re-publishing the unchanged
+    /// accessory identity sends a fresh DNS-SD announcement without changing
+    /// the receiver name, device ID, or pairing identity.
+    pub fn refresh(&mut self) -> Result<()> {
+        tracing::info!(
+            registrations = self.registrations.len(),
+            "Refreshing AirPlay DNS-SD advertisements after controller approval"
+        );
+
+        let mut first_error = None;
+        for registration in self.registrations.drain(..).rev() {
+            if let Err(error) = registration.unregister() {
+                if first_error.is_none() {
+                    first_error = Some(error);
+                }
+            }
+        }
+        if let Some(error) = first_error {
+            return Err(error).context("unregister previous AirPlay DNS-SD advertisements");
+        }
+
+        let mut replacement = Self::start()
+            .context("re-register AirPlay DNS-SD advertisements after controller approval")?;
+        self.registrations = std::mem::take(&mut replacement.registrations);
+        tracing::info!("AirPlay DNS-SD advertisements refreshed successfully");
+        Ok(())
+    }
+
     pub fn start() -> Result<Self> {
         let device_id = config::device_id();
         let (public_key, pairing_identifier) = super::pair_setup::discovery_identity()
