@@ -4,7 +4,7 @@
 //! context. Swap-chain/window integration is a later step after the GPUI
 //! native-window lifecycle is verified. Keep this owner on the render thread.
 
-use anyhow::anyhow;
+use anyhow::{Context as _, anyhow};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use std::{cell::RefCell, marker::PhantomData, rc::Rc};
 use windows_062::Win32::{
