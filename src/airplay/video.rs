@@ -2023,3 +2023,51 @@ mod tests {
         );
     }
 }
+
+
+#[cfg(test)]
+mod latest_frame_diagnostics_tests {
+    use super::*;
+
+    fn frame(value: u8) -> BgraFrame {
+        BgraFrame {
+            width: 1,
+            height: 1,
+            stride: 4,
+            data: vec![value, value, value, 255],
+        }
+    }
+
+    #[test]
+    fn latest_frame_mailbox_reports_replacements_and_consumption() {
+        let mailbox = LatestFrameMailbox::new();
+        assert_eq!(mailbox.publish(frame(1)).unwrap(), 1);
+        assert_eq!(mailbox.publish(frame(2)).unwrap(), 2);
+
+        let stats = mailbox.stats().unwrap();
+        assert_eq!(stats.published, 2);
+        assert_eq!(stats.replaced_before_consumption, 1);
+        assert_eq!(stats.consumed, 0);
+        assert!(stats.pending);
+
+        let snapshot = mailbox.take_latest().unwrap().unwrap();
+        assert_eq!(snapshot.sequence, 2);
+        assert_eq!(snapshot.frame.data[0], 2);
+
+        let stats = mailbox.stats().unwrap();
+        assert_eq!(stats.consumed, 1);
+        assert!(!stats.pending);
+    }
+
+    #[test]
+    fn latest_frame_mailbox_counts_explicit_clear() {
+        let mailbox = LatestFrameMailbox::new();
+        mailbox.publish(frame(7)).unwrap();
+        mailbox.clear().unwrap();
+
+        let stats = mailbox.stats().unwrap();
+        assert_eq!(stats.published, 1);
+        assert_eq!(stats.cleared, 1);
+        assert!(!stats.pending);
+    }
+}
