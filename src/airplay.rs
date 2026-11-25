@@ -377,6 +377,24 @@ pub fn take_latest_video_frame() -> anyhow::Result<Option<FrameSnapshot>> {
         .map_err(|error| anyhow::anyhow!(error))
 }
 
+/// Check whether a newer decoded frame is waiting for presentation.
+///
+/// The preview uses this after an asynchronous fallback conversion to avoid
+/// publishing an image that was already superseded while conversion ran.
+#[cfg(windows)]
+pub fn has_pending_video_frame() -> anyhow::Result<bool> {
+    let runtime = receiver_slot()
+        .lock()
+        .map_err(|_| anyhow::anyhow!("AirPlay runtime lock is poisoned"))?;
+    let Some(runtime) = runtime.as_ref() else {
+        return Ok(false);
+    };
+    runtime
+        .video_frames
+        .has_pending_frame()
+        .map_err(|error| anyhow::anyhow!(error))
+}
+
 /// Read decoded-frame mailbox counters for preview diagnostics.
 #[cfg(windows)]
 pub fn video_frame_mailbox_stats() -> anyhow::Result<Option<LatestFrameMailboxStats>> {
