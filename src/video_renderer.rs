@@ -740,14 +740,14 @@ Texture2D<float> luma_plane : register(t0);
 Texture2D<float2> chroma_plane : register(t1);
 SamplerState video_sampler : register(s0);
 float4 PSMain(VertexOutput input) : SV_Target {
-    float y = (luma_plane.Sample(video_sampler, input.uv).r * 255.0 - 16.0) / 219.0;
-    float2 chroma = (chroma_plane.Sample(video_sampler, input.uv).rg * 255.0 - 128.0) / 224.0;
+    float y = max(luma_plane.Sample(video_sampler, input.uv).r * 255.0 - 16.0, 0.0);
+    float2 chroma = chroma_plane.Sample(video_sampler, input.uv).rg * 255.0 - 128.0;
     float cb = chroma.x;
     float cr = chroma.y;
     float3 rgb = float3(
-        y + 1.596027 * cr,
-        y - 0.391762 * cb - 0.812968 * cr,
-        y + 2.017232 * cb
+        (1.164383 * y + 1.596027 * cr) / 255.0,
+        (1.164383 * y - 0.391762 * cb - 0.812968 * cr) / 255.0,
+        (1.164383 * y + 2.017232 * cb) / 255.0
     );
     return float4(saturate(rgb), 1.0);
 }
