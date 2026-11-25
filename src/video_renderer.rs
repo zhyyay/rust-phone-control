@@ -36,7 +36,7 @@ use windows_062::Win32::{
         WS_CLIPSIBLINGS,
     },
 };
-use windows_062::core::PCWSTR;
+use windows_062::core::{BOOL, Interface, PCWSTR};
 
 thread_local! {
     /// D3D11 immediate contexts remain on the GPUI thread that first initializes them.
@@ -301,7 +301,7 @@ impl D3d11Device {
                 Width: width,
                 Height: height,
                 Format: DXGI_FORMAT_B8G8R8A8_UNORM,
-                Stereo: windows_062::Win32::Foundation::BOOL(0),
+                Stereo: BOOL(0),
                 SampleDesc: DXGI_SAMPLE_DESC {
                     Count: 1,
                     Quality: 0,
@@ -399,7 +399,7 @@ impl D3d11Device {
         unsafe {
             self.immediate_context
                 .ClearRenderTargetView(target, &[0.035, 0.045, 0.065, 1.0]);
-            swap_chain.Present(1, DXGI_PRESENT(0))
+            swap_chain.Present(1, DXGI_PRESENT(0)).ok()
         }
         .context("IDXGISwapChain::Present failed during renderer bootstrap")?;
         Ok(())
