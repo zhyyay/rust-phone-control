@@ -48,6 +48,8 @@ pub struct PhoneControlApp {
     #[cfg(windows)]
     frame_poll_task: Option<Task<()>>,
     #[cfg(windows)]
+    fallback_worker_cancel: Arc<AtomicBool>,
+    #[cfg(windows)]
     quit_subscription: Option<Subscription>,
 }
 
@@ -56,6 +58,10 @@ impl Drop for PhoneControlApp {
         #[cfg(windows)]
         {
             tracing::info!("PhoneControlApp teardown: begin");
+            // Signal detached fallback workers before releasing UI-owned state.
+            // Conversion already in progress is allowed to finish, but it must
+            // not publish a result after application teardown has begun.
+            self.fallback_worker_cancel.store(true, Ordering::Release);
             // Drop the task explicitly so its cancellation point is visible in
             // the log. The task is cancelled before the image it may publish.
             if let Some(task) = self.frame_poll_task.take() {
@@ -104,6 +110,7 @@ impl Render for PhoneControlApp {
             );
             self.quit_subscription = Some(cx.on_app_quit(|this, _cx| {
                 tracing::info!("GPUI application-quit cleanup: begin");
+                this.fallback_worker_cancel.store(true, Ordering::Release);
 
                 // GPUI invokes quit observers before clearing its window map,
                 crate::video_renderer::destroy_native_video_surface();
@@ -133,6 +140,7 @@ impl Render for PhoneControlApp {
         if self.frame_poll_task.is_none() {
             tracing::debug!("Starting GPUI AirPlay frame and device-state poll task");
             crate::logging::startup_checkpoint("render: before frame poll spawn");
+            let fallback_worker_cancel = self.fallback_worker_cancel.clone();
             self.frame_poll_task = Some(cx.spawn(async move |this, cx| {
                 let mut pairing_refresh_ticks = 0u8;
                 // Once native presentation fails, prepare subsequent bitmap
@@ -143,6 +151,7 @@ impl Render for PhoneControlApp {
                 // The render loop never awaits it; completed results are
                 // consumed on a later tick and stale sequences are discarded.
                 let fallback_conversion_in_flight = Arc::new(AtomicBool::new(false));
+                let worker_cancel = fallback_worker_cancel;
                 let fallback_conversion_result: Arc<
                     Mutex<Option<(u64, u32, u32, Result<Vec<u8>, &'static str>, Duration)>>,
                 > = Arc::new(Mutex::new(None));
@@ -159,6 +168,11 @@ impl Render for PhoneControlApp {
                     cx.background_executor()
                         .timer(Duration::from_millis(33))
                         .await;
+
+                    if worker_cancel.load(Ordering::Acquire) {
+                        tracing::debug!("Fallback conversion worker cancellation observed by frame poll task");
+                        break;
+                    }
 
                     // Video preview remains responsive at ~30 FPS, while the
                     // DPAPI-backed pairing registry is refreshed only twice
@@ -374,25 +388,50 @@ impl Render for PhoneControlApp {
                                             let frame_for_conversion = frame.clone();
                                             let result_slot = fallback_conversion_result.clone();
                                             let in_flight = fallback_conversion_in_flight.clone();
+                                            let cancel = worker_cancel.clone();
                                             let width_for_conversion = width;
                                             let height_for_conversion = height;
-                                            std::thread::spawn(move || {
-                                                let started = Instant::now();
-                                                let result = decoded_frame_to_bmp(
-                                                    frame_for_conversion.as_ref(),
+                                            let spawn = std::thread::Builder::new()
+                                                .name("airplay-fallback-convert".to_owned())
+                                                .spawn(move || {
+                                                    // Avoid starting expensive CPU work if shutdown
+                                                    // raced with thread scheduling.
+                                                    if cancel.load(Ordering::Acquire) {
+                                                        in_flight.store(false, Ordering::Release);
+                                                        return;
+                                                    }
+                                                    let started = Instant::now();
+                                                    let result = decoded_frame_to_bmp(
+                                                        frame_for_conversion.as_ref(),
+                                                    );
+                                                    let elapsed = started.elapsed();
+                                                    // Conversion itself is synchronous and cannot
+                                                    // be interrupted, but a completed frame is never
+                                                    // published once shutdown has been requested.
+                                                    if !cancel.load(Ordering::Acquire) {
+                                                        if let Ok(mut slot) = result_slot.lock() {
+                                                            if !cancel.load(Ordering::Acquire) {
+                                                                *slot = Some((
+                                                                    sequence,
+                                                                    width_for_conversion,
+                                                                    height_for_conversion,
+                                                                    result,
+                                                                    elapsed,
+                                                                ));
+                                                            }
+                                                        }
+                                                    }
+                                                    in_flight.store(false, Ordering::Release);
+                                                });
+                                            if let Err(error) = spawn {
+                                                fallback_conversion_in_flight
+                                                    .store(false, Ordering::Release);
+                                                tracing::warn!(
+                                                    %error,
+                                                    sequence,
+                                                    "Could not spawn bounded GPUI fallback conversion worker"
                                                 );
-                                                let elapsed = started.elapsed();
-                                                if let Ok(mut slot) = result_slot.lock() {
-                                                    *slot = Some((
-                                                        sequence,
-                                                        width_for_conversion,
-                                                        height_for_conversion,
-                                                        result,
-                                                        elapsed,
-                                                    ));
-                                                }
-                                                in_flight.store(false, Ordering::Release);
-                                            });
+                                            }
                                         }
                                         if this.preview_image.is_some() {
                                             (
