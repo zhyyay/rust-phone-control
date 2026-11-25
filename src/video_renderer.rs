@@ -15,7 +15,7 @@ use windows_062::Win32::{
             D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT, D3D11CreateDevice, ID3D11Device,
             ID3D11DeviceContext, ID3D11ShaderResourceView, ID3D11Texture2D,
         },
-        Dxgi::{IDXGIAdapter, Common::DXGI_FORMAT_B8G8R8A8_UNORM},
+        Dxgi::{Common::DXGI_FORMAT_B8G8R8A8_UNORM, IDXGIAdapter},
     },
 };
 
@@ -148,8 +148,7 @@ impl D3d11Device {
                 data.len()
             );
         }
-        let row_pitch = u32::try_from(stride)
-            .context("BGRA row pitch exceeds the D3D11 limit")?;
+        let row_pitch = u32::try_from(stride).context("BGRA row pitch exceeds the D3D11 limit")?;
 
         if self.video_texture_size != Some((width, height)) {
             let desc = D3D11_TEXTURE2D_DESC {
