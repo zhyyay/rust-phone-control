@@ -1287,7 +1287,13 @@ float4 PSMain(VertexOutput input) : SV_Target {
             self._nv12_y_view = y_view;
             self._nv12_uv_view = uv_view;
             self.nv12_texture_size = Some((width, height));
-            tracing::info!(width, height, y_stride, uv_stride, "D3D11 NV12 plane textures allocated");
+            tracing::info!(
+                width,
+                height,
+                y_stride,
+                uv_stride,
+                "D3D11 NV12 plane textures allocated"
+            );
         }
 
         let y_texture = self
