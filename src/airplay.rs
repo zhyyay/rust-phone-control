@@ -121,6 +121,9 @@ pub fn pending_controller_approval() -> Option<String> {
 
 #[cfg(windows)]
 pub fn approve_pending_controller() -> Result<bool, String> {
+    let _lifecycle = receiver_lifecycle()
+        .lock()
+        .map_err(|_| "AirPlay lifecycle lock is poisoned")?;
     let public_key = {
         let pending = pending_controllers()
             .lock()
@@ -141,6 +144,23 @@ pub fn approve_pending_controller() -> Result<bool, String> {
         fingerprint = %controller_fingerprint_label(&public_key),
         "AirPlay controller approved and persisted"
     );
+
+    // The first unauthenticated attempt may have caused iOS to remove this
+    // receiver from its picker. Re-announce the same DNS-SD identity so the
+    // approved receiver becomes discoverable again without requiring an app
+    // restart. Approval remains persisted even if re-announcement fails.
+    let mut runtime = receiver_slot()
+        .lock()
+        .map_err(|_| "AirPlay runtime lock is poisoned")?;
+    if let Some(runtime) = runtime.as_mut() {
+        if let Err(error) = runtime.advertisement.refresh() {
+            tracing::error!(
+                error = %format!("{error:#}"),
+                "Controller was approved, but AirPlay DNS-SD refresh failed"
+            );
+        }
+    }
+
     Ok(true)
 }
 
