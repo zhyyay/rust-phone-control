@@ -53,7 +53,8 @@ use std::sync::atomic::{AtomicU8, Ordering};
 
 #[cfg(windows)]
 pub use video::{
-    BgraFrame, DecodedVideoFrame, FrameSnapshot, LatestFrameMailboxStats, Nv12Frame, VideoFrameMetadata, VideoPixelFormat,
+    BgraFrame, DecodedVideoFrame, FrameSnapshot, LatestFrameMailboxStats, Nv12Frame,
+    VideoFrameMetadata, VideoPixelFormat,
 };
 
 #[cfg(windows)]
