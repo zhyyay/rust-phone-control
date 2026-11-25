@@ -35,6 +35,8 @@ pub struct PhoneControlApp {
     preview_image: Option<Arc<Image>>,
     #[cfg(windows)]
     preview_status: String,
+    #[cfg(windows)]
+    pipeline_status: String,
     /// Latest measured preview rectangle, shared with the future native-surface host.
     #[cfg(windows)]
     preview_surface_bounds: Arc<Mutex<Option<PreviewSurfaceBounds>>>,
@@ -198,6 +200,13 @@ impl Render for PhoneControlApp {
 
                     let updated = this.update(cx, |this, cx| {
                         let mut changed = false;
+                        if refresh_pairing {
+                            let status = crate::airplay::pipeline_status_label().to_owned();
+                            if this.pipeline_status != status {
+                                this.pipeline_status = status;
+                                changed = true;
+                            }
+                        }
                         if refresh_pairing {
                             let pending = crate::airplay::pending_controller_approval();
                             let trusted = crate::airplay::trusted_controller_fingerprints()
@@ -469,6 +478,7 @@ fn render_preview_column(app: &PhoneControlApp, cx: &Context<PhoneControlApp>) -
         .bg(gpui_kit::rgb(0xFFFFFF))
         .border_1()
         .border_color(gpui_kit::rgb(0xE1E5ED))
+        .child(Label::new(app.pipeline_status.as_str()))
         .child(
             div()
                 .flex()
