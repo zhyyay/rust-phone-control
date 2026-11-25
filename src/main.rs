@@ -6,6 +6,10 @@ mod logging;
 #[cfg(windows)]
 mod platform;
 
+#[cfg(windows)]
+#[allow(dead_code)]
+mod video_renderer;
+
 use anyhow::Result;
 use gpui_kit::*;
 
