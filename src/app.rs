@@ -7,8 +7,8 @@ use gpui_kit::*;
 #[cfg(windows)]
 use std::{
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
     },
     time::{Duration, Instant},
 };
@@ -211,11 +211,14 @@ impl Render for PhoneControlApp {
                         last_seen_frame_sequence = *sequence;
                     }
                     let latest_sequence = last_seen_frame_sequence;
+                    // A fallback conversion may take longer than one video
+                    // frame interval. Do not require it to match the newest
+                    // sequence exactly, or slow conversions can be starved
+                    // forever at normal camera frame rates.
                     let completed_fallback = fallback_conversion_result
                         .lock()
                         .ok()
-                        .and_then(|mut result| result.take())
-                        .filter(|(sequence, _, _, _, _)| *sequence >= latest_sequence);
+                        .and_then(|mut result| result.take());
 
                     let metrics = if refresh_pairing {
                         let (presented, uploaded, recoveries, render_errors) =
@@ -295,7 +298,7 @@ impl Render for PhoneControlApp {
                             completed_fallback
                         {
                             match result {
-                                Ok(bytes) if sequence >= latest_sequence => {
+                                Ok(bytes) => {
                                     this.preview_image = Some(Arc::new(Image::from_bytes(
                                         ImageFormat::Bmp,
                                         bytes,
@@ -309,13 +312,6 @@ impl Render for PhoneControlApp {
                                         "Published completed asynchronous fallback frame"
                                     );
                                     changed = true;
-                                }
-                                Ok(_) => {
-                                    tracing::trace!(
-                                        sequence,
-                                        latest_sequence,
-                                        "Discarding stale fallback frame"
-                                    );
                                 }
                                 Err(error) => {
                                     tracing::warn!(
