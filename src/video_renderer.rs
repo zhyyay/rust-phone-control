@@ -1031,6 +1031,16 @@ float4 PSMain(VertexOutput input) : SV_Target {
         if data.len() < required {
             bail!("NV12 frame buffer is truncated: {} bytes available, {required} required", data.len());
         }
+        let uv_upload_len = stride.checked_mul(height as usize / 2)
+            .ok_or_else(|| anyhow!("NV12 UV upload size overflow"))?;
+        let mut uv_upload = vec![0u8; uv_upload_len];
+        let uv_source = &data[y_bytes..];
+        for row in 0..height as usize / 2 {
+            let row_start = row * stride;
+            let copy_len = if row + 1 == height as usize / 2 { width as usize } else { stride };
+            uv_upload[row_start..row_start + copy_len]
+                .copy_from_slice(&uv_source[row_start..row_start + copy_len]);
+        }
         let row_pitch = u32::try_from(stride).context("NV12 row pitch exceeds the D3D11 limit")?;
 
         if self.nv12_texture_size != Some((width, height)) {
@@ -1085,7 +1095,7 @@ float4 PSMain(VertexOutput input) : SV_Target {
                 y_texture, 0, None, data.as_ptr().cast::<c_void>(), row_pitch, 0,
             );
             self.immediate_context.UpdateSubresource(
-                uv_texture, 0, None, data.as_ptr().add(y_bytes).cast::<c_void>(), row_pitch, 0,
+                uv_texture, 0, None, uv_upload.as_ptr().cast::<c_void>(), row_pitch, 0,
             );
         }
         Ok(())
