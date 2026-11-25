@@ -209,7 +209,7 @@ impl Render for PhoneControlApp {
                         last_presented_frames = presented;
                         last_metrics_at = Instant::now();
                         Some(format!(
-                            "D3D11 · {:.1} FPS · 丢帧 {:.1}/s · Present {} · 上传 {} · 设备重建 {} · 渲染错误 {}",
+                            "D3D11 · {:.1} FPS · 邮箱覆盖 {:.1}/s · Present {} · 上传 {} · 设备重建 {} · 渲染错误 {}",
                             fps, dropped, presented, uploaded, recoveries, render_errors
                         ))
                     } else {
