@@ -18,9 +18,18 @@ use windows_062::Win32::{
         Direct3D11::{
             D3D11_BIND_SHADER_RESOURCE, D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_SDK_VERSION,
             D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT, D3D11CreateDevice, ID3D11Device,
-            ID3D11DeviceContext, ID3D11ShaderResourceView, ID3D11Texture2D,
+            ID3D11DeviceContext, ID3D11RenderTargetView, ID3D11ShaderResourceView,
+            ID3D11Texture2D,
         },
-        Dxgi::{Common::DXGI_FORMAT_B8G8R8A8_UNORM, IDXGIAdapter},
+        Dxgi::{
+            Common::{
+                DXGI_ALPHA_MODE_IGNORE, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_UNKNOWN,
+                DXGI_SAMPLE_DESC,
+            },
+            DXGI_SCALING_STRETCH, DXGI_SWAP_CHAIN_DESC1, DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL,
+            DXGI_USAGE_RENDER_TARGET_OUTPUT, DXGI_PRESENT, DXGI_SWAP_CHAIN_FLAG, IDXGIAdapter,
+            IDXGIDevice, IDXGIFactory2, IDXGISwapChain1,
+        },
     },
     UI::WindowsAndMessaging::{
         CreateWindowExW, DestroyWindow, SW_HIDE, SWP_NOACTIVATE, SWP_NOOWNERZORDER, SWP_NOREDRAW,
@@ -147,7 +156,19 @@ pub(crate) fn sync_native_video_surface(
             )
         }
         .context("SetWindowPos failed while synchronizing the video child surface")?;
-        // Keep the child hidden until SwapChain creation and Present are ready.
+
+        // Bring up the HWND-bound swap chain on the same GPUI thread as the
+        // D3D11 immediate context. It remains hidden until a real decoded frame
+        // is drawn by the shader presenter in the next stage.
+        THREAD_RENDERER.with(|renderer| {
+            let mut renderer = renderer.borrow_mut();
+            let device = renderer
+                .as_mut()
+                .ok_or_else(|| anyhow!("D3D11 renderer is not initialized"))?;
+            device.ensure_swap_chain(child_hwnd, width as u32, height as u32)
+        })?;
+
+        // Never expose the diagnostic clear color as if it were a phone image.
         unsafe {
             ShowWindow(child_hwnd, SW_HIDE);
         }
@@ -203,6 +224,9 @@ pub(crate) struct D3d11Device {
     video_texture: Option<ID3D11Texture2D>,
     _video_shader_view: Option<ID3D11ShaderResourceView>,
     video_texture_size: Option<(u32, u32)>,
+    swap_chain: Option<IDXGISwapChain1>,
+    render_target_view: Option<ID3D11RenderTargetView>,
+    swap_chain_size: Option<(u32, u32)>,
     _thread_affinity: PhantomData<Rc<()>>,
 }
 
@@ -244,8 +268,143 @@ impl D3d11Device {
             video_texture: None,
             _video_shader_view: None,
             video_texture_size: None,
+            swap_chain: None,
+            render_target_view: None,
+            swap_chain_size: None,
             _thread_affinity: PhantomData,
         })
+    }
+
+    /// Create the HWND-bound DXGI swap chain and its back-buffer render target.
+    ///
+    /// This bootstrap deliberately clears and presents only while the child
+    /// remains hidden. The decoded video texture is not displayed until the
+    /// shader pipeline is added and validated.
+    fn ensure_swap_chain(&mut self, hwnd: HWND, width: u32, height: u32) -> anyhow::Result<()> {
+        if width == 0 || height == 0 || width > 16384 || height > 16384 {
+            bail!("invalid DXGI surface dimensions: {width}x{height}");
+        }
+
+        if self.swap_chain.is_none() {
+            // Follow the D3D11 device -> DXGI device -> adapter -> factory path.
+            let dxgi_device: IDXGIDevice = self
+                .device
+                .cast()
+                .context("could not query IDXGIDevice from the D3D11 device")?;
+            // SAFETY: the device is a live D3D11 device owned by this renderer.
+            let adapter = unsafe { dxgi_device.GetAdapter() }
+                .context("IDXGIDevice::GetAdapter failed")?;
+            // SAFETY: adapter is a valid DXGI adapter returned by the device.
+            let factory: IDXGIFactory2 = unsafe { adapter.GetParent() }
+                .context("IDXGIAdapter::GetParent(IDXGIFactory2) failed")?;
+
+            let desc = DXGI_SWAP_CHAIN_DESC1 {
+                Width: width,
+                Height: height,
+                Format: DXGI_FORMAT_B8G8R8A8_UNORM,
+                Stereo: windows_062::Win32::Foundation::BOOL(0),
+                SampleDesc: DXGI_SAMPLE_DESC {
+                    Count: 1,
+                    Quality: 0,
+                },
+                BufferUsage: DXGI_USAGE_RENDER_TARGET_OUTPUT,
+                BufferCount: 2,
+                Scaling: DXGI_SCALING_STRETCH,
+                SwapEffect: DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL,
+                AlphaMode: DXGI_ALPHA_MODE_IGNORE,
+                Flags: 0,
+            };
+
+            // SAFETY: hwnd is the child window created by this module; desc
+            // satisfies flip-model requirements (BGRA8, 2 buffers, 1x MSAA).
+            let swap_chain = unsafe {
+                factory.CreateSwapChainForHwnd(
+                    &self.device,
+                    hwnd,
+                    &desc,
+                    None,
+                    None::<&windows_062::Win32::Graphics::Dxgi::IDXGIOutput>,
+                )
+            }
+            .context("IDXGIFactory2::CreateSwapChainForHwnd failed")?;
+            self.swap_chain = Some(swap_chain);
+            self.swap_chain_size = Some((width, height));
+            self.rebuild_render_target()?;
+            tracing::info!(
+                width,
+                height,
+                "D3D11 HWND swap chain created; native surface remains hidden"
+            );
+        } else if self.swap_chain_size != Some((width, height)) {
+            // Release the RTV before ResizeBuffers; DXGI requires all
+            // references to old back buffers to be released.
+            self.render_target_view = None;
+            let swap_chain = self
+                .swap_chain
+                .as_ref()
+                .ok_or_else(|| anyhow!("DXGI swap chain unexpectedly absent"))?;
+            // SAFETY: swap chain belongs to this renderer and all old RTV refs
+            // have been dropped before resizing its buffers.
+            unsafe {
+                swap_chain.ResizeBuffers(
+                    0,
+                    width,
+                    height,
+                    DXGI_FORMAT_UNKNOWN,
+                    DXGI_SWAP_CHAIN_FLAG(0),
+                )
+            }
+            .context("IDXGISwapChain::ResizeBuffers failed")?;
+            self.swap_chain_size = Some((width, height));
+            self.rebuild_render_target()?;
+            tracing::debug!(width, height, "D3D11 swap chain resized");
+        }
+
+        self.present_diagnostic_clear()
+    }
+
+    /// Reacquire buffer zero and create the RTV after creation or resize.
+    fn rebuild_render_target(&mut self) -> anyhow::Result<()> {
+        let swap_chain = self
+            .swap_chain
+            .as_ref()
+            .ok_or_else(|| anyhow!("cannot create RTV without a swap chain"))?;
+        // SAFETY: buffer zero is the swap chain's current back buffer.
+        let back_buffer: ID3D11Texture2D =
+            unsafe { swap_chain.GetBuffer(0) }.context("IDXGISwapChain::GetBuffer failed")?;
+        let mut render_target = None;
+        // SAFETY: back_buffer is a valid render-target-capable swap-chain buffer.
+        unsafe {
+            self.device
+                .CreateRenderTargetView(&back_buffer, None, Some(&mut render_target))
+        }
+        .context("ID3D11Device::CreateRenderTargetView failed")?;
+        self.render_target_view = Some(
+            render_target.ok_or_else(|| anyhow!("D3D11 returned no swap-chain RTV"))?,
+        );
+        Ok(())
+    }
+
+    /// Clear and Present once to validate the swap chain without showing it.
+    fn present_diagnostic_clear(&self) -> anyhow::Result<()> {
+        let target = self
+            .render_target_view
+            .as_ref()
+            .ok_or_else(|| anyhow!("swap-chain render target is not initialized"))?;
+        let swap_chain = self
+            .swap_chain
+            .as_ref()
+            .ok_or_else(|| anyhow!("swap chain is not initialized"))?;
+
+        // SAFETY: target belongs to this device; the immediate context is
+        // confined to the current GPUI thread.
+        unsafe {
+            self.immediate_context
+                .ClearRenderTargetView(target, &[0.035, 0.045, 0.065, 1.0]);
+            swap_chain.Present(1, DXGI_PRESENT(0))
+        }
+        .context("IDXGISwapChain::Present failed during renderer bootstrap")?;
+        Ok(())
     }
 
     /// Create or resize the BGRA texture and upload a frame into it.
