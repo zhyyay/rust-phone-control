@@ -242,9 +242,7 @@ pub(crate) fn upload_bgra_frame(
             let removed = THREAD_RENDERER.with(|renderer| {
                 let renderer = renderer.borrow();
                 renderer.as_ref().and_then(|device| {
-                    device
-                        .device
-                        .GetDeviceRemovedReason()
+                    unsafe { device.device.GetDeviceRemovedReason() }
                         .err()
                         .map(|reason| (reason, device.swap_chain_size))
                 })
