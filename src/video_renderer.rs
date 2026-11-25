@@ -1086,8 +1086,7 @@ float4 PSMain(VertexOutput input) : SV_Target {
             padded[..uv_required].copy_from_slice(&data[y_bytes..y_bytes + uv_required]);
             Some(padded)
         };
-        let row_pitch =
-            u32::try_from(stride).context("NV12 row pitch exceeds the D3D11 limit")?;
+        let row_pitch = u32::try_from(stride).context("NV12 row pitch exceeds the D3D11 limit")?;
 
         if self.nv12_texture_size != Some((width, height)) {
             let make_desc = |texture_width, texture_height, format| D3D11_TEXTURE2D_DESC {
@@ -1118,8 +1117,7 @@ float4 PSMain(VertexOutput input) : SV_Target {
                     .CreateTexture2D(&uv_desc, None, Some(&mut uv_texture))
                     .context("could not create the D3D11 NV12 UV texture")?;
             }
-            let y_texture =
-                y_texture.ok_or_else(|| anyhow!("D3D11 returned no NV12 Y texture"))?;
+            let y_texture = y_texture.ok_or_else(|| anyhow!("D3D11 returned no NV12 Y texture"))?;
             let uv_texture =
                 uv_texture.ok_or_else(|| anyhow!("D3D11 returned no NV12 UV texture"))?;
             let mut y_view = None;
