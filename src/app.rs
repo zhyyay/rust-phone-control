@@ -277,7 +277,7 @@ impl Render for PhoneControlApp {
                                         // The native child surface owns the visible
                                         // image now; discard the previous GPUI bitmap.
                                         this.preview_image = None;
-                                        ("D3D11 原生预览", None, Duration::ZERO)
+                                        ("D3D11 原生预览", false, Duration::ZERO)
                                     }
                                     Err(error) => {
                                         crate::video_renderer::hide_native_video_surface();
