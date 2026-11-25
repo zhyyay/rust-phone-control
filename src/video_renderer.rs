@@ -31,7 +31,8 @@ use windows_062::Win32::{
         },
         Dxgi::{
             Common::{
-                DXGI_ALPHA_MODE_IGNORE, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_UNKNOWN,
+                DXGI_ALPHA_MODE_IGNORE, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_R8_UNORM,
+                DXGI_FORMAT_R8G8_UNORM, DXGI_FORMAT_UNKNOWN,
                 DXGI_SAMPLE_DESC,
             },
             DXGI_PRESENT, DXGI_SCALING_STRETCH, DXGI_SWAP_CHAIN_DESC1, DXGI_SWAP_CHAIN_FLAG,
@@ -242,6 +243,18 @@ pub(crate) fn destroy_native_video_surface() {
     });
 }
 
+/// Upload an NV12 frame to the GPUI thread's D3D11 Y/UV textures.
+/// The caller must run on the thread that initialized the native renderer.
+#[allow(dead_code)]
+pub(crate) fn upload_nv12_frame(width: u32, height: u32, stride: usize, data: &[u8]) -> anyhow::Result<()> {
+    THREAD_RENDERER.with(|renderer| {
+        let mut renderer = renderer.borrow_mut();
+        let device = renderer.as_mut()
+            .ok_or_else(|| anyhow!("D3D11 renderer has not been initialized for a GPUI window"))?;
+        device.upload_nv12(width, height, stride, data)
+    })
+}
+
 /// Upload one decoded BGRA frame into a shader-readable D3D11 texture.
 ///
 /// Call this on the same GPUI thread that initialized the device. The upload
@@ -368,6 +381,9 @@ pub(crate) struct D3d11Device {
     video_texture: Option<ID3D11Texture2D>,
     _video_shader_view: Option<ID3D11ShaderResourceView>,
     video_texture_size: Option<(u32, u32)>,
+    nv12_y_texture: Option<ID3D11Texture2D>,
+    nv12_uv_texture: Option<ID3D11Texture2D>,
+    nv12_texture_size: Option<(u32, u32)>,
     swap_chain: Option<IDXGISwapChain1>,
     swap_chain_hwnd: isize,
     render_target_view: Option<ID3D11RenderTargetView>,
@@ -418,6 +434,9 @@ impl D3d11Device {
             video_texture: None,
             _video_shader_view: None,
             video_texture_size: None,
+            nv12_y_texture: None,
+            nv12_uv_texture: None,
+            nv12_texture_size: None,
             swap_chain: None,
             swap_chain_hwnd: 0,
             render_target_view: None,
@@ -837,6 +856,75 @@ float4 PSMain(VertexOutput input) : SV_Target {
                 data.as_ptr().cast::<c_void>(),
                 row_pitch,
                 0,
+            );
+        }
+        Ok(())
+    }
+
+    /// Upload the Y and interleaved UV planes of an NV12 frame into separate
+    /// shader-readable D3D11 textures. Conversion to RGB is intentionally left
+    /// to the NV12 pixel shader added by the presentation path.
+    #[allow(dead_code)]
+    fn upload_nv12(&mut self, width: u32, height: u32, stride: usize, data: &[u8]) -> anyhow::Result<()> {
+        if width == 0 || height == 0 || width % 2 != 0 || height % 2 != 0 || width > 8192 || height > 8192 {
+            bail!("invalid D3D11 NV12 texture dimensions: {width}x{height}");
+        }
+        if stride < width as usize {
+            bail!("NV12 stride {stride} is smaller than frame width {width}");
+        }
+        let y_bytes = stride.checked_mul(height as usize)
+            .ok_or_else(|| anyhow!("NV12 Y-plane size overflow"))?;
+        let uv_rows_before_last = height as usize / 2 - 1;
+        let uv_required = stride.checked_mul(uv_rows_before_last)
+            .and_then(|bytes| bytes.checked_add(width as usize))
+            .ok_or_else(|| anyhow!("NV12 UV-plane size overflow"))?;
+        let required = y_bytes.checked_add(uv_required)
+            .ok_or_else(|| anyhow!("NV12 frame size overflow"))?;
+        if data.len() < required {
+            bail!("NV12 frame buffer is truncated: {} bytes available, {required} required", data.len());
+        }
+        let row_pitch = u32::try_from(stride).context("NV12 row pitch exceeds the D3D11 limit")?;
+
+        if self.nv12_texture_size != Some((width, height)) {
+            let make_desc = |texture_width, texture_height, format| D3D11_TEXTURE2D_DESC {
+                Width: texture_width,
+                Height: texture_height,
+                MipLevels: 1,
+                ArraySize: 1,
+                Format: format,
+                SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+                Usage: D3D11_USAGE_DEFAULT,
+                BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32,
+                CPUAccessFlags: 0,
+                MiscFlags: 0,
+            };
+            let y_desc = make_desc(width, height, DXGI_FORMAT_R8_UNORM);
+            let uv_desc = make_desc(width / 2, height / 2, DXGI_FORMAT_R8G8_UNORM);
+            let mut y_texture = None;
+            let mut uv_texture = None;
+            // SAFETY: descriptors are fully initialized and output slots are valid.
+            unsafe {
+                self.device.CreateTexture2D(&y_desc, None, Some(&mut y_texture))
+                    .context("could not create the D3D11 NV12 Y texture")?;
+                self.device.CreateTexture2D(&uv_desc, None, Some(&mut uv_texture))
+                    .context("could not create the D3D11 NV12 UV texture")?;
+            }
+            self.nv12_y_texture = Some(y_texture.ok_or_else(|| anyhow!("D3D11 returned no NV12 Y texture"))?);
+            self.nv12_uv_texture = Some(uv_texture.ok_or_else(|| anyhow!("D3D11 returned no NV12 UV texture"))?);
+            self.nv12_texture_size = Some((width, height));
+            tracing::info!(width, height, stride, "D3D11 NV12 plane textures allocated");
+        }
+
+        let y_texture = self.nv12_y_texture.as_ref().ok_or_else(|| anyhow!("NV12 Y texture is unavailable"))?;
+        let uv_texture = self.nv12_uv_texture.as_ref().ok_or_else(|| anyhow!("NV12 UV texture is unavailable"))?;
+        // SAFETY: each plane's dimensions and row pitch match its texture;
+        // data has been checked through the last visible UV row.
+        unsafe {
+            self.immediate_context.UpdateSubresource(
+                y_texture, 0, None, data.as_ptr().cast::<c_void>(), row_pitch, 0,
+            );
+            self.immediate_context.UpdateSubresource(
+                uv_texture, 0, None, data.as_ptr().add(y_bytes).cast::<c_void>(), row_pitch, 0,
             );
         }
         Ok(())
