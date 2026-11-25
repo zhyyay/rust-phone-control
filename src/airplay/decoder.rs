@@ -682,8 +682,7 @@ impl DecoderRecoveryPolicy {
 /// Construct and use this value on the dedicated media worker thread. It
 /// accepts complete Annex-B access units or encrypted AVCC access units when
 /// supplied with a valid per-stream cipher, decodes them via Media Foundation,
-/// converts output to BGRA, and publishes frames into the bounded latest-frame
-/// mailbox. It deliberately does not unwrap FairPlay keys or reconstruct
+/// publishes native NV12 output into the bounded latest-frame mailbox. It deliberately does not unwrap FairPlay keys or reconstruct
 /// transport fragments.
 #[cfg(windows)]
 pub struct H264FramePipeline<'runtime> {
@@ -730,7 +729,7 @@ impl<'runtime> H264FramePipeline<'runtime> {
         if !pipeline.parameter_sets.is_empty() {
             let _ = pipeline
                 .decoder
-                .submit_access_unit_and_drain_bgra(&pipeline.parameter_sets)?;
+                .submit_access_unit_and_drain(&pipeline.parameter_sets)?;
         }
 
         Ok(pipeline)
@@ -748,13 +747,16 @@ impl<'runtime> H264FramePipeline<'runtime> {
             return Err(MediaFoundationError::InputTooLarge);
         }
 
-        let decoded = self
-            .decoder
-            .submit_access_unit_and_drain_bgra(access_unit)?;
+        let decoded = self.decoder.submit_access_unit_and_drain(access_unit)?;
         let mut published = 0usize;
         for frame in decoded {
             self.frames
-                .publish(frame)
+                .publish_nv12(crate::airplay::video::OwnedNv12Frame {
+                    width: frame.width,
+                    height: frame.height,
+                    stride: frame.stride,
+                    data: frame.data,
+                })
                 .map_err(MediaFoundationError::FrameMailbox)?;
             published = published.saturating_add(1);
         }
@@ -792,7 +794,7 @@ impl<'runtime> H264FramePipeline<'runtime> {
         }
         let mut replacement = H264Decoder::new(self.decoder._runtime, width, height)?;
         if !self.parameter_sets.is_empty() {
-            let _ = replacement.submit_access_unit_and_drain_bgra(&self.parameter_sets)?;
+            let _ = replacement.submit_access_unit_and_drain(&self.parameter_sets)?;
         }
         self.frames
             .clear()
