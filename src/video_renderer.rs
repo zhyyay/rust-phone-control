@@ -10,6 +10,7 @@ use std::{
     marker::PhantomData,
     rc::Rc,
     slice,
+    sync::atomic::{AtomicU64, Ordering},
     time::{Duration, Instant},
 };
 use windows_062::Win32::Graphics::Direct3D::ID3DBlob;
@@ -45,6 +46,19 @@ use windows_062::Win32::{
     },
 };
 use windows_062::core::{BOOL, Interface, PCSTR, PCWSTR};
+
+static PRESENTED_FRAMES: AtomicU64 = AtomicU64::new(0);
+static UPLOADED_FRAMES: AtomicU64 = AtomicU64::new(0);
+static RENDER_RECOVERY_ATTEMPTS: AtomicU64 = AtomicU64::new(0);
+
+/// Process-wide D3D11 counters; safe to read from the GPUI diagnostics poll.
+pub(crate) fn preview_metrics() -> (u64, u64, u64) {
+    (
+        PRESENTED_FRAMES.load(Ordering::Relaxed),
+        UPLOADED_FRAMES.load(Ordering::Relaxed),
+        RENDER_RECOVERY_ATTEMPTS.load(Ordering::Relaxed),
+    )
+}
 
 thread_local! {
     /// D3D11 immediate contexts remain on the GPUI thread that first initializes them.
@@ -231,12 +245,14 @@ pub(crate) fn upload_bgra_frame(
             .as_mut()
             .ok_or_else(|| anyhow!("D3D11 renderer has not been initialized for a GPUI window"))?;
         device.upload_bgra(width, height, stride, data)?;
+        UPLOADED_FRAMES.fetch_add(1, Ordering::Relaxed);
         device.draw_video_frame()
     });
 
     let present_time = match initial_result {
         Ok(elapsed) => elapsed,
         Err(original_error) => {
+            RENDER_RECOVERY_ATTEMPTS.fetch_add(1, Ordering::Relaxed);
             // Rebuild only when the driver reports device removal/reset. Shader,
             // validation, and ordinary resize errors remain visible to the caller.
             let removed = THREAD_RENDERER.with(|renderer| {
@@ -287,11 +303,14 @@ pub(crate) fn upload_bgra_frame(
                         .as_mut()
                         .ok_or_else(|| anyhow!("replacement D3D11 device is unavailable"))?;
                     device.upload_bgra(width, height, stride, data)?;
+                    UPLOADED_FRAMES.fetch_add(1, Ordering::Relaxed);
                     device.draw_video_frame()
                 })
                 .context("D3D11 preview retry failed after device recreation")?
         }
     };
+
+    PRESENTED_FRAMES.fetch_add(1, Ordering::Relaxed);
 
     let stats_result: anyhow::Result<()> = THREAD_RENDERER.with(|renderer| {
         let mut renderer = renderer.borrow_mut();
