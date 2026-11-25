@@ -152,15 +152,33 @@ impl Render for PhoneControlApp {
                         pairing_refresh_ticks = 0;
                     }
 
-                    // Pull the latest frame quickly, then perform the potentially
-                    // expensive BGRA -> BMP conversion away from the GPUI thread.
+                    // Keep NV12 in its native format for the D3D11 upload.
+                    // Build a BGRA bitmap separately in the background only for
+                    // the existing GPUI fallback surface.
                     let prepared_frame = match crate::airplay::take_latest_video_frame() {
                         Ok(Some(snapshot)) => {
                             let sequence = snapshot.sequence;
                             let mailbox_age = snapshot.enqueued_at.elapsed();
                             let conversion = cx.background_executor().spawn(async move {
                                 let conversion_started = Instant::now();
-                                bgra_frame_to_bmp(&snapshot.frame).map(|bytes| {
+                                let fallback = match snapshot.frame.as_ref() {
+                                    crate::airplay::DecodedVideoFrame::Bgra(frame) => {
+                                        bgra_frame_to_bmp(frame)
+                                    }
+                                    crate::airplay::DecodedVideoFrame::Nv12(frame) => {
+                                        crate::airplay::video::Nv12Frame {
+                                            width: frame.width,
+                                            height: frame.height,
+                                            y_stride: frame.stride,
+                                            uv_stride: frame.stride,
+                                            data: &frame.data,
+                                        }
+                                        .to_bgra()
+                                        .map_err(|_| "NV12 fallback conversion failed")
+                                        .and_then(|bgra| bgra_frame_to_bmp(&bgra))
+                                    }
+                                };
+                                fallback.map(|bytes| {
                                     (
                                         sequence,
                                         snapshot.frame,
@@ -252,22 +270,27 @@ impl Render for PhoneControlApp {
                         if let Some(result) = prepared_frame {
                             match result {
                                 Ok((sequence, frame, bytes, mailbox_age, conversion_elapsed)) => {
-                                    let width = frame.width;
-                                    let height = frame.height;
+                                    let (width, height) = match frame.as_ref() {
+                                        crate::airplay::DecodedVideoFrame::Bgra(frame) => (frame.width, frame.height),
+                                        crate::airplay::DecodedVideoFrame::Nv12(frame) => (frame.width, frame.height),
+                                    };
                                     let upload_started = Instant::now();
 
                                     // Entity::update runs on GPUI's foreground executor.
-                                    // Keep immediate-context work here, on the same thread
-                                    // that initialized the thread-local D3D11 device.
-                                    // The GPUI bitmap remains available as a fallback if
-                                    // native D3D11 upload or presentation fails.
-                                    let native_present =
-                                        crate::video_renderer::upload_bgra_frame(
-                                            width,
-                                            height,
-                                            frame.stride,
-                                            &frame.data,
-                                        );
+                                    // D3D11 immediate-context calls stay on the GPUI
+                                    // thread that initialized the native renderer.
+                                    let native_present = match frame.as_ref() {
+                                        crate::airplay::DecodedVideoFrame::Bgra(frame) => {
+                                            crate::video_renderer::upload_bgra_frame(
+                                                width, height, frame.stride, &frame.data,
+                                            )
+                                        }
+                                        crate::airplay::DecodedVideoFrame::Nv12(frame) => {
+                                            crate::video_renderer::upload_nv12_frame(
+                                                width, height, frame.stride, &frame.data,
+                                            )
+                                        }
+                                    };
                                     let display_path = match native_present {
                                         Ok(()) => "D3D11 原生预览",
                                         Err(ref error) => {
