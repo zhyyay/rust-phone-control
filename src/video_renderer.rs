@@ -10,7 +10,7 @@ use std::{
     marker::PhantomData,
     rc::Rc,
     slice,
-    time::Instant,
+    time::{Duration, Instant},
 };
 use windows_062::Win32::Graphics::Direct3D::ID3DBlob;
 use windows_062::Win32::{
@@ -60,6 +60,8 @@ thread_local! {
     /// every GPUI prepaint when the preview layout has not changed.
     static NATIVE_VIDEO_CHILD_BOUNDS: Cell<Option<(i32, i32, i32, i32)>> =
         const { Cell::new(None) };
+    /// Prevent a removed device from triggering a rebuild attempt on every frame.
+    static DEVICE_RECOVERY_RETRY_AFTER: Cell<Option<Instant>> = const { Cell::new(None) };
 }
 
 /// Resolve GPUI's current Windows window handle and initialize the thread-local D3D11 device.
@@ -250,6 +252,16 @@ pub(crate) fn upload_bgra_frame(
             let Some((reason, Some((surface_width, surface_height)))) = removed else {
                 return Err(original_error);
             };
+            let now = Instant::now();
+            let cooling_down = DEVICE_RECOVERY_RETRY_AFTER.with(|retry_after| {
+                retry_after.get().is_some_and(|deadline| now < deadline)
+            });
+            if cooling_down {
+                return Err(original_error);
+            }
+            DEVICE_RECOVERY_RETRY_AFTER.with(|retry_after| {
+                retry_after.set(Some(now + Duration::from_secs(2)));
+            });
             let child_raw = NATIVE_VIDEO_CHILD_HWND.with(Cell::get);
             if child_raw == 0 {
                 return Err(original_error);
@@ -269,6 +281,7 @@ pub(crate) fn upload_bgra_frame(
             THREAD_RENDERER.with(|renderer| {
                 *renderer.borrow_mut() = Some(replacement);
             });
+            DEVICE_RECOVERY_RETRY_AFTER.with(|retry_after| retry_after.set(None));
 
             THREAD_RENDERER
                 .with(|renderer| {
