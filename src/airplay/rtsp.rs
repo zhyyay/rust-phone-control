@@ -2900,7 +2900,8 @@ mod tests {
                 &mut None,
                 &mut None,
                 None
-            )
+            None,
+        )
             .unwrap_err()
             .0,
             455
@@ -2940,7 +2941,8 @@ mod tests {
                 &mut None,
                 &mut None,
                 None
-            )
+            None,
+        )
             .unwrap_err()
             .0,
             501
