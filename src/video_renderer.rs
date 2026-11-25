@@ -1,21 +1,21 @@
-//! Windows Direct3D 11 device ownership for the native video renderer.
+//! Windows Direct3D 11 device and video-texture ownership.
 //!
-//! This module deliberately creates only the D3D11 device and immediate
-//! context. Swap-chain/window integration is a later step after the GPUI
-//! native-window lifecycle is verified. Keep this owner on the render thread.
+//! The device, immediate context, and uploaded frame texture stay on the GPUI
+//! render thread. This module does not create a swap chain or draw over GPUI.
 
-use anyhow::{Context as _, anyhow};
+use anyhow::{Context as _, anyhow, bail};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-use std::{cell::RefCell, marker::PhantomData, rc::Rc};
+use std::{cell::RefCell, ffi::c_void, marker::PhantomData, rc::Rc};
 use windows_062::Win32::{
     Foundation::HMODULE,
     Graphics::{
         Direct3D::{D3D_DRIVER_TYPE_HARDWARE, D3D_FEATURE_LEVEL},
         Direct3D11::{
-            D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_SDK_VERSION, D3D11CreateDevice, ID3D11Device,
-            ID3D11DeviceContext,
+            D3D11_BIND_SHADER_RESOURCE, D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_SDK_VERSION,
+            D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT, D3D11CreateDevice, ID3D11Device,
+            ID3D11DeviceContext, ID3D11ShaderResourceView, ID3D11Texture2D,
         },
-        Dxgi::IDXGIAdapter,
+        Dxgi::{IDXGIAdapter, Common::DXGI_FORMAT_B8G8R8A8_UNORM},
     },
 };
 
@@ -45,13 +45,36 @@ pub(crate) fn initialize_for_window(window: &gpui_kit::Window) -> anyhow::Result
     })
 }
 
-/// Owns the D3D11 device and immediate context on the thread that created it.
+/// Upload one decoded BGRA frame into a shader-readable D3D11 texture.
 ///
-/// The Rc marker intentionally makes this type !Send and !Sync. D3D11
-/// immediate-context calls and renderer resource lifetime stay on one thread.
+/// Call this on the same GPUI thread that initialized the device. The upload
+/// uses a DEFAULT texture and UpdateSubresource; it is a CPU-to-GPU upload,
+/// not a zero-copy decoder surface.
+pub(crate) fn upload_bgra_frame(
+    width: u32,
+    height: u32,
+    stride: usize,
+    data: &[u8],
+) -> anyhow::Result<()> {
+    THREAD_RENDERER.with(|renderer| {
+        let mut renderer = renderer.borrow_mut();
+        let device = renderer
+            .as_mut()
+            .ok_or_else(|| anyhow!("D3D11 renderer has not been initialized for a GPUI window"))?;
+        device.upload_bgra(width, height, stride, data)
+    })
+}
+
+/// Owns D3D11 objects on the thread that created them.
+///
+/// The Rc marker intentionally makes this type !Send and !Sync. Immediate
+/// context calls and resource lifetime remain confined to one thread.
 pub(crate) struct D3d11Device {
     device: ID3D11Device,
-    _immediate_context: ID3D11DeviceContext,
+    immediate_context: ID3D11DeviceContext,
+    video_texture: Option<ID3D11Texture2D>,
+    _video_shader_view: Option<ID3D11ShaderResourceView>,
+    video_texture_size: Option<(u32, u32)>,
     _thread_affinity: PhantomData<Rc<()>>,
 }
 
@@ -89,9 +112,98 @@ impl D3d11Device {
 
         Ok(Self {
             device,
-            _immediate_context: immediate_context,
+            immediate_context,
+            video_texture: None,
+            _video_shader_view: None,
+            video_texture_size: None,
             _thread_affinity: PhantomData,
         })
+    }
+
+    /// Create or resize the BGRA texture and upload a frame into it.
+    fn upload_bgra(
+        &mut self,
+        width: u32,
+        height: u32,
+        stride: usize,
+        data: &[u8],
+    ) -> anyhow::Result<()> {
+        if width == 0 || height == 0 || width > 8192 || height > 8192 {
+            bail!("invalid D3D11 video texture dimensions: {width}x{height}");
+        }
+
+        let row_bytes = usize::try_from(width)
+            .ok()
+            .and_then(|value| value.checked_mul(4))
+            .ok_or_else(|| anyhow!("BGRA row size overflow"))?;
+        if stride < row_bytes {
+            bail!("BGRA stride {stride} is smaller than row size {row_bytes}");
+        }
+        let required_bytes = stride
+            .checked_mul(height as usize)
+            .ok_or_else(|| anyhow!("BGRA frame size overflow"))?;
+        if data.len() < required_bytes {
+            bail!(
+                "BGRA frame buffer is truncated: {} bytes available, {required_bytes} required",
+                data.len()
+            );
+        }
+        let row_pitch = u32::try_from(stride)
+            .context("BGRA row pitch exceeds the D3D11 limit")?;
+
+        if self.video_texture_size != Some((width, height)) {
+            let desc = D3D11_TEXTURE2D_DESC {
+                Width: width,
+                Height: height,
+                MipLevels: 1,
+                ArraySize: 1,
+                Format: DXGI_FORMAT_B8G8R8A8_UNORM,
+                SampleDesc: windows_062::Win32::Graphics::Dxgi::Common::DXGI_SAMPLE_DESC {
+                    Count: 1,
+                    Quality: 0,
+                },
+                Usage: D3D11_USAGE_DEFAULT,
+                BindFlags: D3D11_BIND_SHADER_RESOURCE,
+                CPUAccessFlags: 0,
+                MiscFlags: 0,
+            };
+            let mut texture = None;
+            // SAFETY: desc is fully initialized and the output slot is valid.
+            unsafe { self.device.CreateTexture2D(&desc, None, Some(&mut texture)) }
+                .context("could not create the D3D11 BGRA video texture")?;
+            let texture = texture.ok_or_else(|| anyhow!("D3D11 returned no video texture"))?;
+
+            let mut shader_view = None;
+            // SAFETY: texture is a valid shader-resource texture created above.
+            unsafe {
+                self.device
+                    .CreateShaderResourceView(&texture, None, Some(&mut shader_view))
+            }
+            .context("could not create the D3D11 video shader-resource view")?;
+
+            self.video_texture = Some(texture);
+            self._video_shader_view = shader_view;
+            self.video_texture_size = Some((width, height));
+            tracing::info!(width, height, "D3D11 video texture allocated");
+        }
+
+        let texture = self
+            .video_texture
+            .as_ref()
+            .ok_or_else(|| anyhow!("D3D11 video texture is unexpectedly absent"))?;
+        // SAFETY: data contains at least stride * height bytes; row_pitch is
+        // validated above; the texture dimensions match the supplied frame.
+        unsafe {
+            self.immediate_context.UpdateSubresource(
+                texture,
+                0,
+                None,
+                data.as_ptr().cast::<c_void>(),
+                row_pitch,
+                0,
+            );
+        }
+        Ok(())
     }
 
     /// Return the Direct3D feature level for diagnostics.
