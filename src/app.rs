@@ -271,6 +271,7 @@ impl Render for PhoneControlApp {
                                     let display_path = match native_present {
                                         Ok(()) => "D3D11 原生预览",
                                         Err(ref error) => {
+                                            crate::video_renderer::hide_native_video_surface();
                                             tracing::debug!(
                                                 %error,
                                                 sequence,
