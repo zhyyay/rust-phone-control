@@ -479,10 +479,10 @@ fn render_preview_column(app: &PhoneControlApp, cx: &Context<PhoneControlApp>) -
                     let next = children.first().map(|bounds| {
                         let scale = window.scale_factor();
                         PreviewSurfaceBounds {
-                            x: (bounds.origin.x.0 * scale).round() as i32,
-                            y: (bounds.origin.y.0 * scale).round() as i32,
-                            width: (bounds.size.width.0 * scale).round() as i32,
-                            height: (bounds.size.height.0 * scale).round() as i32,
+                            x: (bounds.origin.x.as_f32() * scale).round() as i32,
+                            y: (bounds.origin.y.as_f32() * scale).round() as i32,
+                            width: (bounds.size.width.as_f32() * scale).round() as i32,
+                            height: (bounds.size.height.as_f32() * scale).round() as i32,
                         }
                     });
 
