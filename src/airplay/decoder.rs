@@ -753,7 +753,11 @@ impl<'runtime> H264FramePipeline<'runtime> {
                 .publish_nv12(crate::airplay::video::OwnedNv12Frame {
                     width: frame.width,
                     height: frame.height,
-                    stride: frame.stride,
+                    // Media Foundation exposes one default stride for both NV12
+                    // planes; keep the mailbox representation plane-specific
+                    // for decoder backends that can provide distinct pitches.
+                    y_stride: frame.stride,
+                    uv_stride: frame.stride,
                     data: frame.data,
                 })
                 .map_err(MediaFoundationError::FrameMailbox)?;
