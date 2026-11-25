@@ -5,18 +5,15 @@
 
 use anyhow::{Context as _, anyhow, bail};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+use std::{
+    cell::{Cell, RefCell},
+    ffi::c_void,
+    marker::PhantomData,
+    rc::Rc,
+};
+use windows_062::core::PCWSTR;
 use windows_062::Win32::{
     Foundation::{HMODULE, HWND},
-    System::LibraryLoader::GetModuleHandleW,
-    UI::WindowsAndMessaging::{
-        CreateWindowExW, DefWindowProcW, DestroyWindow, RegisterClassW, SetWindowPos,
-        ShowWindow, WNDCLASSW, WS_CHILD, WS_CLIPSIBLINGS, WS_CLIPCHILDREN,
-        SW_HIDE, SWP_NOACTIVATE, SWP_NOOWNERZORDER, SWP_NOREDRAW, SWP_NOZORDER,
-    },
-};
-use std::{cell::{Cell, RefCell}, ffi::c_void, marker::PhantomData, rc::Rc};
-use windows_062::Win32::{
-    Foundation::HMODULE,
     Graphics::{
         Direct3D::{D3D_DRIVER_TYPE_HARDWARE, D3D_FEATURE_LEVEL},
         Direct3D11::{
@@ -26,11 +23,20 @@ use windows_062::Win32::{
         },
         Dxgi::{Common::DXGI_FORMAT_B8G8R8A8_UNORM, IDXGIAdapter},
     },
+    UI::WindowsAndMessaging::{
+        CreateWindowExW, DestroyWindow, SetWindowPos, ShowWindow, WINDOW_EX_STYLE, SW_HIDE,
+        SWP_NOACTIVATE, SWP_NOOWNERZORDER, SWP_NOREDRAW, SWP_NOZORDER, WS_CHILD,
+        WS_CLIPCHILDREN, WS_CLIPSIBLINGS,
+    },
 };
 
 thread_local! {
     /// D3D11 immediate contexts remain on the GPUI thread that first initializes them.
     static THREAD_RENDERER: RefCell<Option<D3d11Device>> = const { RefCell::new(None) };
+    /// Borrowed GPUI parent HWND; never destroyed or re-parented by this module.
+    static GPUI_PARENT_HWND: Cell<isize> = const { Cell::new(0) };
+    /// Owned child HWND. It stays hidden until a SwapChain presenter is attached.
+    static NATIVE_VIDEO_CHILD_HWND: Cell<isize> = const { Cell::new(0) };
 }
 
 /// Resolve GPUI's current Windows window handle and initialize the thread-local D3D11 device.
@@ -54,6 +60,104 @@ pub(crate) fn initialize_for_window(window: &gpui_kit::Window) -> anyhow::Result
         }
         Ok(hwnd)
     })
+}
+
+/// Create and synchronize a hidden native child surface within the GPUI preview rectangle.
+///
+/// The child uses the built-in STATIC window class, avoiding a custom WndProc or
+/// process-global class registration. It remains hidden so the GPUI image fallback
+/// stays visible until a D3D11 SwapChain presenter is implemented.
+pub(crate) fn sync_native_video_surface(
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+) -> anyhow::Result<()> {
+    if width <= 0 || height <= 0 {
+        destroy_native_video_surface();
+        return Ok(());
+    }
+
+    let parent = GPUI_PARENT_HWND.with(Cell::get);
+    if parent == 0 {
+        bail!("GPUI parent HWND is not initialized");
+    }
+
+    NATIVE_VIDEO_CHILD_HWND.with(|child_cell| {
+        let mut child_raw = child_cell.get();
+        if child_raw == 0 {
+            const STATIC_CLASS: &[u16] = &[83, 84, 65, 84, 73, 67, 0];
+            const SURFACE_NAME: &[u16] = &[
+                82, 117, 115, 116, 80, 104, 111, 110, 101, 86, 105, 100, 101, 111, 83, 117, 114,
+                102, 97, 99, 101, 0,
+            ];
+            let parent_hwnd = HWND(parent as *mut c_void);
+            // SAFETY: parent_hwnd is borrowed from the live GPUI window on its
+            // UI thread. The predefined STATIC class requires no custom WndProc.
+            let created = unsafe {
+                CreateWindowExW(
+                    WINDOW_EX_STYLE(0),
+                    PCWSTR(STATIC_CLASS.as_ptr()),
+                    PCWSTR(SURFACE_NAME.as_ptr()),
+                    WS_CHILD | WS_CLIPSIBLINGS | WS_CLIPCHILDREN,
+                    x,
+                    y,
+                    width,
+                    height,
+                    Some(parent_hwnd),
+                    None,
+                    None,
+                    None,
+                )
+            }
+            .context("CreateWindowExW failed for the native video child surface")?;
+            child_raw = created.0 as isize;
+            child_cell.set(child_raw);
+            tracing::info!(
+                hwnd = format!("{child_raw:#x}"),
+                parent = format!("{parent:#x}"),
+                "Created hidden native video child window"
+            );
+        }
+
+        let child_hwnd = HWND(child_raw as *mut c_void);
+        // SAFETY: child_hwnd is owned by this thread-local host and remains
+        // parented to the current GPUI HWND.
+        unsafe {
+            SetWindowPos(
+                child_hwnd,
+                None,
+                x,
+                y,
+                width,
+                height,
+                SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOZORDER | SWP_NOREDRAW,
+            )
+        }
+        .context("SetWindowPos failed while synchronizing the video child surface")?;
+        // Keep the child hidden until SwapChain creation and Present are ready.
+        unsafe {
+            ShowWindow(child_hwnd, SW_HIDE);
+        }
+        Ok(())
+    })
+}
+
+/// Destroy only the native child owned by this module; the GPUI parent is borrowed.
+pub(crate) fn destroy_native_video_surface() {
+    NATIVE_VIDEO_CHILD_HWND.with(|child_cell| {
+        let child_raw = child_cell.replace(0);
+        if child_raw == 0 {
+            return;
+        }
+        let child_hwnd = HWND(child_raw as *mut c_void);
+        // SAFETY: this is the child HWND created and owned by this module.
+        if let Err(error) = unsafe { DestroyWindow(child_hwnd) } {
+            tracing::warn!(error = %error, "Could not destroy native video child window");
+        } else {
+            tracing::info!("Destroyed native video child window");
+        }
+    });
 }
 
 /// Upload one decoded BGRA frame into a shader-readable D3D11 texture.
