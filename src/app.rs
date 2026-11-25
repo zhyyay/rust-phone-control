@@ -203,15 +203,30 @@ impl Render for PhoneControlApp {
                     let prepared_fallback = if fallback_mode {
                         if let Some((_, frame, _)) = prepared_frame.as_ref() {
                             let frame = frame.clone();
-                            Some(
-                                cx.background_executor()
-                                    .spawn(async move {
-                                        let started = Instant::now();
-                                        let result = decoded_frame_to_bmp(frame.as_ref());
-                                        (result, started.elapsed())
-                                    })
-                                    .await,
-                            )
+                            let converted = cx
+                                .background_executor()
+                                .spawn(async move {
+                                    let started = Instant::now();
+                                    let result = decoded_frame_to_bmp(frame.as_ref());
+                                    (result, started.elapsed())
+                                })
+                                .await;
+                            match crate::airplay::has_pending_video_frame() {
+                                Ok(true) => {
+                                    tracing::trace!(
+                                        "Discarding completed fallback conversion because a newer frame is waiting"
+                                    );
+                                    None
+                                }
+                                Ok(false) => Some(converted),
+                                Err(error) => {
+                                    tracing::debug!(
+                                        %error,
+                                        "Could not check for a newer frame after fallback conversion"
+                                    );
+                                    Some(converted)
+                                }
+                            }
                         } else {
                             None
                         }
