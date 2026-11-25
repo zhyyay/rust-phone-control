@@ -101,6 +101,7 @@ impl Render for PhoneControlApp {
                 tracing::info!("GPUI application-quit cleanup: begin");
 
                 // GPUI invokes quit observers before clearing its window map,
+                crate::video_renderer::destroy_native_video_surface();
                 // but awaits their returned futures only after the windows have
                 // been cleared. Release window-backed preview resources now,
                 // synchronously in the observer, rather than in the future.
@@ -501,6 +502,17 @@ fn render_preview_column(app: &PhoneControlApp, cx: &Context<PhoneControlApp>) -
                                 tracing::debug!("GPUI video preview bounds are not currently available");
                             }
                         }
+                    }
+
+                    match next {
+                        Some(bounds) => {
+                            if let Err(error) = crate::video_renderer::sync_native_video_surface(
+                                bounds.x, bounds.y, bounds.width, bounds.height,
+                            ) {
+                                tracing::warn!(error = %format!("{error:#}"), "Native video child surface synchronization failed");
+                            }
+                        }
+                        None => crate::video_renderer::destroy_native_video_surface(),
                     }
                 }),
         )
