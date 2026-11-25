@@ -6,7 +6,10 @@ use gpui_kit::*;
 
 #[cfg(windows)]
 use std::{
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
     time::{Duration, Instant},
 };
 
@@ -136,6 +139,14 @@ impl Render for PhoneControlApp {
                 // fallback frames on the background executor rather than
                 // converting NV12/BGRA while the GPUI thread is blocked.
                 let mut fallback_mode = false;
+                // At most one CPU fallback conversion may run at a time.
+                // The render loop never awaits it; completed results are
+                // consumed on a later tick and stale sequences are discarded.
+                let fallback_conversion_in_flight = Arc::new(AtomicBool::new(false));
+                let fallback_conversion_result: Arc<
+                    Mutex<Option<(u64, u32, u32, Result<Vec<u8>, &'static str>, Duration)>>,
+                > = Arc::new(Mutex::new(None));
+                let mut last_seen_frame_sequence = 0u64;
                 let mut mailbox_stats_log_at = Instant::now();
                 let mut last_mailbox_published = 0u64;
                 let mut last_mailbox_replaced = 0u64;
@@ -196,43 +207,15 @@ impl Render for PhoneControlApp {
                         mailbox_stats_log_at = Instant::now();
                     }
 
-                    // Fallback conversion is CPU work and can be expensive at
-                    // phone resolutions. After the first native-present failure,
-                    // run it on GPUI's background executor; D3D11 calls remain
-                    // confined to the foreground thread below.
-                    let prepared_fallback = if fallback_mode {
-                        if let Some((_, frame, _)) = prepared_frame.as_ref() {
-                            let frame = frame.clone();
-                            let converted = cx
-                                .background_executor()
-                                .spawn(async move {
-                                    let started = Instant::now();
-                                    let result = decoded_frame_to_bmp(frame.as_ref());
-                                    (result, started.elapsed())
-                                })
-                                .await;
-                            match crate::airplay::has_pending_video_frame() {
-                                Ok(true) => {
-                                    tracing::trace!(
-                                        "Discarding completed fallback conversion because a newer frame is waiting"
-                                    );
-                                    None
-                                }
-                                Ok(false) => Some(converted),
-                                Err(error) => {
-                                    tracing::debug!(
-                                        %error,
-                                        "Could not check for a newer frame after fallback conversion"
-                                    );
-                                    Some(converted)
-                                }
-                            }
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    };
+                    if let Some((sequence, _, _)) = prepared_frame.as_ref() {
+                        last_seen_frame_sequence = *sequence;
+                    }
+                    let latest_sequence = last_seen_frame_sequence;
+                    let completed_fallback = fallback_conversion_result
+                        .lock()
+                        .ok()
+                        .and_then(|mut result| result.take())
+                        .filter(|(sequence, _, _, _, _)| *sequence >= latest_sequence);
 
                     let metrics = if refresh_pairing {
                         let (presented, uploaded, recoveries, render_errors) =
@@ -308,6 +291,42 @@ impl Render for PhoneControlApp {
                                 changed = true;
                             }
                         }
+                        if let Some((sequence, width, height, result, conversion_elapsed)) =
+                            completed_fallback
+                        {
+                            match result {
+                                Ok(bytes) if sequence >= latest_sequence => {
+                                    this.preview_image = Some(Arc::new(Image::from_bytes(
+                                        ImageFormat::Bmp,
+                                        bytes,
+                                    )));
+                                    this.preview_status = format!(
+                                        "GPUI 图像回退（D3D11 不可用） · {width} × {height} · sequence {sequence}"
+                                    );
+                                    tracing::trace!(
+                                        sequence,
+                                        conversion_ms = conversion_elapsed.as_secs_f64() * 1000.0,
+                                        "Published completed asynchronous fallback frame"
+                                    );
+                                    changed = true;
+                                }
+                                Ok(_) => {
+                                    tracing::trace!(
+                                        sequence,
+                                        latest_sequence,
+                                        "Discarding stale fallback frame"
+                                    );
+                                }
+                                Err(error) => {
+                                    tracing::warn!(
+                                        %error,
+                                        sequence,
+                                        "Could not convert failed native frame for GPUI fallback"
+                                    );
+                                }
+                            }
+                        }
+
                         if let Some((sequence, frame, mailbox_age)) = prepared_frame {
                             let (width, height) = match frame.as_ref() {
                                 crate::airplay::DecodedVideoFrame::Bgra(frame) => {
@@ -356,37 +375,46 @@ impl Render for PhoneControlApp {
                                         tracing::debug!(
                                             %error,
                                             sequence,
-                                            "D3D11 frame upload unavailable; using background GPUI fallback conversion"
+                                            "D3D11 frame upload unavailable; scheduling bounded asynchronous GPUI fallback conversion"
                                         );
-                                        match prepared_fallback {
-                                            Some((Ok(bytes), conversion_elapsed)) => {
-                                                this.preview_image = Some(Arc::new(Image::from_bytes(
-                                                    ImageFormat::Bmp,
-                                                    bytes,
-                                                )));
-                                                (
-                                                    "GPUI 图像回退（D3D11 不可用）",
-                                                    true,
-                                                    conversion_elapsed,
-                                                )
-                                            }
-                                            Some((Err(fallback_error), conversion_elapsed)) => {
-                                                tracing::warn!(
-                                                    %fallback_error,
-                                                    sequence,
-                                                    "Could not convert failed native frame for GPUI fallback"
+                                        if !fallback_conversion_in_flight
+                                            .swap(true, Ordering::AcqRel)
+                                        {
+                                            let frame_for_conversion = frame.clone();
+                                            let result_slot = fallback_conversion_result.clone();
+                                            let in_flight = fallback_conversion_in_flight.clone();
+                                            let width_for_conversion = width;
+                                            let height_for_conversion = height;
+                                            std::thread::spawn(move || {
+                                                let started = Instant::now();
+                                                let result = decoded_frame_to_bmp(
+                                                    frame_for_conversion.as_ref(),
                                                 );
-                                                (
-                                                    "视频帧回退转换失败",
-                                                    false,
-                                                    conversion_elapsed,
-                                                )
-                                            }
-                                            None => (
+                                                let elapsed = started.elapsed();
+                                                if let Ok(mut slot) = result_slot.lock() {
+                                                    *slot = Some((
+                                                        sequence,
+                                                        width_for_conversion,
+                                                        height_for_conversion,
+                                                        result,
+                                                        elapsed,
+                                                    ));
+                                                }
+                                                in_flight.store(false, Ordering::Release);
+                                            });
+                                        }
+                                        if this.preview_image.is_some() {
+                                            (
+                                                "GPUI 图像回退（等待最新帧）",
+                                                false,
+                                                Duration::ZERO,
+                                            )
+                                        } else {
+                                            (
                                                 "GPUI 回退准备中",
                                                 false,
                                                 Duration::ZERO,
-                                            ),
+                                            )
                                         }
                                     }
                                 };
