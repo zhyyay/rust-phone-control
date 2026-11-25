@@ -132,6 +132,10 @@ impl Render for PhoneControlApp {
             crate::logging::startup_checkpoint("render: before frame poll spawn");
             self.frame_poll_task = Some(cx.spawn(async move |this, cx| {
                 let mut pairing_refresh_ticks = 0u8;
+                // Once native presentation fails, prepare subsequent bitmap
+                // fallback frames on the background executor rather than
+                // converting NV12/BGRA while the GPUI thread is blocked.
+                let mut fallback_mode = false;
                 let mut mailbox_stats_log_at = Instant::now();
                 let mut last_mailbox_published = 0u64;
                 let mut last_mailbox_replaced = 0u64;
@@ -192,6 +196,29 @@ impl Render for PhoneControlApp {
                         mailbox_stats_log_at = Instant::now();
                     }
 
+                    // Fallback conversion is CPU work and can be expensive at
+                    // phone resolutions. After the first native-present failure,
+                    // run it on GPUI's background executor; D3D11 calls remain
+                    // confined to the foreground thread below.
+                    let prepared_fallback = if fallback_mode {
+                        if let Some((_, frame, _)) = prepared_frame.as_ref() {
+                            let frame = frame.clone();
+                            Some(
+                                cx.background_executor()
+                                    .spawn(async move {
+                                        let started = Instant::now();
+                                        let result = decoded_frame_to_bmp(frame.as_ref());
+                                        (result, started.elapsed())
+                                    })
+                                    .await,
+                            )
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
+
                     let metrics = if refresh_pairing {
                         let (presented, uploaded, recoveries, render_errors) =
                             crate::video_renderer::preview_metrics();
@@ -233,6 +260,7 @@ impl Render for PhoneControlApp {
 
                     let updated = this.update(cx, |this, cx| {
                         let mut changed = false;
+                        let mut next_fallback_mode = fallback_mode;
                         if let Some(label) = metrics {
                             if this.d3d11_metrics_label != label {
                                 this.d3d11_metrics_label = label;
@@ -304,35 +332,19 @@ impl Render for PhoneControlApp {
                                         // The native child surface owns the visible
                                         // image now; discard the previous GPUI bitmap.
                                         this.preview_image = None;
+                                        next_fallback_mode = false;
                                         ("D3D11 原生预览", false, Duration::ZERO)
                                     }
                                     Err(error) => {
                                         crate::video_renderer::hide_native_video_surface();
+                                        next_fallback_mode = true;
                                         tracing::debug!(
                                             %error,
                                             sequence,
-                                            "D3D11 frame upload unavailable; converting only this frame for GPUI fallback"
+                                            "D3D11 frame upload unavailable; using background GPUI fallback conversion"
                                         );
-                                        let conversion_started = Instant::now();
-                                        let fallback = match frame.as_ref() {
-                                            crate::airplay::DecodedVideoFrame::Bgra(frame) => {
-                                                bgra_frame_to_bmp(frame)
-                                            }
-                                            crate::airplay::DecodedVideoFrame::Nv12(frame) => {
-                                                crate::airplay::Nv12Frame {
-                                                    width: frame.width,
-                                                    height: frame.height,
-                                                    y_stride: frame.stride,
-                                                    uv_stride: frame.stride,
-                                                    data: &frame.data,
-                                                }
-                                                .to_bgra()
-                                                .map_err(|_| "NV12 fallback conversion failed")
-                                                .and_then(|bgra| bgra_frame_to_bmp(&bgra))
-                                            }
-                                        };
-                                        match fallback {
-                                            Ok(bytes) => {
+                                        match prepared_fallback {
+                                            Some((Ok(bytes), conversion_elapsed)) => {
                                                 this.preview_image = Some(Arc::new(Image::from_bytes(
                                                     ImageFormat::Bmp,
                                                     bytes,
@@ -340,10 +352,10 @@ impl Render for PhoneControlApp {
                                                 (
                                                     "GPUI 图像回退（D3D11 不可用）",
                                                     true,
-                                                    conversion_started.elapsed(),
+                                                    conversion_elapsed,
                                                 )
                                             }
-                                            Err(fallback_error) => {
+                                            Some((Err(fallback_error), conversion_elapsed)) => {
                                                 tracing::warn!(
                                                     %fallback_error,
                                                     sequence,
@@ -352,9 +364,14 @@ impl Render for PhoneControlApp {
                                                 (
                                                     "视频帧回退转换失败",
                                                     false,
-                                                    conversion_started.elapsed(),
+                                                    conversion_elapsed,
                                                 )
                                             }
+                                            None => (
+                                                "GPUI 回退准备中",
+                                                false,
+                                                Duration::ZERO,
+                                            ),
                                         }
                                     }
                                 };
@@ -375,10 +392,14 @@ impl Render for PhoneControlApp {
                         if changed {
                             cx.notify();
                         }
+                        next_fallback_mode
                     });
-                    if updated.is_err() {
-                        tracing::debug!("Stopping GPUI AirPlay poll task because its app entity is no longer available");
-                        break;
+                    match updated {
+                        Ok(next) => fallback_mode = next,
+                        Err(_) => {
+                            tracing::debug!("Stopping GPUI AirPlay poll task because its app entity is no longer available");
+                            break;
+                        }
                     }
                 }
             }));
@@ -987,6 +1008,25 @@ fn preview_panel(image: Option<Arc<Image>>, status: String) -> impl IntoElement 
     };
     shell = shell.child(screen);
     shell
+}
+
+#[cfg(windows)]
+fn decoded_frame_to_bmp(
+    frame: &crate::airplay::DecodedVideoFrame,
+) -> Result<Vec<u8>, &'static str> {
+    match frame {
+        crate::airplay::DecodedVideoFrame::Bgra(frame) => bgra_frame_to_bmp(frame),
+        crate::airplay::DecodedVideoFrame::Nv12(frame) => crate::airplay::Nv12Frame {
+            width: frame.width,
+            height: frame.height,
+            y_stride: frame.stride,
+            uv_stride: frame.stride,
+            data: &frame.data,
+        }
+        .to_bgra()
+        .map_err(|_| "NV12 fallback conversion failed")
+        .and_then(|bgra| bgra_frame_to_bmp(&bgra)),
+    }
 }
 
 #[cfg(windows)]
