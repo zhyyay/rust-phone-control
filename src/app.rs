@@ -132,11 +132,9 @@ impl Render for PhoneControlApp {
                     let prepared_frame = match crate::airplay::take_latest_video_frame() {
                         Ok(Some(snapshot)) => {
                             let sequence = snapshot.sequence;
-                            let width = snapshot.frame.width;
-                            let height = snapshot.frame.height;
                             let conversion = cx.background_executor().spawn(async move {
                                 bgra_frame_to_bmp(&snapshot.frame)
-                                    .map(|bytes| (sequence, width, height, bytes))
+                                    .map(|bytes| (sequence, snapshot.frame, bytes))
                             });
                             Some(conversion.await)
                         }
@@ -170,7 +168,28 @@ impl Render for PhoneControlApp {
                         }
                         if let Some(result) = prepared_frame {
                             match result {
-                                Ok((sequence, width, height, bytes)) => {
+                                Ok((sequence, frame, bytes)) => {
+                                    let width = frame.width;
+                                    let height = frame.height;
+
+                                    // Entity::update runs on GPUI's foreground executor.
+                                    // Keep all immediate-context work here, on the same
+                                    // thread that initialized the thread-local D3D11 device.
+                                    // The GPUI bitmap remains the visible fallback until a
+                                    // dedicated presentation surface is implemented.
+                                    if let Err(error) = crate::video_renderer::upload_bgra_frame(
+                                        width,
+                                        height,
+                                        frame.stride,
+                                        &frame.data,
+                                    ) {
+                                        tracing::debug!(
+                                            %error,
+                                            sequence,
+                                            "D3D11 frame upload unavailable; retaining GPUI image fallback"
+                                        );
+                                    }
+
                                     this.preview_status = format!(
                                         "Frame {width} × {height} · sequence {sequence}"
                                     );
