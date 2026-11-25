@@ -23,6 +23,8 @@ pub struct PhoneControlApp {
     #[cfg(windows)]
     preview_status: String,
     #[cfg(windows)]
+    renderer_init_attempted: bool,
+    #[cfg(windows)]
     frame_poll_task: Option<Task<()>>,
     #[cfg(windows)]
     quit_subscription: Option<Subscription>,
@@ -56,8 +58,22 @@ impl Drop for PhoneControlApp {
 }
 
 impl Render for PhoneControlApp {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crate::logging::startup_checkpoint("render: entered");
+        #[cfg(windows)]
+        if !self.renderer_init_attempted {
+            self.renderer_init_attempted = true;
+            match crate::video_renderer::initialize_for_window(window) {
+                Ok(hwnd) => tracing::info!(
+                    hwnd = format!("{hwnd:#x}"),
+                    "GPUI native HWND resolved; D3D11 render-thread device is ready"
+                ),
+                Err(error) => tracing::warn!(
+                    error = %format!("{error:#}"),
+                    "Could not initialize the native D3D11 renderer; GPUI image fallback remains active"
+                ),
+            }
+        }
         #[cfg(windows)]
         crate::logging::startup_checkpoint("render: before quit subscription");
         #[cfg(windows)]
