@@ -111,6 +111,26 @@ impl Render for PhoneControlApp {
                         pairing_refresh_ticks = 0;
                     }
 
+                    // Pull the latest frame quickly, then perform the potentially
+                    // expensive BGRA -> BMP conversion away from the GPUI thread.
+                    let prepared_frame = match crate::airplay::take_latest_video_frame() {
+                        Ok(Some(snapshot)) => {
+                            let sequence = snapshot.sequence;
+                            let width = snapshot.frame.width;
+                            let height = snapshot.frame.height;
+                            let conversion = cx.background_executor().spawn(async move {
+                                bgra_frame_to_bmp(&snapshot.frame)
+                                    .map(|bytes| (sequence, width, height, bytes))
+                            });
+                            Some(conversion.await)
+                        }
+                        Ok(None) => None,
+                        Err(error) => {
+                            tracing::warn!(%error, "Could not read decoded AirPlay frame");
+                            None
+                        }
+                    };
+
                     let updated = this.update(cx, |this, cx| {
                         let mut changed = false;
                         if refresh_pairing {
@@ -132,14 +152,11 @@ impl Render for PhoneControlApp {
                                 changed = true;
                             }
                         }
-                        match crate::airplay::take_latest_video_frame() {
-                            Ok(Some(snapshot)) => match bgra_frame_to_bmp(&snapshot.frame) {
-                                Ok(bytes) => {
+                        if let Some(result) = prepared_frame {
+                            match result {
+                                Ok((sequence, width, height, bytes)) => {
                                     this.preview_status = format!(
-                                        "Frame {} × {} · sequence {}",
-                                        snapshot.frame.width,
-                                        snapshot.frame.height,
-                                        snapshot.sequence
+                                        "Frame {width} × {height} · sequence {sequence}"
                                     );
                                     this.preview_image = Some(Arc::new(Image::from_bytes(
                                         ImageFormat::Bmp,
@@ -150,10 +167,6 @@ impl Render for PhoneControlApp {
                                 Err(error) => {
                                     tracing::warn!(%error, "Could not prepare decoded frame for GPUI");
                                 }
-                            },
-                            Ok(None) => {}
-                            Err(error) => {
-                                tracing::warn!(%error, "Could not read decoded AirPlay frame");
                             }
                         }
                         if changed {
