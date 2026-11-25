@@ -1940,7 +1940,10 @@ mod tests {
         let snapshot = mailbox.take_latest().unwrap().unwrap();
         match snapshot.frame.as_ref() {
             DecodedVideoFrame::Nv12(frame) => {
-                assert_eq!((frame.width, frame.height, frame.y_stride, frame.uv_stride), (4, 4, 6, 6));
+                assert_eq!(
+                    (frame.width, frame.height, frame.y_stride, frame.uv_stride),
+                    (4, 4, 6, 6)
+                );
                 assert_eq!(frame.data.len(), 34);
             }
             DecodedVideoFrame::Bgra(_) => panic!("expected native NV12 frame"),
