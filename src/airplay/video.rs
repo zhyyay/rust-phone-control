@@ -993,9 +993,42 @@ pub struct BgraFrame {
 /// Publishing replaces any stale frame instead of building an unbounded
 /// queue. The UI can therefore always consume the newest available image
 /// without allowing rendering lag to grow over time.
+/// Pixel formats accepted by the native presentation boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VideoPixelFormat {
+    Bgra8,
+    Nv12,
+}
+
+/// Metadata passed to a renderer independently of the backing GPU resource.
+/// Timestamps use a monotonic nanosecond clock domain supplied by the producer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VideoFrameMetadata {
+    pub sequence: u64,
+    pub width: u32,
+    pub height: u32,
+    pub stride: usize,
+    pub format: VideoPixelFormat,
+    pub timestamp_ns: u64,
+}
+
+/// Snapshot of bounded latest-frame handoff activity.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct LatestFrameMailboxStats {
+    pub published: u64,
+    pub replaced_before_consumption: u64,
+    pub consumed: u64,
+    pub cleared: u64,
+    pub pending: bool,
+}
+
 #[derive(Debug, Default)]
 pub struct LatestFrameMailbox {
     sequence: AtomicU64,
+    published: AtomicU64,
+    replaced_before_consumption: AtomicU64,
+    consumed: AtomicU64,
+    cleared: AtomicU64,
     frame: Mutex<Option<(u64, Arc<BgraFrame>)>>,
 }
 
@@ -1042,23 +1075,45 @@ impl LatestFrameMailbox {
         }
         let mut slot = self.frame.lock().map_err(|_| FrameMailboxError::Poisoned)?;
         let sequence = self.sequence.fetch_add(1, Ordering::AcqRel).wrapping_add(1);
+        if slot.is_some() {
+            self.replaced_before_consumption.fetch_add(1, Ordering::Relaxed);
+        }
         *slot = Some((sequence, Arc::new(frame)));
+        self.published.fetch_add(1, Ordering::Relaxed);
         Ok(sequence)
     }
 
     /// Take the newest frame. A frame is returned to at most one consumer.
     pub fn take_latest(&self) -> Result<Option<FrameSnapshot>, FrameMailboxError> {
         let mut slot = self.frame.lock().map_err(|_| FrameMailboxError::Poisoned)?;
-        Ok(slot
+        let snapshot = slot
             .take()
-            .map(|(sequence, frame)| FrameSnapshot { sequence, frame }))
+            .map(|(sequence, frame)| FrameSnapshot { sequence, frame });
+        if snapshot.is_some() {
+            self.consumed.fetch_add(1, Ordering::Relaxed);
+        }
+        Ok(snapshot)
     }
 
     /// Discard any pending frame, for example when a mirror session stops.
     pub fn clear(&self) -> Result<(), FrameMailboxError> {
         let mut slot = self.frame.lock().map_err(|_| FrameMailboxError::Poisoned)?;
-        *slot = None;
+        if slot.take().is_some() {
+            self.cleared.fetch_add(1, Ordering::Relaxed);
+        }
         Ok(())
+    }
+
+    /// Read counters without consuming the pending frame.
+    pub fn stats(&self) -> Result<LatestFrameMailboxStats, FrameMailboxError> {
+        let pending = self.frame.lock().map_err(|_| FrameMailboxError::Poisoned)?.is_some();
+        Ok(LatestFrameMailboxStats {
+            published: self.published.load(Ordering::Relaxed),
+            replaced_before_consumption: self.replaced_before_consumption.load(Ordering::Relaxed),
+            consumed: self.consumed.load(Ordering::Relaxed),
+            cleared: self.cleared.load(Ordering::Relaxed),
+            pending,
+        })
     }
 
     pub fn has_pending_frame(&self) -> Result<bool, FrameMailboxError> {
