@@ -1272,16 +1272,21 @@ impl<'a> Nv12Frame<'a> {
             return Err(FrameConversionError::InvalidStride);
         }
 
+        // The UV plane begins after the full pitched Y plane, but the
+        // final UV row only needs its visible interleaved samples. Media
+        // Foundation buffers may omit padding after that final row.
         let y_bytes = self
             .y_stride
             .checked_mul(height)
             .ok_or(FrameConversionError::SizeOverflow)?;
-        let uv_bytes = self
+        let uv_rows_before_last = height / 2 - 1;
+        let uv_required = self
             .uv_stride
-            .checked_mul(height / 2)
+            .checked_mul(uv_rows_before_last)
+            .and_then(|bytes| bytes.checked_add(width))
             .ok_or(FrameConversionError::SizeOverflow)?;
         let required = y_bytes
-            .checked_add(uv_bytes)
+            .checked_add(uv_required)
             .ok_or(FrameConversionError::SizeOverflow)?;
 
         let output_stride = width
@@ -1348,6 +1353,24 @@ mod tests {
         policy.reset();
         assert_eq!(policy.attempts(), 0);
         assert!(policy.begin_attempt());
+    }
+
+    #[test]
+    fn nv12_conversion_accepts_uv_plane_without_padding_after_last_row() {
+        // 4x4 image with a six-byte row pitch. The UV plane starts after
+        // all four pitched Y rows, but its final row has only four valid bytes.
+        let mut data = vec![128u8; 6 * 4 + 6 + 4];
+        data[..24].fill(100);
+        data[24..].fill(128);
+        let frame = Nv12Frame {
+            width: 4,
+            height: 4,
+            y_stride: 6,
+            uv_stride: 6,
+            data: &data,
+        };
+        let converted = frame.to_bgra().expect("compact final UV row is valid");
+        assert_eq!(converted.data.len(), 4 * 4 * 4);
     }
 
     #[test]
