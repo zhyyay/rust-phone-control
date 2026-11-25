@@ -37,6 +37,9 @@ thread_local! {
     static GPUI_PARENT_HWND: Cell<isize> = const { Cell::new(0) };
     /// Owned child HWND. It stays hidden until a SwapChain presenter is attached.
     static NATIVE_VIDEO_CHILD_HWND: Cell<isize> = const { Cell::new(0) };
+    /// Parent HWND captured when the owned child was created. A recreated GPUI
+    /// window invalidates the old child and requires a fresh native surface.
+    static NATIVE_VIDEO_CHILD_PARENT_HWND: Cell<isize> = const { Cell::new(0) };
 }
 
 /// Resolve GPUI's current Windows window handle and initialize the thread-local D3D11 device.
@@ -85,6 +88,14 @@ pub(crate) fn sync_native_video_surface(
 
     NATIVE_VIDEO_CHILD_HWND.with(|child_cell| {
         let mut child_raw = child_cell.get();
+        let child_parent = NATIVE_VIDEO_CHILD_PARENT_HWND.with(Cell::get);
+        if child_raw != 0 && child_parent != parent {
+            // GPUI may recreate its top-level HWND (for example after a window
+            // lifecycle transition). Never keep a child attached to a stale
+            // parent; destroy it on this owning UI thread and recreate below.
+            destroy_native_video_surface();
+            child_raw = 0;
+        }
         if child_raw == 0 {
             const STATIC_CLASS: &[u16] = &[83, 84, 65, 84, 73, 67, 0];
             const SURFACE_NAME: &[u16] = &[
@@ -113,6 +124,7 @@ pub(crate) fn sync_native_video_surface(
             .context("CreateWindowExW failed for the native video child surface")?;
             child_raw = created.0 as isize;
             child_cell.set(child_raw);
+            NATIVE_VIDEO_CHILD_PARENT_HWND.with(|stored_parent| stored_parent.set(parent));
             tracing::info!(
                 hwnd = format!("{child_raw:#x}"),
                 parent = format!("{parent:#x}"),
@@ -147,6 +159,7 @@ pub(crate) fn sync_native_video_surface(
 pub(crate) fn destroy_native_video_surface() {
     NATIVE_VIDEO_CHILD_HWND.with(|child_cell| {
         let child_raw = child_cell.replace(0);
+        NATIVE_VIDEO_CHILD_PARENT_HWND.with(|stored_parent| stored_parent.set(0));
         if child_raw == 0 {
             return;
         }
