@@ -7,7 +7,7 @@ use gpui_kit::*;
 #[cfg(windows)]
 use std::{
     sync::{Arc, Mutex},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 #[cfg(windows)]
@@ -130,6 +130,10 @@ impl Render for PhoneControlApp {
             crate::logging::startup_checkpoint("render: before frame poll spawn");
             self.frame_poll_task = Some(cx.spawn(async move |this, cx| {
                 let mut pairing_refresh_ticks = 0u8;
+                let mut mailbox_stats_log_at = Instant::now();
+                let mut last_mailbox_published = 0u64;
+                let mut last_mailbox_replaced = 0u64;
+                let mut last_mailbox_consumed = 0u64;
                 loop {
                     cx.background_executor()
                         .timer(Duration::from_millis(33))
@@ -161,6 +165,27 @@ impl Render for PhoneControlApp {
                             None
                         }
                     };
+
+                    if mailbox_stats_log_at.elapsed() >= Duration::from_secs(1) {
+                        match crate::airplay::video_frame_mailbox_stats() {
+                            Ok(Some(stats)) => {
+                                tracing::info!(
+                                    published_per_sec = stats.published.saturating_sub(last_mailbox_published),
+                                    replaced_per_sec = stats.replaced_before_consumption
+                                        .saturating_sub(last_mailbox_replaced),
+                                    consumed_per_sec = stats.consumed.saturating_sub(last_mailbox_consumed),
+                                    pending = stats.pending,
+                                    "Decoded video frame mailbox"
+                                );
+                                last_mailbox_published = stats.published;
+                                last_mailbox_replaced = stats.replaced_before_consumption;
+                                last_mailbox_consumed = stats.consumed;
+                            }
+                            Ok(None) => {}
+                            Err(error) => tracing::debug!(%error, "Could not read video frame mailbox stats"),
+                        }
+                        mailbox_stats_log_at = Instant::now();
+                    }
 
                     let updated = this.update(cx, |this, cx| {
                         let mut changed = false;
