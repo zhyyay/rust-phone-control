@@ -34,7 +34,7 @@ use windows_062::Win32::{
     },
     UI::WindowsAndMessaging::{
         CreateWindowExW, DestroyWindow, SW_HIDE, SWP_NOACTIVATE, SWP_NOOWNERZORDER, SWP_NOREDRAW,
-        SWP_NOZORDER, SetWindowPos, ShowWindow, WINDOW_EX_STYLE, WS_CHILD, WS_CLIPCHILDREN,
+        SWP_NOZORDER, SetWindowPos, ShowWindow, SW_SHOW, WINDOW_EX_STYLE, WS_CHILD, WS_CLIPCHILDREN,
         WS_CLIPSIBLINGS,
     },
 };
@@ -212,7 +212,15 @@ pub(crate) fn upload_bgra_frame(
         let device = renderer
             .as_mut()
             .ok_or_else(|| anyhow!("D3D11 renderer has not been initialized for a GPUI window"))?;
-        device.upload_bgra(width, height, stride, data)
+        device.upload_bgra(width, height, stride, data)?;
+        device.draw_video_frame()?;
+        let child_raw = NATIVE_VIDEO_CHILD_HWND.with(Cell::get);
+        if child_raw != 0 {
+            // SAFETY: this module owns the child HWND and reveals it only after
+            // a successful draw and Present on the same UI thread.
+            unsafe { ShowWindow(HWND(child_raw as *mut c_void), SW_SHOW) };
+        }
+        Ok(())
     })
 }
 
@@ -368,7 +376,7 @@ impl D3d11Device {
             tracing::debug!(width, height, "D3D11 swap chain resized");
         }
 
-        self.present_diagnostic_clear()
+        Ok(())
     }
 
     /// Reacquire buffer zero and create the RTV after creation or resize.
@@ -411,6 +419,143 @@ impl D3d11Device {
             swap_chain.Present(1, DXGI_PRESENT(0)).ok()
         }
         .context("IDXGISwapChain::Present failed during renderer bootstrap")?;
+        Ok(())
+    }
+
+    /// Compile the fullscreen-triangle shaders and create a linear clamp sampler.
+    fn ensure_video_pipeline(&mut self) -> anyhow::Result<()> {
+        if self.vertex_shader.is_some() && self.pixel_shader.is_some() && self.sampler.is_some() {
+            return Ok(());
+        }
+
+        const SOURCE: &[u8] = br#"
+struct VertexOutput {
+    float4 position : SV_Position;
+    float2 uv : TEXCOORD0;
+};
+VertexOutput VSMain(uint vertex_id : SV_VertexID) {
+    VertexOutput output;
+    float2 position = float2((vertex_id == 2) ? 3.0 : -1.0,
+                             (vertex_id == 1) ? 3.0 : -1.0);
+    output.position = float4(position, 0.0, 1.0);
+    output.uv = float2((position.x + 1.0) * 0.5, (1.0 - position.y) * 0.5);
+    return output;
+}
+Texture2D<float4> video_frame : register(t0);
+SamplerState video_sampler : register(s0);
+float4 PSMain(VertexOutput input) : SV_Target {
+    return video_frame.Sample(video_sampler, input.uv);
+}
+"#;
+
+        let compile = |entry: &'static std::ffi::CStr, target: &'static std::ffi::CStr| -> anyhow::Result<Vec<u8>> {
+            let mut bytecode: Option<ID3DBlob> = None;
+            // SAFETY: SOURCE and compiler strings remain alive for the call;
+            // bytecode is a valid writable COM output slot.
+            unsafe {
+                D3DCompile(
+                    SOURCE.as_ptr().cast(),
+                    SOURCE.len(),
+                    PCSTR(c"rust-phone-control-video.hlsl".as_ptr().cast()),
+                    None,
+                    None,
+                    PCSTR(entry.as_ptr().cast()),
+                    PCSTR(target.as_ptr().cast()),
+                    D3DCOMPILE_ENABLE_STRICTNESS,
+                    0,
+                    Some(&mut bytecode),
+                    None,
+                )
+            }.context("D3DCompile failed for the video shader")?;
+            let bytecode = bytecode.ok_or_else(|| anyhow!("D3DCompile returned no bytecode"))?;
+            // SAFETY: ID3DBlob owns a valid buffer for its reported size.
+            let bytes = unsafe {
+                slice::from_raw_parts(
+                    bytecode.GetBufferPointer().cast::<u8>(),
+                    bytecode.GetBufferSize(),
+                )
+            };
+            Ok(bytes.to_vec())
+        };
+
+        let vs_code = compile(c"VSMain", c"vs_4_0")?;
+        let ps_code = compile(c"PSMain", c"ps_4_0")?;
+        let mut vertex_shader = None;
+        // SAFETY: shader bytecode was produced by D3DCompile for this device.
+        unsafe { self.device.CreateVertexShader(&vs_code, None, Some(&mut vertex_shader)) }
+            .context("CreateVertexShader failed")?;
+        let mut pixel_shader = None;
+        // SAFETY: shader bytecode was produced by D3DCompile for this device.
+        unsafe { self.device.CreatePixelShader(&ps_code, None, Some(&mut pixel_shader)) }
+            .context("CreatePixelShader failed")?;
+
+        let sampler_desc = D3D11_SAMPLER_DESC {
+            Filter: D3D11_FILTER_MIN_MAG_MIP_LINEAR,
+            AddressU: D3D11_TEXTURE_ADDRESS_CLAMP,
+            AddressV: D3D11_TEXTURE_ADDRESS_CLAMP,
+            AddressW: D3D11_TEXTURE_ADDRESS_CLAMP,
+            MipLODBias: 0.0,
+            MaxAnisotropy: 1,
+            ComparisonFunc: D3D11_COMPARISON_NEVER,
+            BorderColor: [0.0; 4],
+            MinLOD: 0.0,
+            MaxLOD: f32::MAX,
+        };
+        let mut sampler = None;
+        // SAFETY: sampler_desc is fully initialized for linear clamp sampling.
+        unsafe { self.device.CreateSamplerState(&sampler_desc, Some(&mut sampler)) }
+            .context("CreateSamplerState failed")?;
+
+        self.vertex_shader = vertex_shader;
+        self.pixel_shader = pixel_shader;
+        self.sampler = sampler;
+        tracing::info!("D3D11 fullscreen video shader pipeline created");
+        Ok(())
+    }
+
+    /// Draw the latest uploaded BGRA frame into the swap-chain back buffer.
+    fn draw_video_frame(&mut self) -> anyhow::Result<()> {
+        self.ensure_video_pipeline()?;
+        let target = self.render_target_view.as_ref()
+            .ok_or_else(|| anyhow!("swap-chain render target is not initialized"))?;
+        let swap_chain = self.swap_chain.as_ref()
+            .ok_or_else(|| anyhow!("swap chain is not initialized"))?;
+        let shader_view = self._video_shader_view.as_ref()
+            .ok_or_else(|| anyhow!("video shader-resource view is not initialized"))?;
+        let (width, height) = self.swap_chain_size
+            .ok_or_else(|| anyhow!("swap-chain dimensions are not initialized"))?;
+        let vertex_shader = self.vertex_shader.as_ref().expect("pipeline initialized");
+        let pixel_shader = self.pixel_shader.as_ref().expect("pipeline initialized");
+        let sampler = self.sampler.as_ref().expect("pipeline initialized");
+        let targets = [Some(target.clone())];
+        let resources = [Some(shader_view.clone())];
+        let samplers = [Some(sampler.clone())];
+        let viewport = [D3D11_VIEWPORT {
+            TopLeftX: 0.0,
+            TopLeftY: 0.0,
+            Width: width as f32,
+            Height: height as f32,
+            MinDepth: 0.0,
+            MaxDepth: 1.0,
+        }];
+
+        // SAFETY: all resources belong to this D3D11 device and the immediate
+        // context is confined to its creating GPUI thread.
+        unsafe {
+            self.immediate_context.OMSetRenderTargets(
+                Some(&targets),
+                None::<&windows_062::Win32::Graphics::Direct3D11::ID3D11DepthStencilView>,
+            );
+            self.immediate_context.RSSetViewports(Some(&viewport));
+            self.immediate_context.IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+            self.immediate_context.VSSetShader(vertex_shader, None);
+            self.immediate_context.PSSetShader(pixel_shader, None);
+            self.immediate_context.PSSetShaderResources(0, Some(&resources));
+            self.immediate_context.PSSetSamplers(0, Some(&samplers));
+            self.immediate_context.Draw(3, 0);
+            self.immediate_context.PSSetShaderResources(0, Some(&[None]));
+            swap_chain.Present(1, DXGI_PRESENT(0)).ok()
+        }.context("D3D11 video draw or IDXGISwapChain::Present failed")?;
         Ok(())
     }
 
