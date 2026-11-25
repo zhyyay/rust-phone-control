@@ -2355,7 +2355,6 @@ mod tests {
     }
 
     #[test]
-    #[test]
     fn screen_stream_setup_requires_completed_fairplay_authentication() {
         let mut session = Dictionary::new();
         session.insert("sessionUUID".into(), Value::String("test-session".into()));
