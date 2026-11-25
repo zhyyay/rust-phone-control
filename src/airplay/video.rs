@@ -1064,11 +1064,14 @@ impl LatestFrameMailbox {
         if frame.stride < row_bytes {
             return Err(FrameMailboxError::InvalidStride);
         }
+        // The final row only needs its visible pixel bytes; decoder buffers
+        // are not required to include padding after the last row.
+        let rows_before_last = usize::try_from(frame.height - 1)
+            .map_err(|_| FrameMailboxError::InvalidStride)?;
         let required_bytes = frame
             .stride
-            .checked_mul(
-                usize::try_from(frame.height).map_err(|_| FrameMailboxError::InvalidStride)?,
-            )
+            .checked_mul(rows_before_last)
+            .and_then(|bytes| bytes.checked_add(row_bytes))
             .ok_or(FrameMailboxError::InvalidStride)?;
         if required_bytes > MAX_BGRA_FRAME_BYTES {
             return Err(FrameMailboxError::FrameTooLarge);
