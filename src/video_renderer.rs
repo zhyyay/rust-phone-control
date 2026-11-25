@@ -251,7 +251,7 @@ pub(crate) fn upload_nv12_frame(
     stride: usize,
     data: &[u8],
 ) -> anyhow::Result<()> {
-    let present_time = THREAD_RENDERER.with(|renderer| {
+    let initial_result = THREAD_RENDERER.with(|renderer| {
         let mut renderer = renderer.borrow_mut();
         let device = renderer
             .as_mut()
@@ -259,7 +259,14 @@ pub(crate) fn upload_nv12_frame(
         device.upload_nv12(width, height, stride, data)?;
         UPLOADED_FRAMES.fetch_add(1, Ordering::Relaxed);
         device.draw_nv12_frame()
-    })?;
+    });
+    let present_time = match initial_result {
+        Ok(elapsed) => elapsed,
+        Err(error) => {
+            RENDER_ERRORS.fetch_add(1, Ordering::Relaxed);
+            return Err(error);
+        }
+    };
     PRESENTED_FRAMES.fetch_add(1, Ordering::Relaxed);
     THREAD_RENDERER.with(|renderer| {
         let mut renderer = renderer.borrow_mut();
