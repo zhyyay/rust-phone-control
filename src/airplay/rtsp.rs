@@ -2898,7 +2898,7 @@ mod tests {
                 &mut None,
                 None,
                 None,
-        )
+            )
             .unwrap_err()
             .0,
             455
@@ -2915,6 +2915,7 @@ mod tests {
             &mut media,
             &mut None,
             &mut None,
+            None,
             None,
         )
         .expect("session setup");
@@ -2939,7 +2940,7 @@ mod tests {
                 &mut None,
                 None,
                 None,
-        )
+            )
             .unwrap_err()
             .0,
             501
