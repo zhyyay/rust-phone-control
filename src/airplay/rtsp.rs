@@ -2629,7 +2629,7 @@ mod tests {
     }
 
     #[test]
-    fn rtsp_peer_disconnect_releases_event_timing_and_media_channels() {
+    fn rtsp_peer_disconnect_releases_event_and_timing_channels_without_fairplay() {
         use std::io::{Read, Write};
         use std::net::{TcpListener, UdpSocket};
         use std::thread;
@@ -2729,20 +2729,9 @@ mod tests {
         let stream_body =
             plist::encode_binary(&Value::Dictionary(stream_setup)).expect("encode stream SETUP");
         send_request(&mut client, 2, &stream_body);
-        let stream_response =
-            plist::decode(&read_response_body(&mut client)).expect("decode stream response");
-        let media_port = stream_response
-            .as_dictionary()
-            .and_then(|root| root.get("streams"))
-            .and_then(Value::as_array)
-            .and_then(|streams| streams.first())
-            .and_then(Value::as_dictionary)
-            .and_then(|stream| stream.get("dataPort"))
-            .and_then(|value| match value {
-                Value::Integer(integer) => integer.as_unsigned(),
-                _ => None,
-            })
-            .expect("media port") as u16;
+        // Screen mirroring must not allocate a media listener until a valid
+        // FairPlay video key has been established. Disconnect after sending
+        // the rejected SETUP and verify the other session channels are closed.
 
         drop(client);
         server.join().expect("RTSP server thread");
@@ -2754,10 +2743,6 @@ mod tests {
         assert!(
             UdpSocket::bind(("0.0.0.0", timing_port)).is_ok(),
             "timing socket must be released after peer disconnect"
-        );
-        assert!(
-            TcpListener::bind(("0.0.0.0", media_port)).is_ok(),
-            "media listener must be released after peer disconnect"
         );
     }
 
