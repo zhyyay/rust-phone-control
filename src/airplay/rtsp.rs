@@ -670,6 +670,8 @@ pub fn serve_with_fairplay_provider(
     stream.set_write_timeout(Some(Duration::from_secs(5)))?;
 
     let peer_ip = stream.peer_addr()?.ip();
+    #[cfg(windows)]
+    super::set_pipeline_stage(2);
     let mut pending = Vec::with_capacity(READ_CHUNK_BYTES);
     let mut pair_setup_srp: Option<SrpServer> = None;
     let mut pair_setup_session_key: Option<Zeroizing<[u8; 64]>> = None;
@@ -831,6 +833,8 @@ pub fn serve_with_fairplay_provider(
                         fairplay_session = None;
 
                         let Some(provider) = fairplay_provider.as_ref() else {
+                            #[cfg(windows)]
+                            super::set_pipeline_stage(4);
                             tracing::warn!(
                                 "FairPlay SAP unavailable: no authorized provider configured"
                             );
@@ -862,6 +866,8 @@ pub fn serve_with_fairplay_provider(
                                 fairplay_initial = Some(message);
                                 fairplay_challenge = Some(challenge);
                                 fairplay_session = Some(session);
+                                #[cfg(windows)]
+                                super::set_pipeline_stage(5);
                                 write_binary_response(&mut stream, &request.cseq, &response_body)?;
                                 tracing::info!("FairPlay SAP provider produced an M2 challenge");
                             }
@@ -1001,6 +1007,8 @@ pub fn serve_with_fairplay_provider(
                 let response_body =
                     match handle_pair_verify(&request.body, &mut pair_verify_session) {
                         Ok((body, Some(shared_secret))) => {
+                            #[cfg(windows)]
+                            super::set_pipeline_stage(3);
                             pair_verify_shared_secret = Some(shared_secret);
                             body
                         }
@@ -1071,7 +1079,11 @@ pub fn serve_with_fairplay_provider(
                     fairplay_video_key.as_ref(),
                     pair_verify_shared_secret.as_deref(),
                 ) {
-                    Ok(body) => write_binary_plist_response(&mut stream, &request.cseq, &body)?,
+                    Ok(body) => {
+                        #[cfg(windows)]
+                        super::set_pipeline_stage(6);
+                        write_binary_plist_response(&mut stream, &request.cseq, &body)?;
+                    },
                     Err((status, reason)) => {
                         tracing::warn!(status, %reason, "AirPlay SETUP request rejected");
                         let reason_phrase = match status {
@@ -1104,6 +1116,8 @@ pub fn serve_with_fairplay_provider(
                         "AirPlay RECORD accepted; awaiting stream-level SETUP before media reception"
                     );
                 }
+                #[cfg(windows)]
+                super::set_pipeline_stage(7);
                 write_response(&mut stream, &response, 200)?;
             }
             ("POST", "/feedback", "RTSP/1.0") => {
