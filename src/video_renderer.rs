@@ -7,20 +7,24 @@ use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use std::{
     cell::{Cell, RefCell},
     ffi::c_void,
-    slice,
     marker::PhantomData,
     rc::Rc,
+    slice,
 };
 use windows_062::Win32::{
     Foundation::{HMODULE, HWND},
     Graphics::{
-        Direct3D::{D3D_DRIVER_TYPE_HARDWARE, D3D_FEATURE_LEVEL, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST, Fxc::{D3DCompile, D3DCOMPILE_ENABLE_STRICTNESS}},
+        Direct3D::{
+            D3D_DRIVER_TYPE_HARDWARE, D3D_FEATURE_LEVEL, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST,
+            Fxc::{D3DCompile, D3DCOMPILE_ENABLE_STRICTNESS},
+        },
         Direct3D11::{
-            D3D11_BIND_SHADER_RESOURCE, D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_SDK_VERSION,
-            D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT, D3D11CreateDevice, ID3D11Device,
-            ID3D11DeviceContext, ID3D11RenderTargetView, ID3D11ShaderResourceView, ID3D11Texture2D,
-            ID3D11VertexShader, ID3D11PixelShader, ID3D11SamplerState, D3D11_SAMPLER_DESC,
-            D3D11_FILTER_MIN_MAG_MIP_LINEAR, D3D11_TEXTURE_ADDRESS_CLAMP, D3D11_COMPARISON_NEVER, D3D11_VIEWPORT,
+            D3D11_BIND_SHADER_RESOURCE, D3D11_COMPARISON_NEVER, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+            D3D11_FILTER_MIN_MAG_MIP_LINEAR, D3D11_SAMPLER_DESC, D3D11_SDK_VERSION,
+            D3D11_TEXTURE_ADDRESS_CLAMP, D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT, D3D11_VIEWPORT,
+            D3D11CreateDevice, ID3D11Device, ID3D11DeviceContext, ID3D11PixelShader,
+            ID3D11RenderTargetView, ID3D11SamplerState, ID3D11ShaderResourceView, ID3D11Texture2D,
+            ID3D11VertexShader,
         },
         Dxgi::{
             Common::{
@@ -33,9 +37,9 @@ use windows_062::Win32::{
         },
     },
     UI::WindowsAndMessaging::{
-        CreateWindowExW, DestroyWindow, SW_HIDE, SWP_NOACTIVATE, SWP_NOOWNERZORDER, SWP_NOREDRAW,
-        SWP_NOZORDER, SetWindowPos, ShowWindow, SW_SHOW, WINDOW_EX_STYLE, WS_CHILD, WS_CLIPCHILDREN,
-        WS_CLIPSIBLINGS,
+        CreateWindowExW, DestroyWindow, SW_HIDE, SW_SHOW, SWP_NOACTIVATE, SWP_NOOWNERZORDER,
+        SWP_NOREDRAW, SWP_NOZORDER, SetWindowPos, ShowWindow, WINDOW_EX_STYLE, WS_CHILD,
+        WS_CLIPCHILDREN, WS_CLIPSIBLINGS,
     },
 };
 use windows_062::core::{BOOL, Interface, PCSTR, PCWSTR};
@@ -448,7 +452,9 @@ float4 PSMain(VertexOutput input) : SV_Target {
 }
 "#;
 
-        let compile = |entry: &'static std::ffi::CStr, target: &'static std::ffi::CStr| -> anyhow::Result<Vec<u8>> {
+        let compile = |entry: &'static std::ffi::CStr,
+                       target: &'static std::ffi::CStr|
+         -> anyhow::Result<Vec<u8>> {
             let mut bytecode: Option<ID3DBlob> = None;
             // SAFETY: SOURCE and compiler strings remain alive for the call;
             // bytecode is a valid writable COM output slot.
@@ -466,7 +472,8 @@ float4 PSMain(VertexOutput input) : SV_Target {
                     Some(&mut bytecode),
                     None,
                 )
-            }.context("D3DCompile failed for the video shader")?;
+            }
+            .context("D3DCompile failed for the video shader")?;
             let bytecode = bytecode.ok_or_else(|| anyhow!("D3DCompile returned no bytecode"))?;
             // SAFETY: ID3DBlob owns a valid buffer for its reported size.
             let bytes = unsafe {
@@ -482,12 +489,18 @@ float4 PSMain(VertexOutput input) : SV_Target {
         let ps_code = compile(c"PSMain", c"ps_4_0")?;
         let mut vertex_shader = None;
         // SAFETY: shader bytecode was produced by D3DCompile for this device.
-        unsafe { self.device.CreateVertexShader(&vs_code, None, Some(&mut vertex_shader)) }
-            .context("CreateVertexShader failed")?;
+        unsafe {
+            self.device
+                .CreateVertexShader(&vs_code, None, Some(&mut vertex_shader))
+        }
+        .context("CreateVertexShader failed")?;
         let mut pixel_shader = None;
         // SAFETY: shader bytecode was produced by D3DCompile for this device.
-        unsafe { self.device.CreatePixelShader(&ps_code, None, Some(&mut pixel_shader)) }
-            .context("CreatePixelShader failed")?;
+        unsafe {
+            self.device
+                .CreatePixelShader(&ps_code, None, Some(&mut pixel_shader))
+        }
+        .context("CreatePixelShader failed")?;
 
         let sampler_desc = D3D11_SAMPLER_DESC {
             Filter: D3D11_FILTER_MIN_MAG_MIP_LINEAR,
@@ -503,8 +516,11 @@ float4 PSMain(VertexOutput input) : SV_Target {
         };
         let mut sampler = None;
         // SAFETY: sampler_desc is fully initialized for linear clamp sampling.
-        unsafe { self.device.CreateSamplerState(&sampler_desc, Some(&mut sampler)) }
-            .context("CreateSamplerState failed")?;
+        unsafe {
+            self.device
+                .CreateSamplerState(&sampler_desc, Some(&mut sampler))
+        }
+        .context("CreateSamplerState failed")?;
 
         self.vertex_shader = vertex_shader;
         self.pixel_shader = pixel_shader;
@@ -516,13 +532,20 @@ float4 PSMain(VertexOutput input) : SV_Target {
     /// Draw the latest uploaded BGRA frame into the swap-chain back buffer.
     fn draw_video_frame(&mut self) -> anyhow::Result<()> {
         self.ensure_video_pipeline()?;
-        let target = self.render_target_view.as_ref()
+        let target = self
+            .render_target_view
+            .as_ref()
             .ok_or_else(|| anyhow!("swap-chain render target is not initialized"))?;
-        let swap_chain = self.swap_chain.as_ref()
+        let swap_chain = self
+            .swap_chain
+            .as_ref()
             .ok_or_else(|| anyhow!("swap chain is not initialized"))?;
-        let shader_view = self._video_shader_view.as_ref()
+        let shader_view = self
+            ._video_shader_view
+            .as_ref()
             .ok_or_else(|| anyhow!("video shader-resource view is not initialized"))?;
-        let (width, height) = self.swap_chain_size
+        let (width, height) = self
+            .swap_chain_size
             .ok_or_else(|| anyhow!("swap-chain dimensions are not initialized"))?;
         let vertex_shader = self.vertex_shader.as_ref().expect("pipeline initialized");
         let pixel_shader = self.pixel_shader.as_ref().expect("pipeline initialized");
@@ -547,15 +570,19 @@ float4 PSMain(VertexOutput input) : SV_Target {
                 None::<&windows_062::Win32::Graphics::Direct3D11::ID3D11DepthStencilView>,
             );
             self.immediate_context.RSSetViewports(Some(&viewport));
-            self.immediate_context.IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+            self.immediate_context
+                .IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
             self.immediate_context.VSSetShader(vertex_shader, None);
             self.immediate_context.PSSetShader(pixel_shader, None);
-            self.immediate_context.PSSetShaderResources(0, Some(&resources));
+            self.immediate_context
+                .PSSetShaderResources(0, Some(&resources));
             self.immediate_context.PSSetSamplers(0, Some(&samplers));
             self.immediate_context.Draw(3, 0);
-            self.immediate_context.PSSetShaderResources(0, Some(&[None]));
+            self.immediate_context
+                .PSSetShaderResources(0, Some(&[None]));
             swap_chain.Present(1, DXGI_PRESENT(0)).ok()
-        }.context("D3D11 video draw or IDXGISwapChain::Present failed")?;
+        }
+        .context("D3D11 video draw or IDXGISwapChain::Present failed")?;
         Ok(())
     }
 
