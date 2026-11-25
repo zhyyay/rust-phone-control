@@ -403,6 +403,7 @@ impl Render for PhoneControlApp {
                                                     let started = Instant::now();
                                                     let result = decoded_frame_to_bmp(
                                                         frame_for_conversion.as_ref(),
+                                                        &cancel,
                                                     );
                                                     let elapsed = started.elapsed();
                                                     // Conversion itself is synchronous and cannot
@@ -1086,9 +1087,13 @@ fn preview_panel(image: Option<Arc<Image>>, status: String) -> impl IntoElement 
 #[cfg(windows)]
 fn decoded_frame_to_bmp(
     frame: &crate::airplay::DecodedVideoFrame,
+    cancel: &AtomicBool,
 ) -> Result<Vec<u8>, &'static str> {
+    if cancel.load(Ordering::Acquire) {
+        return Err("frame conversion cancelled");
+    }
     match frame {
-        crate::airplay::DecodedVideoFrame::Bgra(frame) => bgra_frame_to_bmp(frame),
+        crate::airplay::DecodedVideoFrame::Bgra(frame) => bgra_frame_to_bmp(frame, cancel),
         crate::airplay::DecodedVideoFrame::Nv12(frame) => crate::airplay::Nv12Frame {
             width: frame.width,
             height: frame.height,
@@ -1096,14 +1101,20 @@ fn decoded_frame_to_bmp(
             uv_stride: frame.stride,
             data: &frame.data,
         }
-        .to_bgra()
-        .map_err(|_| "NV12 fallback conversion failed")
-        .and_then(|bgra| bgra_frame_to_bmp(&bgra)),
+        .to_bgra_cancellable(|| cancel.load(Ordering::Acquire))
+        .map_err(|error| match error {
+            crate::airplay::FrameConversionError::Cancelled => "frame conversion cancelled",
+            _ => "NV12 fallback conversion failed",
+        })
+        .and_then(|bgra| bgra_frame_to_bmp(&bgra, cancel)),
     }
 }
 
 #[cfg(windows)]
-fn bgra_frame_to_bmp(frame: &crate::airplay::BgraFrame) -> Result<Vec<u8>, &'static str> {
+fn bgra_frame_to_bmp(
+    frame: &crate::airplay::BgraFrame,
+    cancel: &AtomicBool,
+) -> Result<Vec<u8>, &'static str> {
     let width = usize::try_from(frame.width).map_err(|_| "frame width overflow")?;
     let height = usize::try_from(frame.height).map_err(|_| "frame height overflow")?;
     if width == 0 || height == 0 || width > 8192 || height > 8192 {
@@ -1148,6 +1159,9 @@ fn bgra_frame_to_bmp(frame: &crate::airplay::BgraFrame) -> Result<Vec<u8>, &'sta
     bmp.extend_from_slice(&[0; 8]);
 
     for row in 0..height {
+        if cancel.load(Ordering::Acquire) {
+            return Err("frame conversion cancelled");
+        }
         let start = row
             .checked_mul(frame.stride)
             .ok_or("BGRA row offset overflow")?;
