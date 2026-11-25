@@ -11,6 +11,7 @@ use std::{
     rc::Rc,
     slice,
 };
+use windows_062::Win32::Graphics::Direct3D::ID3DBlob;
 use windows_062::Win32::{
     Foundation::{HMODULE, HWND},
     Graphics::{
@@ -43,7 +44,6 @@ use windows_062::Win32::{
     },
 };
 use windows_062::core::{BOOL, Interface, PCSTR, PCWSTR};
-use windows_062::Win32::Graphics::Direct3D::ID3DBlob;
 
 thread_local! {
     /// D3D11 immediate contexts remain on the GPUI thread that first initializes them.
