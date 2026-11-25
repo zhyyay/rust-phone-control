@@ -1,24 +1,26 @@
-//! Windows Direct3D 11 device and video-texture ownership.
+//! Windows Direct3D 11 video presenter.
 //!
-//! The device, immediate context, and uploaded frame texture stay on the GPUI
-//! render thread. This module does not create a swap chain or draw over GPUI.
+//! Device, immediate context, swap chain, shaders, and frame texture stay on the GPUI render thread.
 
 use anyhow::{Context as _, anyhow, bail};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use std::{
     cell::{Cell, RefCell},
     ffi::c_void,
+    slice,
     marker::PhantomData,
     rc::Rc,
 };
 use windows_062::Win32::{
     Foundation::{HMODULE, HWND},
     Graphics::{
-        Direct3D::{D3D_DRIVER_TYPE_HARDWARE, D3D_FEATURE_LEVEL},
+        Direct3D::{D3D_DRIVER_TYPE_HARDWARE, D3D_FEATURE_LEVEL, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST, Fxc::{D3DCompile, D3DCOMPILE_ENABLE_STRICTNESS}},
         Direct3D11::{
             D3D11_BIND_SHADER_RESOURCE, D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_SDK_VERSION,
             D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT, D3D11CreateDevice, ID3D11Device,
             ID3D11DeviceContext, ID3D11RenderTargetView, ID3D11ShaderResourceView, ID3D11Texture2D,
+            ID3D11VertexShader, ID3D11PixelShader, ID3D11SamplerState, D3D11_SAMPLER_DESC,
+            D3D11_FILTER_MIN_MAG_MIP_LINEAR, D3D11_TEXTURE_ADDRESS_CLAMP, D3D11_COMPARISON_NEVER, D3D11_VIEWPORT,
         },
         Dxgi::{
             Common::{
@@ -36,7 +38,8 @@ use windows_062::Win32::{
         WS_CLIPSIBLINGS,
     },
 };
-use windows_062::core::{BOOL, Interface, PCWSTR};
+use windows_062::core::{BOOL, Interface, PCSTR, PCWSTR};
+use windows_062::Win32::Graphics::Direct3D::ID3DBlob;
 
 thread_local! {
     /// D3D11 immediate contexts remain on the GPUI thread that first initializes them.
@@ -226,6 +229,9 @@ pub(crate) struct D3d11Device {
     swap_chain: Option<IDXGISwapChain1>,
     render_target_view: Option<ID3D11RenderTargetView>,
     swap_chain_size: Option<(u32, u32)>,
+    vertex_shader: Option<ID3D11VertexShader>,
+    pixel_shader: Option<ID3D11PixelShader>,
+    sampler: Option<ID3D11SamplerState>,
     _thread_affinity: PhantomData<Rc<()>>,
 }
 
@@ -270,6 +276,9 @@ impl D3d11Device {
             swap_chain: None,
             render_target_view: None,
             swap_chain_size: None,
+            vertex_shader: None,
+            pixel_shader: None,
+            sampler: None,
             _thread_affinity: PhantomData,
         })
     }
