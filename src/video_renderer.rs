@@ -322,7 +322,7 @@ pub(crate) fn upload_nv12_frame(
         }
     };
     PRESENTED_FRAMES.fetch_add(1, Ordering::Relaxed);
-    THREAD_RENDERER.with(|renderer| {
+    let stats_result: anyhow::Result<()> = THREAD_RENDERER.with(|renderer| {
         let mut renderer = renderer.borrow_mut();
         let device = renderer
             .as_mut()
@@ -340,7 +340,8 @@ pub(crate) fn upload_nv12_frame(
             device.stats_window_started = Instant::now();
         }
         Ok(())
-    })?;
+    });
+    stats_result?;
 
     let child_raw = NATIVE_VIDEO_CHILD_HWND.with(Cell::get);
     if child_raw != 0 {
