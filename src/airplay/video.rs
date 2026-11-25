@@ -980,6 +980,22 @@ pub struct Nv12Frame<'a> {
     pub data: &'a [u8],
 }
 
+/// Owned NV12 frame copied from the decoder and retained until the UI uploads it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OwnedNv12Frame {
+    pub width: u32,
+    pub height: u32,
+    pub stride: usize,
+    pub data: Vec<u8>,
+}
+
+/// A decoded frame retained in its native pixel format until presentation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DecodedVideoFrame {
+    Bgra(BgraFrame),
+    Nv12(OwnedNv12Frame),
+}
+
 /// Packed 32-bit BGRA frame suitable for upload to a desktop graphics surface.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BgraFrame {
@@ -1030,13 +1046,13 @@ pub struct LatestFrameMailbox {
     replaced_before_consumption: AtomicU64,
     consumed: AtomicU64,
     cleared: AtomicU64,
-    frame: Mutex<Option<(u64, Arc<BgraFrame>, Instant)>>,
+    frame: Mutex<Option<(u64, Arc<DecodedVideoFrame>, Instant)>>,
 }
 
 #[derive(Debug, Clone)]
 pub struct FrameSnapshot {
     pub sequence: u64,
-    pub frame: Arc<BgraFrame>,
+    pub frame: Arc<DecodedVideoFrame>,
     /// Monotonic instant at which this frame entered the latest-frame mailbox.
     pub enqueued_at: Instant,
 }
@@ -1079,11 +1095,44 @@ impl LatestFrameMailbox {
         if frame.data.len() < required_bytes {
             return Err(FrameMailboxError::BufferTooSmall);
         }
+        self.publish_frame(DecodedVideoFrame::Bgra(frame))
+    }
+
+    /// Publish an owned NV12 frame without converting it to BGRA on the decoder worker.
+    pub fn publish_nv12(&self, frame: OwnedNv12Frame) -> Result<u64, FrameMailboxError> {
+        if frame.width == 0 || frame.height == 0 {
+            return Err(FrameMailboxError::ZeroDimension);
+        }
+        if frame.width > MAX_FRAME_DIMENSION || frame.height > MAX_FRAME_DIMENSION {
+            return Err(FrameMailboxError::DimensionTooLarge);
+        }
+        if frame.width % 2 != 0 || frame.height % 2 != 0 {
+            return Err(FrameMailboxError::InvalidDimensions);
+        }
+        let width = usize::try_from(frame.width).map_err(|_| FrameMailboxError::InvalidStride)?;
+        let height = usize::try_from(frame.height).map_err(|_| FrameMailboxError::InvalidStride)?;
+        if frame.stride < width {
+            return Err(FrameMailboxError::InvalidStride);
+        }
+        let y_bytes = frame.stride.checked_mul(height).ok_or(FrameMailboxError::InvalidStride)?;
+        let uv_required = frame.stride.checked_mul(height / 2 - 1)
+            .and_then(|bytes| bytes.checked_add(width))
+            .ok_or(FrameMailboxError::InvalidStride)?;
+        let required = y_bytes.checked_add(uv_required).ok_or(FrameMailboxError::InvalidStride)?;
+        if required > MAX_BGRA_FRAME_BYTES {
+            return Err(FrameMailboxError::FrameTooLarge);
+        }
+        if frame.data.len() < required {
+            return Err(FrameMailboxError::BufferTooSmall);
+        }
+        self.publish_frame(DecodedVideoFrame::Nv12(frame))
+    }
+
+    fn publish_frame(&self, frame: DecodedVideoFrame) -> Result<u64, FrameMailboxError> {
         let mut slot = self.frame.lock().map_err(|_| FrameMailboxError::Poisoned)?;
         let sequence = self.sequence.fetch_add(1, Ordering::AcqRel).wrapping_add(1);
         if slot.is_some() {
-            self.replaced_before_consumption
-                .fetch_add(1, Ordering::Relaxed);
+            self.replaced_before_consumption.fetch_add(1, Ordering::Relaxed);
         }
         *slot = Some((sequence, Arc::new(frame), Instant::now()));
         self.published.fetch_add(1, Ordering::Relaxed);
@@ -1143,6 +1192,7 @@ pub enum FrameMailboxError {
     ZeroDimension,
     DimensionTooLarge,
     InvalidStride,
+    InvalidDimensions,
     BufferTooSmall,
     FrameTooLarge,
 }
@@ -1153,7 +1203,8 @@ impl std::fmt::Display for FrameMailboxError {
             Self::Poisoned => f.write_str("decoded-frame mailbox lock is poisoned"),
             Self::ZeroDimension => f.write_str("decoded frame has a zero dimension"),
             Self::DimensionTooLarge => f.write_str("decoded frame exceeds the maximum dimension"),
-            Self::InvalidStride => f.write_str("decoded frame has an invalid BGRA stride"),
+            Self::InvalidStride => f.write_str("decoded frame has an invalid row stride"),
+            Self::InvalidDimensions => f.write_str("NV12 frame dimensions must be even"),
             Self::BufferTooSmall => {
                 f.write_str("decoded frame buffer is smaller than its dimensions")
             }
