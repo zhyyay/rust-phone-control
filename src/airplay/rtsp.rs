@@ -1068,7 +1068,7 @@ pub fn serve_with_fairplay_provider(
                     &mut media_receiver,
                     &mut fairplay_ekey,
                     &mut fairplay_eiv,
-                    fairplay_video_key.as_deref(),
+                    fairplay_video_key.as_ref(),
                     pair_verify_shared_secret.as_deref(),
                 ) {
                     Ok(body) => write_binary_plist_response(&mut stream, &request.cseq, &body)?,
@@ -2375,6 +2375,7 @@ mod tests {
             &mut None,
             &mut None,
             None,
+            None,
         )
         .expect("session SETUP");
 
@@ -2397,6 +2398,7 @@ mod tests {
             &mut media,
             &mut None,
             &mut None,
+            None,
             None,
         )
         .expect_err("stream SETUP without FairPlay must fail closed");
@@ -2423,6 +2425,7 @@ mod tests {
             &mut media,
             &mut None,
             &mut None,
+            None,
             None,
         )
         .expect("session SETUP");
@@ -2465,6 +2468,7 @@ mod tests {
             &mut None,
             &mut None,
             None,
+            None,
         )
         .expect("screen stream SETUP");
         let value = plist::decode(&response).expect("decode stream response");
@@ -2502,6 +2506,7 @@ mod tests {
             &mut media,
             &mut None,
             &mut None,
+            None,
             None,
         )
         .expect("repeated screen stream SETUP");
@@ -2558,6 +2563,7 @@ mod tests {
             &mut None,
             &mut None,
             None,
+            None,
         )
         .expect("first session SETUP");
         let first = plist::decode(&first).expect("decode first session response");
@@ -2585,6 +2591,7 @@ mod tests {
             &mut media,
             &mut None,
             &mut None,
+            None,
             None,
         )
         .expect("replacement session SETUP");
@@ -2784,6 +2791,7 @@ mod tests {
             &mut None,
             &mut None,
             None,
+            None,
         )
         .expect("NTP session SETUP");
         let value = plist::decode(&response).expect("decode NTP response");
@@ -2843,6 +2851,7 @@ mod tests {
             &mut None,
             &mut None,
             None,
+            None,
         )
         .expect("initial NTP session");
 
@@ -2856,6 +2865,7 @@ mod tests {
             &mut media,
             &mut None,
             &mut None,
+            None,
             None,
         )
         .expect_err("PTP is not implemented");
