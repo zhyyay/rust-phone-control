@@ -208,7 +208,7 @@ impl Render for PhoneControlApp {
                         last_presented_frames = presented;
                         last_metrics_at = Instant::now();
                         Some(format!(
-                            "D3D11 · {:.1} FPS · Present {} · 上传 {} · 异常 {}",
+                            "D3D11 · {:.1} FPS · Present {} · 上传 {} · 恢复尝试 {}",
                             fps, presented, uploaded, recoveries
                         ))
                     } else {
@@ -261,18 +261,24 @@ impl Render for PhoneControlApp {
                                     // that initialized the thread-local D3D11 device.
                                     // The GPUI bitmap remains available as a fallback if
                                     // native D3D11 upload or presentation fails.
-                                    if let Err(error) = crate::video_renderer::upload_bgra_frame(
-                                        width,
-                                        height,
-                                        frame.stride,
-                                        &frame.data,
-                                    ) {
-                                        tracing::debug!(
-                                            %error,
-                                            sequence,
-                                            "D3D11 frame upload unavailable; retaining GPUI image fallback"
+                                    let native_present =
+                                        crate::video_renderer::upload_bgra_frame(
+                                            width,
+                                            height,
+                                            frame.stride,
+                                            &frame.data,
                                         );
-                                    }
+                                    let display_path = match native_present {
+                                        Ok(()) => "D3D11 原生预览",
+                                        Err(ref error) => {
+                                            tracing::debug!(
+                                                %error,
+                                                sequence,
+                                                "D3D11 frame upload unavailable; retaining GPUI image fallback"
+                                            );
+                                            "GPUI 图像回退（D3D11 不可用）"
+                                        }
+                                    };
                                     tracing::trace!(
                                         sequence,
                                         mailbox_age_ms = mailbox_age.as_secs_f64() * 1000.0,
@@ -282,7 +288,7 @@ impl Render for PhoneControlApp {
                                     );
 
                                     this.preview_status = format!(
-                                        "Frame {width} × {height} · sequence {sequence}"
+                                        "{display_path} · {width} × {height} · sequence {sequence}"
                                     );
                                     this.preview_image = Some(Arc::new(Image::from_bytes(
                                         ImageFormat::Bmp,
