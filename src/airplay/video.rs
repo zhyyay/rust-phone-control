@@ -5,11 +5,11 @@
 //! key unwrapping remains a separate, intentionally unimplemented stage.
 
 use std::collections::VecDeque;
-use std::time::Instant;
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicU64, Ordering},
 };
+use std::time::Instant;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VideoCodec {
