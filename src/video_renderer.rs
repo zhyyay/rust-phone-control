@@ -354,6 +354,7 @@ pub(crate) struct D3d11Device {
     _video_shader_view: Option<ID3D11ShaderResourceView>,
     video_texture_size: Option<(u32, u32)>,
     swap_chain: Option<IDXGISwapChain1>,
+    swap_chain_hwnd: isize,
     render_target_view: Option<ID3D11RenderTargetView>,
     swap_chain_size: Option<(u32, u32)>,
     vertex_shader: Option<ID3D11VertexShader>,
@@ -403,6 +404,7 @@ impl D3d11Device {
             _video_shader_view: None,
             video_texture_size: None,
             swap_chain: None,
+            swap_chain_hwnd: 0,
             render_target_view: None,
             swap_chain_size: None,
             vertex_shader: None,
@@ -420,6 +422,22 @@ impl D3d11Device {
     fn ensure_swap_chain(&mut self, hwnd: HWND, width: u32, height: u32) -> anyhow::Result<()> {
         if width == 0 || height == 0 || width > 16384 || height > 16384 {
             bail!("invalid DXGI surface dimensions: {width}x{height}");
+        }
+
+        let requested_hwnd = hwnd.0 as isize;
+        if self.swap_chain.is_some() && self.swap_chain_hwnd != requested_hwnd {
+            // A hidden child HWND can be destroyed and recreated when the
+            // preview is hidden or its GPUI parent changes. DXGI swap chains
+            // remain bound to their original HWND, so release every back-buffer
+            // reference and create a fresh chain for the new child.
+            self.render_target_view = None;
+            self.swap_chain = None;
+            self.swap_chain_size = None;
+            self.swap_chain_hwnd = 0;
+            tracing::info!(
+                hwnd = format!("{requested_hwnd:#x}"),
+                "Rebinding D3D11 swap chain to recreated native video surface"
+            );
         }
 
         if self.swap_chain.is_none() {
@@ -465,6 +483,7 @@ impl D3d11Device {
             }
             .context("IDXGIFactory2::CreateSwapChainForHwnd failed")?;
             self.swap_chain = Some(swap_chain);
+            self.swap_chain_hwnd = requested_hwnd;
             self.swap_chain_size = Some((width, height));
             self.rebuild_render_target()?;
             tracing::info!(
