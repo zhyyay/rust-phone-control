@@ -166,7 +166,7 @@ impl Render for PhoneControlApp {
                                         bgra_frame_to_bmp(frame)
                                     }
                                     crate::airplay::DecodedVideoFrame::Nv12(frame) => {
-                                        crate::airplay::video::Nv12Frame {
+                                        crate::airplay::Nv12Frame {
                                             width: frame.width,
                                             height: frame.height,
                                             y_stride: frame.stride,
