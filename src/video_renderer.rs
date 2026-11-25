@@ -771,8 +771,13 @@ float4 PSMain(VertexOutput input) : SV_Target {
         if stride < row_bytes {
             bail!("BGRA stride {stride} is smaller than row size {row_bytes}");
         }
+        // D3D11 reads row_bytes from each row. Padding is needed between
+        // rows, but not after the final row in the caller's backing buffer.
+        let rows_before_last = usize::try_from(height - 1)
+            .context("BGRA frame height exceeds the address space")?;
         let required_bytes = stride
-            .checked_mul(height as usize)
+            .checked_mul(rows_before_last)
+            .and_then(|bytes| bytes.checked_add(row_bytes))
             .ok_or_else(|| anyhow!("BGRA frame size overflow"))?;
         if data.len() < required_bytes {
             bail!(
