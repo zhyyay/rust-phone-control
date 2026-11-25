@@ -262,9 +262,63 @@ pub(crate) fn upload_nv12_frame(
     });
     let present_time = match initial_result {
         Ok(elapsed) => elapsed,
-        Err(error) => {
+        Err(original_error) => {
             RENDER_ERRORS.fetch_add(1, Ordering::Relaxed);
-            return Err(error);
+            // Treat device removal/reset the same way as the BGRA path. Do not
+            // recreate resources for ordinary validation, shader, or resize errors.
+            let removed = THREAD_RENDERER.with(|renderer| {
+                let renderer = renderer.borrow();
+                renderer.as_ref().and_then(|device| {
+                    unsafe { device.device.GetDeviceRemovedReason() }
+                        .err()
+                        .map(|reason| (reason, device.swap_chain_size))
+                })
+            });
+            let Some((reason, Some((surface_width, surface_height)))) = removed else {
+                return Err(original_error);
+            };
+            let now = Instant::now();
+            let cooling_down = DEVICE_RECOVERY_RETRY_AFTER
+                .with(|retry_after| retry_after.get().is_some_and(|deadline| now < deadline));
+            if cooling_down {
+                return Err(original_error);
+            }
+            DEVICE_RECOVERY_RETRY_AFTER.with(|retry_after| {
+                retry_after.set(Some(now + Duration::from_secs(2)));
+            });
+            let child_raw = NATIVE_VIDEO_CHILD_HWND.with(Cell::get);
+            if child_raw == 0 {
+                return Err(original_error);
+            }
+
+            tracing::warn!(
+                error = %reason,
+                "D3D11 device was removed during NV12 preview; rebuilding preview resources"
+            );
+            let mut replacement = D3d11Device::create_hardware()
+                .context("could not recreate D3D11 device after NV12 device removal")?;
+            replacement.ensure_swap_chain(
+                HWND(child_raw as *mut c_void),
+                surface_width,
+                surface_height,
+            )?;
+            THREAD_RENDERER.with(|renderer| {
+                *renderer.borrow_mut() = Some(replacement);
+            });
+            DEVICE_RECOVERY_RETRY_AFTER.with(|retry_after| retry_after.set(None));
+            DEVICE_RECOVERIES.fetch_add(1, Ordering::Relaxed);
+
+            THREAD_RENDERER
+                .with(|renderer| {
+                    let mut renderer = renderer.borrow_mut();
+                    let device = renderer
+                        .as_mut()
+                        .ok_or_else(|| anyhow!("replacement D3D11 device is unavailable"))?;
+                    device.upload_nv12(width, height, stride, data)?;
+                    UPLOADED_FRAMES.fetch_add(1, Ordering::Relaxed);
+                    device.draw_nv12_frame()
+                })
+                .context("D3D11 NV12 preview retry failed after device recreation")?
         }
     };
     PRESENTED_FRAMES.fetch_add(1, Ordering::Relaxed);
