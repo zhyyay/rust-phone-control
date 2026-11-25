@@ -1083,7 +1083,7 @@ pub fn serve_with_fairplay_provider(
                         #[cfg(windows)]
                         super::set_pipeline_stage(6);
                         write_binary_plist_response(&mut stream, &request.cseq, &body)?;
-                    },
+                    }
                     Err((status, reason)) => {
                         tracing::warn!(status, %reason, "AirPlay SETUP request rejected");
                         let reason_phrase = match status {
