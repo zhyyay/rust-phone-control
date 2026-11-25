@@ -1843,6 +1843,20 @@ mod tests {
     }
 
     #[test]
+    fn latest_frame_mailbox_accepts_bgra_without_trailing_last_row_padding() {
+        let mailbox = LatestFrameMailbox::new();
+        let frame = BgraFrame {
+            width: 2,
+            height: 2,
+            stride: 12,
+            // First row occupies 12 bytes; the last row needs only 8.
+            data: vec![0; 20],
+        };
+        assert_eq!(mailbox.publish(frame), Ok(1));
+        assert!(mailbox.has_pending_frame().unwrap());
+    }
+
+    #[test]
     fn latest_frame_mailbox_rejects_frames_over_retained_byte_limit() {
         let mailbox = LatestFrameMailbox::new();
         let frame = BgraFrame {
