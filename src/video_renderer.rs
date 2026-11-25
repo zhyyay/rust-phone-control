@@ -1230,9 +1230,7 @@ float4 PSMain(VertexOutput input) : SV_Target {
             .ok_or_else(|| anyhow!("NV12 full upload size overflow"))?;
         const MAX_NV12_UPLOAD_BYTES: usize = 128 * 1024 * 1024;
         if full_frame_bytes > MAX_NV12_UPLOAD_BYTES {
-            bail!(
-                "NV12 padded upload exceeds the 128 MiB limit: {full_frame_bytes} bytes"
-            );
+            bail!("NV12 padded upload exceeds the 128 MiB limit: {full_frame_bytes} bytes");
         }
         let y_row_pitch =
             u32::try_from(y_stride).context("NV12 Y row pitch exceeds the D3D11 limit")?;
