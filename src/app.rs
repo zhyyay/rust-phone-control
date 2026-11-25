@@ -136,6 +136,7 @@ impl Render for PhoneControlApp {
                 let mut last_mailbox_published = 0u64;
                 let mut last_mailbox_replaced = 0u64;
                 let mut last_mailbox_consumed = 0u64;
+                let mut last_metrics_mailbox_replaced = 0u64;
                 let mut last_presented_frames = 0u64;
                 let mut last_metrics_at = Instant::now();
                 loop {
@@ -194,11 +195,22 @@ impl Render for PhoneControlApp {
                             crate::video_renderer::preview_metrics();
                         let elapsed = last_metrics_at.elapsed().as_secs_f64().max(0.001);
                         let fps = presented.saturating_sub(last_presented_frames) as f64 / elapsed;
+                        let dropped = crate::airplay::video_frame_mailbox_stats()
+                            .ok()
+                            .flatten()
+                            .map(|stats| {
+                                let count = stats
+                                    .replaced_before_consumption
+                                    .saturating_sub(last_metrics_mailbox_replaced);
+                                last_metrics_mailbox_replaced = stats.replaced_before_consumption;
+                                count as f64 / elapsed
+                            })
+                            .unwrap_or(0.0);
                         last_presented_frames = presented;
                         last_metrics_at = Instant::now();
                         Some(format!(
-                            "D3D11 · {:.1} FPS · Present {} · 上传 {} · 设备重建 {} · 渲染错误 {}",
-                            fps, presented, uploaded, recoveries, render_errors
+                            "D3D11 · {:.1} FPS · 丢帧 {:.1}/s · Present {} · 上传 {} · 设备重建 {} · 渲染错误 {}",
+                            fps, dropped, presented, uploaded, recoveries, render_errors
                         ))
                     } else {
                         None
