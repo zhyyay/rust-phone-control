@@ -351,6 +351,22 @@ pub fn take_latest_video_frame() -> anyhow::Result<Option<FrameSnapshot>> {
         .map_err(|error| anyhow::anyhow!(error))
 }
 
+/// Read decoded-frame mailbox counters for preview diagnostics.
+#[cfg(windows)]
+pub fn video_frame_mailbox_stats() -> anyhow::Result<Option<LatestFrameMailboxStats>> {
+    let runtime = receiver_slot()
+        .lock()
+        .map_err(|_| anyhow::anyhow!("AirPlay runtime lock is poisoned"))?;
+    let Some(runtime) = runtime.as_ref() else {
+        return Ok(None);
+    };
+    runtime
+        .video_frames
+        .stats()
+        .map(Some)
+        .map_err(|error| anyhow::anyhow!(error))
+}
+
 #[cfg(windows)]
 pub fn stop() -> anyhow::Result<()> {
     let _lifecycle = receiver_lifecycle()
