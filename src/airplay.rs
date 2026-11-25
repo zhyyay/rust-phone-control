@@ -46,10 +46,9 @@ mod video;
 
 #[cfg(windows)]
 use sha2::Digest;
+use std::sync::atomic::{AtomicU8, Ordering};
 #[cfg(windows)]
 use std::sync::{Arc, Mutex, OnceLock};
-#[cfg(windows)]
-use std::sync::atomic::{AtomicU8, Ordering};
 
 #[cfg(windows)]
 pub use video::{
@@ -90,7 +89,6 @@ pub fn pipeline_status_label() -> &'static str {
 pub(super) fn set_pipeline_stage(stage: u8) {
     PIPELINE_STAGE.store(stage, Ordering::Release);
 }
-
 
 // Serialize start/stop transitions without holding the receiver data lock
 // while network workers are joined. RTSP workers only need RECEIVER, never
