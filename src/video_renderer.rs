@@ -229,6 +229,27 @@ pub(crate) fn destroy_native_video_surface() {
         let child_raw = child_cell.replace(0);
         NATIVE_VIDEO_CHILD_PARENT_HWND.with(|stored_parent| stored_parent.set(0));
         NATIVE_VIDEO_CHILD_BOUNDS.with(|bounds| bounds.set(None));
+
+        // Release the HWND-bound DXGI chain before destroying its window.
+        // The immediate context retains bound RTV references, so unbind first.
+        THREAD_RENDERER.with(|renderer| {
+            let mut renderer = renderer.borrow_mut();
+            if let Some(device) = renderer.as_mut() {
+                // SAFETY: the RTV was created by this renderer and is bound
+                // only on the thread that owns its immediate context.
+                unsafe {
+                    device.immediate_context.OMSetRenderTargets(
+                        None,
+                        None::<&windows_062::Win32::Graphics::Direct3D11::ID3D11DepthStencilView>,
+                    );
+                }
+                device.render_target_view = None;
+                device.swap_chain = None;
+                device.swap_chain_size = None;
+                device.swap_chain_hwnd = 0;
+            }
+        });
+
         if child_raw == 0 {
             return;
         }
