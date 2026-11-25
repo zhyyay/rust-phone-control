@@ -1234,6 +1234,7 @@ pub enum FrameConversionError {
     BufferTooSmall,
     FrameTooLarge,
     SizeOverflow,
+    Cancelled,
 }
 
 impl std::fmt::Display for FrameConversionError {
@@ -1246,6 +1247,7 @@ impl std::fmt::Display for FrameConversionError {
             Self::BufferTooSmall => "NV12 buffer does not contain all declared rows",
             Self::FrameTooLarge => "converted BGRA frame exceeds the 128 MiB limit",
             Self::SizeOverflow => "frame allocation size overflowed",
+            Self::Cancelled => "frame conversion was cancelled",
         };
         f.write_str(message)
     }
@@ -1314,6 +1316,16 @@ impl<'a> Nv12Frame<'a> {
     /// The input layout is Y plane followed by interleaved UV plane. Strides
     /// may include row padding; the output is tightly packed BGRA.
     pub fn to_bgra(self) -> Result<BgraFrame, FrameConversionError> {
+        self.to_bgra_cancellable(|| false)
+    }
+
+    /// Convert NV12 while checking a caller-provided cancellation condition
+    /// once per output row. This bounds shutdown latency without coupling the
+    /// video module to a particular synchronization primitive.
+    pub fn to_bgra_cancellable(
+        self,
+        mut is_cancelled: impl FnMut() -> bool,
+    ) -> Result<BgraFrame, FrameConversionError> {
         let width = usize::try_from(self.width).map_err(|_| FrameConversionError::SizeOverflow)?;
         let height =
             usize::try_from(self.height).map_err(|_| FrameConversionError::SizeOverflow)?;
@@ -1364,6 +1376,9 @@ impl<'a> Nv12Frame<'a> {
         let uv_base = y_bytes;
 
         for row in 0..height {
+            if is_cancelled() {
+                return Err(FrameConversionError::Cancelled);
+            }
             let y_row = row * self.y_stride;
             let uv_row = uv_base + (row / 2) * self.uv_stride;
             for col in 0..width {
@@ -2056,6 +2071,25 @@ mod tests {
         assert_eq!(frame.data.len(), 16);
         assert_eq!(&frame.data[0..4], &[0, 0, 0, 255]);
         assert_eq!(&frame.data[4..8], &[0, 0, 0, 255]);
+    }
+
+    #[test]
+    fn nv12_conversion_stops_when_cancelled_between_rows() {
+        let data = [16u8, 16, 16, 16, 128, 128];
+        let mut checks = 0usize;
+        let result = Nv12Frame {
+            width: 2,
+            height: 2,
+            y_stride: 2,
+            uv_stride: 2,
+            data: &data,
+        }
+        .to_bgra_cancellable(|| {
+            checks += 1;
+            checks > 1
+        });
+        assert_eq!(result.unwrap_err(), FrameConversionError::Cancelled);
+        assert_eq!(checks, 2);
     }
 
     #[test]
