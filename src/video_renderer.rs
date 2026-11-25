@@ -10,6 +10,7 @@ use std::{
     marker::PhantomData,
     rc::Rc,
     slice,
+    time::Instant,
 };
 use windows_062::Win32::Graphics::Direct3D::ID3DBlob;
 use windows_062::Win32::{
@@ -217,7 +218,20 @@ pub(crate) fn upload_bgra_frame(
             .as_mut()
             .ok_or_else(|| anyhow!("D3D11 renderer has not been initialized for a GPUI window"))?;
         device.upload_bgra(width, height, stride, data)?;
-        device.draw_video_frame()?;
+        let present_time = device.draw_video_frame()?;
+        device.stats_frames += 1;
+        let elapsed = device.stats_window_started.elapsed();
+        if elapsed >= std::time::Duration::from_secs(1) {
+            let fps = device.stats_frames as f64 / elapsed.as_secs_f64();
+            tracing::info!(
+                fps = format_args!("{fps:.1}"),
+                present_ms = format_args!("{:.2}", present_time.as_secs_f64() * 1000.0),
+                frames = device.stats_frames,
+                "D3D11 preview performance"
+            );
+            device.stats_frames = 0;
+            device.stats_window_started = Instant::now();
+        }
         let child_raw = NATIVE_VIDEO_CHILD_HWND.with(Cell::get);
         if child_raw != 0 {
             // SAFETY: this module owns the child HWND and reveals it only after
@@ -244,6 +258,8 @@ pub(crate) struct D3d11Device {
     vertex_shader: Option<ID3D11VertexShader>,
     pixel_shader: Option<ID3D11PixelShader>,
     sampler: Option<ID3D11SamplerState>,
+    stats_window_started: Instant,
+    stats_frames: u64,
     _thread_affinity: PhantomData<Rc<()>>,
 }
 
@@ -291,6 +307,8 @@ impl D3d11Device {
             vertex_shader: None,
             pixel_shader: None,
             sampler: None,
+            stats_window_started: Instant::now(),
+            stats_frames: 0,
             _thread_affinity: PhantomData,
         })
     }
@@ -528,7 +546,7 @@ float4 PSMain(VertexOutput input) : SV_Target {
     }
 
     /// Draw the latest uploaded BGRA frame into the swap-chain back buffer.
-    fn draw_video_frame(&mut self) -> anyhow::Result<()> {
+    fn draw_video_frame(&mut self) -> anyhow::Result<std::time::Duration> {
         self.ensure_video_pipeline()?;
         let target = self
             .render_target_view
@@ -574,6 +592,7 @@ float4 PSMain(VertexOutput input) : SV_Target {
         let samplers = [Some(sampler.clone())];
         // SAFETY: all resources belong to this D3D11 device and the immediate
         // context is confined to its creating GPUI thread.
+        let present_started = Instant::now();
         unsafe {
             self.immediate_context
                 .ClearRenderTargetView(target, &[0.0, 0.0, 0.0, 1.0]);
@@ -595,7 +614,7 @@ float4 PSMain(VertexOutput input) : SV_Target {
             swap_chain.Present(1, DXGI_PRESENT(0)).ok()
         }
         .context("D3D11 video draw or IDXGISwapChain::Present failed")?;
-        Ok(())
+        Ok(present_started.elapsed())
     }
 
     /// Create or resize the BGRA texture and upload a frame into it.
