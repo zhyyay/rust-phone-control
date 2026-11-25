@@ -1076,7 +1076,8 @@ impl LatestFrameMailbox {
         let mut slot = self.frame.lock().map_err(|_| FrameMailboxError::Poisoned)?;
         let sequence = self.sequence.fetch_add(1, Ordering::AcqRel).wrapping_add(1);
         if slot.is_some() {
-            self.replaced_before_consumption.fetch_add(1, Ordering::Relaxed);
+            self.replaced_before_consumption
+                .fetch_add(1, Ordering::Relaxed);
         }
         *slot = Some((sequence, Arc::new(frame)));
         self.published.fetch_add(1, Ordering::Relaxed);
@@ -1106,7 +1107,11 @@ impl LatestFrameMailbox {
 
     /// Read counters without consuming the pending frame.
     pub fn stats(&self) -> Result<LatestFrameMailboxStats, FrameMailboxError> {
-        let pending = self.frame.lock().map_err(|_| FrameMailboxError::Poisoned)?.is_some();
+        let pending = self
+            .frame
+            .lock()
+            .map_err(|_| FrameMailboxError::Poisoned)?
+            .is_some();
         Ok(LatestFrameMailboxStats {
             published: self.published.load(Ordering::Relaxed),
             replaced_before_consumption: self.replaced_before_consumption.load(Ordering::Relaxed),
