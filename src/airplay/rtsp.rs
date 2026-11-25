@@ -2677,7 +2677,9 @@ mod tests {
         let address = listener.local_addr().expect("RTSP listener address");
         let server = thread::spawn(move || {
             let (stream, _) = listener.accept().expect("accept RTSP peer");
-            super::serve(stream).expect("serve RTSP session");
+            // A peer disconnect during a response is expected in this test;
+            // the assertion below verifies that session-owned sockets are released.
+            let _ = super::serve(stream);
         });
         let mut client = TcpStream::connect(address).expect("connect RTSP peer");
         client
