@@ -136,6 +136,8 @@ impl Render for PhoneControlApp {
                 let mut last_mailbox_published = 0u64;
                 let mut last_mailbox_replaced = 0u64;
                 let mut last_mailbox_consumed = 0u64;
+                let mut last_metrics_mailbox_published = 0u64;
+                let mut last_metrics_mailbox_consumed = 0u64;
                 let mut last_metrics_mailbox_replaced = 0u64;
                 let mut last_presented_frames = 0u64;
                 let mut last_metrics_at = Instant::now();
@@ -195,22 +197,35 @@ impl Render for PhoneControlApp {
                             crate::video_renderer::preview_metrics();
                         let elapsed = last_metrics_at.elapsed().as_secs_f64().max(0.001);
                         let fps = presented.saturating_sub(last_presented_frames) as f64 / elapsed;
-                        let dropped = crate::airplay::video_frame_mailbox_stats()
-                            .ok()
-                            .flatten()
-                            .map(|stats| {
-                                let count = stats
-                                    .replaced_before_consumption
-                                    .saturating_sub(last_metrics_mailbox_replaced);
-                                last_metrics_mailbox_replaced = stats.replaced_before_consumption;
-                                count as f64 / elapsed
-                            })
-                            .unwrap_or(0.0);
+                        let (decoded_fps, consumed_fps, replaced_fps) =
+                            crate::airplay::video_frame_mailbox_stats()
+                                .ok()
+                                .flatten()
+                                .map(|stats| {
+                                    let published = stats
+                                        .published
+                                        .saturating_sub(last_metrics_mailbox_published);
+                                    let consumed = stats
+                                        .consumed
+                                        .saturating_sub(last_metrics_mailbox_consumed);
+                                    let replaced = stats
+                                        .replaced_before_consumption
+                                        .saturating_sub(last_metrics_mailbox_replaced);
+                                    last_metrics_mailbox_published = stats.published;
+                                    last_metrics_mailbox_consumed = stats.consumed;
+                                    last_metrics_mailbox_replaced = stats.replaced_before_consumption;
+                                    (
+                                        published as f64 / elapsed,
+                                        consumed as f64 / elapsed,
+                                        replaced as f64 / elapsed,
+                                    )
+                                })
+                                .unwrap_or((0.0, 0.0, 0.0));
                         last_presented_frames = presented;
                         last_metrics_at = Instant::now();
                         Some(format!(
-                            "D3D11 · {:.1} FPS · 邮箱覆盖 {:.1}/s · Present {} · 上传 {} · 设备重建 {} · 渲染错误 {}",
-                            fps, dropped, presented, uploaded, recoveries, render_errors
+                            "D3D11 · {:.1} FPS · 解码 {:.1}/s · 消费 {:.1}/s · 覆盖 {:.1}/s · Present {} · 上传 {} · 重建 {} · 错误 {}",
+                            fps, decoded_fps, consumed_fps, replaced_fps, presented, uploaded, recoveries, render_errors
                         ))
                     } else {
                         None
