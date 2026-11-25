@@ -6,17 +6,15 @@
 
 use anyhow::{Context as _, anyhow};
 use std::{marker::PhantomData, rc::Rc};
-use windows_062::{
-    Win32::{
-        Foundation::HMODULE,
-        Graphics::{
-            Direct3D::{D3D_DRIVER_TYPE_HARDWARE, D3D_FEATURE_LEVEL},
-            Direct3D11::{
-                D3D11CreateDevice, D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_SDK_VERSION,
-                ID3D11Device, ID3D11DeviceContext,
-            },
-            Dxgi::IDXGIAdapter,
+use windows_062::Win32::{
+    Foundation::HMODULE,
+    Graphics::{
+        Direct3D::{D3D_DRIVER_TYPE_HARDWARE, D3D_FEATURE_LEVEL},
+        Direct3D11::{
+            D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_SDK_VERSION, D3D11CreateDevice, ID3D11Device,
+            ID3D11DeviceContext,
         },
+        Dxgi::IDXGIAdapter,
     },
 };
 
