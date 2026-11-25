@@ -361,7 +361,8 @@ impl Render for PhoneControlApp {
                                     crate::video_renderer::upload_nv12_frame(
                                         width,
                                         height,
-                                        frame.stride,
+                                        frame.y_stride,
+                                        frame.uv_stride,
                                         &frame.data,
                                     )
                                 }
@@ -1116,8 +1117,8 @@ fn decoded_frame_to_bmp(
         crate::airplay::DecodedVideoFrame::Nv12(frame) => crate::airplay::Nv12Frame {
             width: frame.width,
             height: frame.height,
-            y_stride: frame.stride,
-            uv_stride: frame.stride,
+            y_stride: frame.y_stride,
+            uv_stride: frame.uv_stride,
             data: &frame.data,
         }
         .to_bgra_cancellable(is_cancelled)
