@@ -4,7 +4,7 @@
 //! context. Swap-chain/window integration is a later step after the GPUI
 //! native-window lifecycle is verified. Keep this owner on the render thread.
 
-use anyhow::{Context as _, anyhow};
+use anyhow::anyhow;
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use std::{cell::RefCell, marker::PhantomData, rc::Rc};
 use windows_062::Win32::{
@@ -29,7 +29,7 @@ thread_local! {
 /// The HWND is borrowed from GPUI and is never destroyed or re-parented by this module.
 pub(crate) fn initialize_for_window(window: &gpui_kit::Window) -> anyhow::Result<isize> {
     let native_handle = HasWindowHandle::window_handle(window)
-        .context("GPUI did not expose a native window handle")?;
+        .map_err(|error| anyhow!("GPUI did not expose a native window handle: {error:?}"))?;
     let hwnd = match native_handle.as_raw() {
         RawWindowHandle::Win32(handle) => handle.hwnd.get(),
         other => return Err(anyhow!("expected a Win32 window handle, got {other:?}")),
