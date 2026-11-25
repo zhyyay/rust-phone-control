@@ -1102,10 +1102,7 @@ fn decoded_frame_to_bmp(
             data: &frame.data,
         }
         .to_bgra_cancellable(|| cancel.load(Ordering::Acquire))
-        .map_err(|error| match error {
-            crate::airplay::FrameConversionError::Cancelled => "frame conversion cancelled",
-            _ => "NV12 fallback conversion failed",
-        })
+        .map_err(|_| "NV12 fallback conversion failed")
         .and_then(|bgra| bgra_frame_to_bmp(&bgra, cancel)),
     }
 }
