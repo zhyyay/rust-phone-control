@@ -5,7 +5,10 @@ use gpui_kit::component::{
 use gpui_kit::*;
 
 #[cfg(windows)]
-use std::{sync::{Arc, Mutex}, time::Duration};
+use std::{
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 #[cfg(windows)]
 #[derive(Debug, Clone, Copy, PartialEq)]
