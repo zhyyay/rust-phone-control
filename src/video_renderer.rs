@@ -247,11 +247,32 @@ pub(crate) fn destroy_native_video_surface() {
 /// The caller must run on the thread that initialized the native renderer.
 #[allow(dead_code)]
 pub(crate) fn upload_nv12_frame(width: u32, height: u32, stride: usize, data: &[u8]) -> anyhow::Result<()> {
-    THREAD_RENDERER.with(|renderer| {
+    let present_time = THREAD_RENDERER.with(|renderer| {
         let mut renderer = renderer.borrow_mut();
         let device = renderer.as_mut()
             .ok_or_else(|| anyhow!("D3D11 renderer has not been initialized for a GPUI window"))?;
-        device.upload_nv12(width, height, stride, data)
+        device.upload_nv12(width, height, stride, data)?;
+        UPLOADED_FRAMES.fetch_add(1, Ordering::Relaxed);
+        device.draw_nv12_frame()
+    })?;
+    PRESENTED_FRAMES.fetch_add(1, Ordering::Relaxed);
+    THREAD_RENDERER.with(|renderer| {
+        let mut renderer = renderer.borrow_mut();
+        let device = renderer.as_mut()
+            .ok_or_else(|| anyhow!("D3D11 renderer disappeared after NV12 Present"))?;
+        device.stats_frames += 1;
+        let elapsed = device.stats_window_started.elapsed();
+        if elapsed >= Duration::from_secs(1) {
+            tracing::info!(
+                fps = device.stats_frames as f64 / elapsed.as_secs_f64(),
+                present_ms = present_time.as_secs_f64() * 1000.0,
+                frames = device.stats_frames,
+                "D3D11 NV12 preview performance"
+            );
+            device.stats_frames = 0;
+            device.stats_window_started = Instant::now();
+        }
+        Ok(())
     })
 }
 
@@ -392,6 +413,7 @@ pub(crate) struct D3d11Device {
     swap_chain_size: Option<(u32, u32)>,
     vertex_shader: Option<ID3D11VertexShader>,
     pixel_shader: Option<ID3D11PixelShader>,
+    nv12_pixel_shader: Option<ID3D11PixelShader>,
     sampler: Option<ID3D11SamplerState>,
     stats_window_started: Instant,
     stats_frames: u64,
@@ -447,6 +469,7 @@ impl D3d11Device {
             swap_chain_size: None,
             vertex_shader: None,
             pixel_shader: None,
+            nv12_pixel_shader: None,
             sampler: None,
             stats_window_started: Instant::now(),
             stats_frames: 0,
@@ -701,6 +724,127 @@ float4 PSMain(VertexOutput input) : SV_Target {
         self.sampler = sampler;
         tracing::info!("D3D11 fullscreen video shader pipeline created");
         Ok(())
+    }
+
+    /// Compile a limited-range BT.601 NV12 conversion shader.
+    fn ensure_nv12_pixel_shader(&mut self) -> anyhow::Result<()> {
+        if self.nv12_pixel_shader.is_some() {
+            return Ok(());
+        }
+        const SOURCE: &[u8] = br#"
+struct VertexOutput {
+    float4 position : SV_Position;
+    float2 uv : TEXCOORD0;
+};
+Texture2D<float> luma_plane : register(t0);
+Texture2D<float2> chroma_plane : register(t1);
+SamplerState video_sampler : register(s0);
+float4 PSMain(VertexOutput input) : SV_Target {
+    float y = (luma_plane.Sample(video_sampler, input.uv).r * 255.0 - 16.0) / 219.0;
+    float2 chroma = (chroma_plane.Sample(video_sampler, input.uv).rg * 255.0 - 128.0) / 224.0;
+    float cb = chroma.x;
+    float cr = chroma.y;
+    float3 rgb = float3(
+        y + 1.596027 * cr,
+        y - 0.391762 * cb - 0.812968 * cr,
+        y + 2.017232 * cb
+    );
+    return float4(saturate(rgb), 1.0);
+}
+"#;
+        let mut bytecode: Option<ID3DBlob> = None;
+        // SAFETY: shader source and entry-point strings remain alive during compilation.
+        unsafe {
+            D3DCompile(
+                SOURCE.as_ptr().cast(),
+                SOURCE.len(),
+                PCSTR(c"rust-phone-control-nv12.hlsl".as_ptr().cast()),
+                None,
+                None,
+                PCSTR(c"PSMain".as_ptr().cast()),
+                PCSTR(c"ps_4_0".as_ptr().cast()),
+                D3DCOMPILE_ENABLE_STRICTNESS,
+                0,
+                &mut bytecode,
+                None,
+            )
+        }
+        .context("D3DCompile failed for the NV12 pixel shader")?;
+        let bytecode = bytecode.ok_or_else(|| anyhow!("D3DCompile returned no NV12 shader bytecode"))?;
+        // SAFETY: the blob owns a valid byte range for its reported size.
+        let code = unsafe {
+            slice::from_raw_parts(
+                bytecode.GetBufferPointer().cast::<u8>(),
+                bytecode.GetBufferSize(),
+            )
+        };
+        let mut shader = None;
+        // SAFETY: bytecode was compiled for a D3D11 pixel shader.
+        unsafe { self.device.CreatePixelShader(code, None, Some(&mut shader)) }
+            .context("CreatePixelShader failed for NV12")?;
+        self.nv12_pixel_shader = Some(shader.ok_or_else(|| anyhow!("D3D11 returned no NV12 pixel shader"))?);
+        tracing::info!("D3D11 NV12 BT.601 conversion shader created");
+        Ok(())
+    }
+
+    /// Sample the uploaded Y and UV planes and present the converted RGB frame.
+    fn draw_nv12_frame(&mut self) -> anyhow::Result<std::time::Duration> {
+        self.ensure_video_pipeline()?;
+        self.ensure_nv12_pixel_shader()?;
+        let target = self.render_target_view.as_ref()
+            .ok_or_else(|| anyhow!("swap-chain render target is not initialized"))?;
+        let swap_chain = self.swap_chain.as_ref()
+            .ok_or_else(|| anyhow!("swap chain is not initialized"))?;
+        let y_view = self._nv12_y_view.as_ref()
+            .ok_or_else(|| anyhow!("NV12 Y shader view is not initialized"))?;
+        let uv_view = self._nv12_uv_view.as_ref()
+            .ok_or_else(|| anyhow!("NV12 UV shader view is not initialized"))?;
+        let (width, height) = self.swap_chain_size
+            .ok_or_else(|| anyhow!("swap-chain dimensions are not initialized"))?;
+        let (frame_width, frame_height) = self.nv12_texture_size
+            .ok_or_else(|| anyhow!("NV12 texture dimensions are not initialized"))?;
+        let surface_aspect = width as f32 / height as f32;
+        let frame_aspect = frame_width as f32 / frame_height as f32;
+        let (viewport_width, viewport_height) = if frame_aspect > surface_aspect {
+            (width as f32, width as f32 / frame_aspect)
+        } else {
+            (height as f32 * frame_aspect, height as f32)
+        };
+        let viewport = [D3D11_VIEWPORT {
+            TopLeftX: (width as f32 - viewport_width) * 0.5,
+            TopLeftY: (height as f32 - viewport_height) * 0.5,
+            Width: viewport_width,
+            Height: viewport_height,
+            MinDepth: 0.0,
+            MaxDepth: 1.0,
+        }];
+        let vertex_shader = self.vertex_shader.as_ref().expect("pipeline initialized");
+        let pixel_shader = self.nv12_pixel_shader.as_ref().expect("NV12 shader initialized");
+        let sampler = self.sampler.as_ref().expect("pipeline initialized");
+        let targets = [Some(target.clone())];
+        let resources = [Some(y_view.clone()), Some(uv_view.clone())];
+        let samplers = [Some(sampler.clone())];
+        let present_started = Instant::now();
+        // SAFETY: resources belong to this D3D11 device and its immediate
+        // context is confined to the GPUI thread that created the device.
+        unsafe {
+            self.immediate_context.ClearRenderTargetView(target, &[0.0, 0.0, 0.0, 1.0]);
+            self.immediate_context.OMSetRenderTargets(
+                Some(&targets),
+                None::<&windows_062::Win32::Graphics::Direct3D11::ID3D11DepthStencilView>,
+            );
+            self.immediate_context.RSSetViewports(Some(&viewport));
+            self.immediate_context.IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+            self.immediate_context.VSSetShader(vertex_shader, None);
+            self.immediate_context.PSSetShader(pixel_shader, None);
+            self.immediate_context.PSSetShaderResources(0, Some(&resources));
+            self.immediate_context.PSSetSamplers(0, Some(&samplers));
+            self.immediate_context.Draw(3, 0);
+            self.immediate_context.PSSetShaderResources(0, Some(&[None, None]));
+            swap_chain.Present(1, DXGI_PRESENT(0)).ok()
+        }
+        .context("D3D11 NV12 draw or IDXGISwapChain::Present failed")?;
+        Ok(present_started.elapsed())
     }
 
     /// Draw the latest uploaded BGRA frame into the swap-chain back buffer.
