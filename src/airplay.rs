@@ -50,7 +50,9 @@ use sha2::Digest;
 use std::sync::{Arc, Mutex, OnceLock};
 
 #[cfg(windows)]
-pub use video::{BgraFrame, FrameSnapshot};
+pub use video::{
+    BgraFrame, FrameSnapshot, LatestFrameMailboxStats, VideoFrameMetadata, VideoPixelFormat,
+};
 
 #[cfg(windows)]
 struct ReceiverRuntime {
