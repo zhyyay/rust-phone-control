@@ -5,7 +5,16 @@
 
 use anyhow::{Context as _, anyhow, bail};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-use std::{cell::RefCell, ffi::c_void, marker::PhantomData, rc::Rc};
+use windows_062::Win32::{
+    Foundation::{HMODULE, HWND},
+    System::LibraryLoader::GetModuleHandleW,
+    UI::WindowsAndMessaging::{
+        CreateWindowExW, DefWindowProcW, DestroyWindow, RegisterClassW, SetWindowPos,
+        ShowWindow, WNDCLASSW, WS_CHILD, WS_CLIPSIBLINGS, WS_CLIPCHILDREN,
+        SW_HIDE, SWP_NOACTIVATE, SWP_NOOWNERZORDER, SWP_NOREDRAW, SWP_NOZORDER,
+    },
+};
+use std::{cell::{Cell, RefCell}, ffi::c_void, marker::PhantomData, rc::Rc};
 use windows_062::Win32::{
     Foundation::HMODULE,
     Graphics::{
@@ -34,6 +43,8 @@ pub(crate) fn initialize_for_window(window: &gpui_kit::Window) -> anyhow::Result
         RawWindowHandle::Win32(handle) => handle.hwnd.get(),
         other => return Err(anyhow!("expected a Win32 window handle, got {other:?}")),
     };
+
+    GPUI_PARENT_HWND.with(|parent| parent.set(hwnd as isize));
 
     THREAD_RENDERER.with(|renderer| {
         let mut renderer = renderer.borrow_mut();
