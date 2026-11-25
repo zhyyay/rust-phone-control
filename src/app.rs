@@ -36,6 +36,8 @@ pub struct PhoneControlApp {
     #[cfg(windows)]
     preview_status: String,
     pipeline_status: String,
+    #[cfg(windows)]
+    d3d11_metrics_label: String,
     /// Latest measured preview rectangle, shared with the future native-surface host.
     #[cfg(windows)]
     preview_surface_bounds: Arc<Mutex<Option<PreviewSurfaceBounds>>>,
@@ -135,6 +137,8 @@ impl Render for PhoneControlApp {
                 let mut last_mailbox_published = 0u64;
                 let mut last_mailbox_replaced = 0u64;
                 let mut last_mailbox_consumed = 0u64;
+                let mut last_presented_frames = 0u64;
+                let mut last_metrics_at = Instant::now();
                 loop {
                     cx.background_executor()
                         .timer(Duration::from_millis(33))
@@ -197,8 +201,25 @@ impl Render for PhoneControlApp {
                         mailbox_stats_log_at = Instant::now();
                     }
 
+                    let metrics = if refresh_pairing {
+                        let (presented, uploaded, recoveries) = crate::video_renderer::preview_metrics();
+                        let elapsed = last_metrics_at.elapsed().as_secs_f64().max(0.001);
+                        let fps = presented.saturating_sub(last_presented_frames) as f64 / elapsed;
+                        last_presented_frames = presented;
+                        last_metrics_at = Instant::now();
+                        Some(format!("D3D11 · {:.1} FPS · Present {} · 上传 {} · 恢复 {}", fps, presented, uploaded, recoveries))
+                    } else {
+                        None
+                    };
+
                     let updated = this.update(cx, |this, cx| {
                         let mut changed = false;
+                        if let Some(label) = metrics {
+                            if this.d3d11_metrics_label != label {
+                                this.d3d11_metrics_label = label;
+                                changed = true;
+                            }
+                        }
                         if refresh_pairing {
                             let status = crate::airplay::pipeline_status_label().to_owned();
                             if this.pipeline_status != status {
@@ -478,6 +499,7 @@ fn render_preview_column(app: &PhoneControlApp, cx: &Context<PhoneControlApp>) -
         .border_1()
         .border_color(gpui_kit::rgb(0xE1E5ED))
         .child(Label::new(app.pipeline_status.as_str()))
+        .child(Label::new(app.d3d11_metrics_label.as_str()))
         .child(
             div()
                 .flex()
