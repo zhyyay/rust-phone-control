@@ -146,7 +146,6 @@ impl Render for PhoneControlApp {
                 let fallback_conversion_result: Arc<
                     Mutex<Option<(u64, u32, u32, Result<Vec<u8>, &'static str>, Duration)>>,
                 > = Arc::new(Mutex::new(None));
-                let mut last_seen_frame_sequence = 0u64;
                 let mut mailbox_stats_log_at = Instant::now();
                 let mut last_mailbox_published = 0u64;
                 let mut last_mailbox_replaced = 0u64;
@@ -207,10 +206,6 @@ impl Render for PhoneControlApp {
                         mailbox_stats_log_at = Instant::now();
                     }
 
-                    if let Some((sequence, _, _)) = prepared_frame.as_ref() {
-                        last_seen_frame_sequence = *sequence;
-                    }
-                    let latest_sequence = last_seen_frame_sequence;
                     // A fallback conversion may take longer than one video
                     // frame interval. Do not require it to match the newest
                     // sequence exactly, or slow conversions can be starved
