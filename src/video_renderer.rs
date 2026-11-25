@@ -565,8 +565,15 @@ impl D3d11Device {
         if self.swap_chain.is_some() && self.swap_chain_hwnd != requested_hwnd {
             // A hidden child HWND can be destroyed and recreated when the
             // preview is hidden or its GPUI parent changes. DXGI swap chains
-            // remain bound to their original HWND, so release every back-buffer
-            // reference and create a fresh chain for the new child.
+            // remain bound to their original HWND. Unbind the RTV first:
+            // the immediate context itself retains a reference to it.
+            // SAFETY: the render target belongs to this immediate context.
+            unsafe {
+                self.immediate_context.OMSetRenderTargets(
+                    None,
+                    None::<&windows_062::Win32::Graphics::Direct3D11::ID3D11DepthStencilView>,
+                );
+            }
             self.render_target_view = None;
             self.swap_chain = None;
             self.swap_chain_size = None;
@@ -621,16 +628,24 @@ impl D3d11Device {
             .context("IDXGIFactory2::CreateSwapChainForHwnd failed")?;
             self.swap_chain = Some(swap_chain);
             self.swap_chain_hwnd = requested_hwnd;
-            self.swap_chain_size = Some((width, height));
             self.rebuild_render_target()?;
+            self.swap_chain_size = Some((width, height));
             tracing::info!(
                 width,
                 height,
                 "D3D11 HWND swap chain created; native surface remains hidden"
             );
         } else if self.swap_chain_size != Some((width, height)) {
-            // Release the RTV before ResizeBuffers; DXGI requires all
-            // references to old back buffers to be released.
+            // Unbind the RTV before dropping our reference. D3D11's immediate
+            // context otherwise keeps the old back buffer alive and
+            // ResizeBuffers can fail with DXGI_ERROR_INVALID_CALL.
+            // SAFETY: the render target belongs to this immediate context.
+            unsafe {
+                self.immediate_context.OMSetRenderTargets(
+                    None,
+                    None::<&windows_062::Win32::Graphics::Direct3D11::ID3D11DepthStencilView>,
+                );
+            }
             self.render_target_view = None;
             let swap_chain = self
                 .swap_chain
@@ -648,8 +663,8 @@ impl D3d11Device {
                 )
             }
             .context("IDXGISwapChain::ResizeBuffers failed")?;
-            self.swap_chain_size = Some((width, height));
             self.rebuild_render_target()?;
+            self.swap_chain_size = Some((width, height));
             tracing::debug!(width, height, "D3D11 swap chain resized");
         }
 
