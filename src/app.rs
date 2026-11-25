@@ -147,6 +147,8 @@ impl Render for PhoneControlApp {
                 // fallback frames on the background executor rather than
                 // converting NV12/BGRA while the GPUI thread is blocked.
                 let mut fallback_mode = false;
+                // A native-present success invalidates any in-flight bitmap fallback.
+                let mut fallback_conversion_cancel: Option<Arc<AtomicBool>> = None;
                 // At most one CPU fallback conversion may run at a time.
                 // The render loop never awaits it; completed results are
                 // consumed on a later tick and stale sequences are discarded.
@@ -368,8 +370,15 @@ impl Render for PhoneControlApp {
                             let (display_path, used_fallback, conversion_elapsed) =
                                 match native_present {
                                     Ok(()) => {
-                                        // The native child surface owns the visible
-                                        // image now; discard the previous GPUI bitmap.
+                                        // The native child surface owns the visible image.
+                                        // Cancel stale CPU conversion work and discard any
+                                        // completed bitmap that raced with native recovery.
+                                        if let Some(cancel) = fallback_conversion_cancel.take() {
+                                            cancel.store(true, Ordering::Release);
+                                        }
+                                        if let Ok(mut result) = fallback_conversion_result.lock() {
+                                            *result = None;
+                                        }
                                         this.preview_image = None;
                                         next_fallback_mode = false;
                                         ("D3D11 原生预览", false, Duration::ZERO)
@@ -389,6 +398,8 @@ impl Render for PhoneControlApp {
                                             let result_slot = fallback_conversion_result.clone();
                                             let in_flight = fallback_conversion_in_flight.clone();
                                             let cancel = worker_cancel.clone();
+                                            let conversion_cancel = Arc::new(AtomicBool::new(false));
+                                            fallback_conversion_cancel = Some(conversion_cancel.clone());
                                             let width_for_conversion = width;
                                             let height_for_conversion = height;
                                             let spawn = std::thread::Builder::new()
@@ -396,22 +407,30 @@ impl Render for PhoneControlApp {
                                                 .spawn(move || {
                                                     // Avoid starting expensive CPU work if shutdown
                                                     // raced with thread scheduling.
-                                                    if cancel.load(Ordering::Acquire) {
+                                                    if cancel.load(Ordering::Acquire)
+                                                        || conversion_cancel.load(Ordering::Acquire)
+                                                    {
                                                         in_flight.store(false, Ordering::Release);
                                                         return;
                                                     }
                                                     let started = Instant::now();
                                                     let result = decoded_frame_to_bmp(
                                                         frame_for_conversion.as_ref(),
-                                                        &cancel,
+                                                        || {
+                                                            cancel.load(Ordering::Acquire)
+                                                                || conversion_cancel.load(Ordering::Acquire)
+                                                        },
                                                     );
                                                     let elapsed = started.elapsed();
-                                                    // Conversion itself is synchronous and cannot
-                                                    // be interrupted, but a completed frame is never
-                                                    // published once shutdown has been requested.
-                                                    if !cancel.load(Ordering::Acquire) {
+                                                    // Publish only if neither shutdown nor native
+                                                    // renderer recovery invalidated this fallback.
+                                                    if !cancel.load(Ordering::Acquire)
+                                                        && !conversion_cancel.load(Ordering::Acquire)
+                                                    {
                                                         if let Ok(mut slot) = result_slot.lock() {
-                                                            if !cancel.load(Ordering::Acquire) {
+                                                            if !cancel.load(Ordering::Acquire)
+                                                                && !conversion_cancel.load(Ordering::Acquire)
+                                                            {
                                                                 *slot = Some((
                                                                     sequence,
                                                                     width_for_conversion,
@@ -1087,13 +1106,15 @@ fn preview_panel(image: Option<Arc<Image>>, status: String) -> impl IntoElement 
 #[cfg(windows)]
 fn decoded_frame_to_bmp(
     frame: &crate::airplay::DecodedVideoFrame,
-    cancel: &AtomicBool,
+    is_cancelled: impl Fn() -> bool + Copy,
 ) -> Result<Vec<u8>, &'static str> {
-    if cancel.load(Ordering::Acquire) {
+    if is_cancelled() {
         return Err("frame conversion cancelled");
     }
     match frame {
-        crate::airplay::DecodedVideoFrame::Bgra(frame) => bgra_frame_to_bmp(frame, cancel),
+        crate::airplay::DecodedVideoFrame::Bgra(frame) => {
+            bgra_frame_to_bmp(frame, is_cancelled)
+        }
         crate::airplay::DecodedVideoFrame::Nv12(frame) => crate::airplay::Nv12Frame {
             width: frame.width,
             height: frame.height,
@@ -1101,16 +1122,16 @@ fn decoded_frame_to_bmp(
             uv_stride: frame.stride,
             data: &frame.data,
         }
-        .to_bgra_cancellable(|| cancel.load(Ordering::Acquire))
+        .to_bgra_cancellable(is_cancelled)
         .map_err(|_| "NV12 fallback conversion failed")
-        .and_then(|bgra| bgra_frame_to_bmp(&bgra, cancel)),
+        .and_then(|bgra| bgra_frame_to_bmp(&bgra, is_cancelled)),
     }
 }
 
 #[cfg(windows)]
 fn bgra_frame_to_bmp(
     frame: &crate::airplay::BgraFrame,
-    cancel: &AtomicBool,
+    is_cancelled: impl Fn() -> bool + Copy,
 ) -> Result<Vec<u8>, &'static str> {
     let width = usize::try_from(frame.width).map_err(|_| "frame width overflow")?;
     let height = usize::try_from(frame.height).map_err(|_| "frame height overflow")?;
@@ -1156,7 +1177,7 @@ fn bgra_frame_to_bmp(
     bmp.extend_from_slice(&[0; 8]);
 
     for row in 0..height {
-        if cancel.load(Ordering::Acquire) {
+        if is_cancelled() {
             return Err("frame conversion cancelled");
         }
         let start = row
