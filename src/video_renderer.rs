@@ -49,14 +49,16 @@ use windows_062::core::{BOOL, Interface, PCSTR, PCWSTR};
 
 static PRESENTED_FRAMES: AtomicU64 = AtomicU64::new(0);
 static UPLOADED_FRAMES: AtomicU64 = AtomicU64::new(0);
-static RENDER_RECOVERY_ATTEMPTS: AtomicU64 = AtomicU64::new(0);
+static DEVICE_RECOVERIES: AtomicU64 = AtomicU64::new(0);
+static RENDER_ERRORS: AtomicU64 = AtomicU64::new(0);
 
 /// Process-wide D3D11 counters; safe to read from the GPUI diagnostics poll.
-pub(crate) fn preview_metrics() -> (u64, u64, u64) {
+pub(crate) fn preview_metrics() -> (u64, u64, u64, u64) {
     (
         PRESENTED_FRAMES.load(Ordering::Relaxed),
         UPLOADED_FRAMES.load(Ordering::Relaxed),
-        RENDER_RECOVERY_ATTEMPTS.load(Ordering::Relaxed),
+        DEVICE_RECOVERIES.load(Ordering::Relaxed),
+        RENDER_ERRORS.load(Ordering::Relaxed),
     )
 }
 
@@ -264,7 +266,7 @@ pub(crate) fn upload_bgra_frame(
     let present_time = match initial_result {
         Ok(elapsed) => elapsed,
         Err(original_error) => {
-            RENDER_RECOVERY_ATTEMPTS.fetch_add(1, Ordering::Relaxed);
+            RENDER_ERRORS.fetch_add(1, Ordering::Relaxed);
             // Rebuild only when the driver reports device removal/reset. Shader,
             // validation, and ordinary resize errors remain visible to the caller.
             let removed = THREAD_RENDERER.with(|renderer| {
@@ -307,6 +309,7 @@ pub(crate) fn upload_bgra_frame(
                 *renderer.borrow_mut() = Some(replacement);
             });
             DEVICE_RECOVERY_RETRY_AFTER.with(|retry_after| retry_after.set(None));
+            DEVICE_RECOVERIES.fetch_add(1, Ordering::Relaxed);
 
             THREAD_RENDERER
                 .with(|renderer| {
