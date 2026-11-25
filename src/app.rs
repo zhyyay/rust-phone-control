@@ -36,7 +36,6 @@ pub struct PhoneControlApp {
     #[cfg(windows)]
     preview_status: String,
     pipeline_status: String,
-    #[cfg(windows)]
     d3d11_metrics_label: String,
     /// Latest measured preview rectangle, shared with the future native-surface host.
     #[cfg(windows)]
@@ -202,12 +201,16 @@ impl Render for PhoneControlApp {
                     }
 
                     let metrics = if refresh_pairing {
-                        let (presented, uploaded, recoveries) = crate::video_renderer::preview_metrics();
+                        let (presented, uploaded, recoveries) =
+                            crate::video_renderer::preview_metrics();
                         let elapsed = last_metrics_at.elapsed().as_secs_f64().max(0.001);
                         let fps = presented.saturating_sub(last_presented_frames) as f64 / elapsed;
                         last_presented_frames = presented;
                         last_metrics_at = Instant::now();
-                        Some(format!("D3D11 · {:.1} FPS · Present {} · 上传 {} · 恢复 {}", fps, presented, uploaded, recoveries))
+                        Some(format!(
+                            "D3D11 · {:.1} FPS · Present {} · 上传 {} · 异常 {}",
+                            fps, presented, uploaded, recoveries
+                        ))
                     } else {
                         None
                     };
