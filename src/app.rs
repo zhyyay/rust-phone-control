@@ -35,7 +35,6 @@ pub struct PhoneControlApp {
     preview_image: Option<Arc<Image>>,
     #[cfg(windows)]
     preview_status: String,
-    #[cfg(windows)]
     pipeline_status: String,
     /// Latest measured preview rectangle, shared with the future native-surface host.
     #[cfg(windows)]
