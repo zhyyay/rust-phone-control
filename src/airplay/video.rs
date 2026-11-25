@@ -985,7 +985,10 @@ pub struct Nv12Frame<'a> {
 pub struct OwnedNv12Frame {
     pub width: u32,
     pub height: u32,
-    pub stride: usize,
+    /// Byte distance between consecutive luma rows.
+    pub y_stride: usize,
+    /// Byte distance between consecutive interleaved chroma rows.
+    pub uv_stride: usize,
     pub data: Vec<u8>,
 }
 
@@ -1111,15 +1114,15 @@ impl LatestFrameMailbox {
         }
         let width = usize::try_from(frame.width).map_err(|_| FrameMailboxError::InvalidStride)?;
         let height = usize::try_from(frame.height).map_err(|_| FrameMailboxError::InvalidStride)?;
-        if frame.stride < width {
+        if frame.y_stride < width || frame.uv_stride < width {
             return Err(FrameMailboxError::InvalidStride);
         }
         let y_bytes = frame
-            .stride
+            .y_stride
             .checked_mul(height)
             .ok_or(FrameMailboxError::InvalidStride)?;
         let uv_required = frame
-            .stride
+            .uv_stride
             .checked_mul(height / 2 - 1)
             .and_then(|bytes| bytes.checked_add(width))
             .ok_or(FrameMailboxError::InvalidStride)?;
@@ -1928,7 +1931,8 @@ mod tests {
             mailbox.publish_nv12(OwnedNv12Frame {
                 width: 4,
                 height: 4,
-                stride: 6,
+                y_stride: 6,
+                uv_stride: 6,
                 data,
             }),
             Ok(1)
@@ -1936,8 +1940,30 @@ mod tests {
         let snapshot = mailbox.take_latest().unwrap().unwrap();
         match snapshot.frame.as_ref() {
             DecodedVideoFrame::Nv12(frame) => {
-                assert_eq!((frame.width, frame.height, frame.stride), (4, 4, 6));
+                assert_eq!((frame.width, frame.height, frame.y_stride, frame.uv_stride), (4, 4, 6, 6));
                 assert_eq!(frame.data.len(), 34);
+            }
+            DecodedVideoFrame::Bgra(_) => panic!("expected native NV12 frame"),
+        }
+    }
+
+    #[test]
+    fn latest_frame_mailbox_accepts_distinct_nv12_plane_strides() {
+        let mailbox = LatestFrameMailbox::new();
+        // 4x4 Y plane: 6-byte pitch (24 bytes). UV plane: 8-byte
+        // pitch with only the visible final row required (8 + 4 bytes).
+        let frame = OwnedNv12Frame {
+            width: 4,
+            height: 4,
+            y_stride: 6,
+            uv_stride: 8,
+            data: vec![0; 36],
+        };
+        assert_eq!(mailbox.publish_nv12(frame), Ok(1));
+        let snapshot = mailbox.take_latest().unwrap().unwrap();
+        match snapshot.frame.as_ref() {
+            DecodedVideoFrame::Nv12(frame) => {
+                assert_eq!((frame.y_stride, frame.uv_stride), (6, 8));
             }
             DecodedVideoFrame::Bgra(_) => panic!("expected native NV12 frame"),
         }
@@ -1950,7 +1976,8 @@ mod tests {
             mailbox.publish_nv12(OwnedNv12Frame {
                 width: 4,
                 height: 4,
-                stride: 6,
+                y_stride: 6,
+                uv_stride: 6,
                 data: vec![0; 33],
             }),
             Err(FrameMailboxError::BufferTooSmall)
