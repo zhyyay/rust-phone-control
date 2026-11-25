@@ -279,7 +279,15 @@ pub(crate) fn upload_nv12_frame(
             device.stats_window_started = Instant::now();
         }
         Ok(())
-    })
+    })?;
+
+    let child_raw = NATIVE_VIDEO_CHILD_HWND.with(Cell::get);
+    if child_raw != 0 {
+        // SAFETY: the native child is owned by this module and is revealed
+        // only after its NV12 frame has been successfully presented.
+        unsafe { ShowWindow(HWND(child_raw as *mut c_void), SW_SHOW) };
+    }
+    Ok(())
 }
 
 /// Upload one decoded BGRA frame into a shader-readable D3D11 texture.
