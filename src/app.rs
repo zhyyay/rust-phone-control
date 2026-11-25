@@ -152,44 +152,15 @@ impl Render for PhoneControlApp {
                         pairing_refresh_ticks = 0;
                     }
 
-                    // Keep NV12 in its native format for the D3D11 upload.
-                    // Build a BGRA bitmap separately in the background only for
-                    // the existing GPUI fallback surface.
+                    // Keep decoder output in its native format. Do not spend CPU
+                    // converting every frame into a GPUI bitmap: the bitmap is
+                    // created only if native D3D11 presentation actually fails.
                     let prepared_frame = match crate::airplay::take_latest_video_frame() {
-                        Ok(Some(snapshot)) => {
-                            let sequence = snapshot.sequence;
-                            let mailbox_age = snapshot.enqueued_at.elapsed();
-                            let conversion = cx.background_executor().spawn(async move {
-                                let conversion_started = Instant::now();
-                                let fallback = match snapshot.frame.as_ref() {
-                                    crate::airplay::DecodedVideoFrame::Bgra(frame) => {
-                                        bgra_frame_to_bmp(frame)
-                                    }
-                                    crate::airplay::DecodedVideoFrame::Nv12(frame) => {
-                                        crate::airplay::Nv12Frame {
-                                            width: frame.width,
-                                            height: frame.height,
-                                            y_stride: frame.stride,
-                                            uv_stride: frame.stride,
-                                            data: &frame.data,
-                                        }
-                                        .to_bgra()
-                                        .map_err(|_| "NV12 fallback conversion failed")
-                                        .and_then(|bgra| bgra_frame_to_bmp(&bgra))
-                                    }
-                                };
-                                fallback.map(|bytes| {
-                                    (
-                                        sequence,
-                                        snapshot.frame,
-                                        bytes,
-                                        mailbox_age,
-                                        conversion_started.elapsed(),
-                                    )
-                                })
-                            });
-                            Some(conversion.await)
-                        }
+                        Ok(Some(snapshot)) => Some((
+                            snapshot.sequence,
+                            snapshot.frame,
+                            snapshot.enqueued_at.elapsed(),
+                        )),
                         Ok(None) => None,
                         Err(error) => {
                             tracing::warn!(%error, "Could not read decoded AirPlay frame");
@@ -267,73 +238,111 @@ impl Render for PhoneControlApp {
                                 changed = true;
                             }
                         }
-                        if let Some(result) = prepared_frame {
-                            match result {
-                                Ok((sequence, frame, bytes, mailbox_age, conversion_elapsed)) => {
-                                    let (width, height) = match frame.as_ref() {
-                                        crate::airplay::DecodedVideoFrame::Bgra(frame) => {
-                                            (frame.width, frame.height)
-                                        }
-                                        crate::airplay::DecodedVideoFrame::Nv12(frame) => {
-                                            (frame.width, frame.height)
-                                        }
-                                    };
-                                    let upload_started = Instant::now();
-
-                                    // Entity::update runs on GPUI's foreground executor.
-                                    // D3D11 immediate-context calls stay on the GPUI
-                                    // thread that initialized the native renderer.
-                                    let native_present = match frame.as_ref() {
-                                        crate::airplay::DecodedVideoFrame::Bgra(frame) => {
-                                            crate::video_renderer::upload_bgra_frame(
-                                                width,
-                                                height,
-                                                frame.stride,
-                                                &frame.data,
-                                            )
-                                        }
-                                        crate::airplay::DecodedVideoFrame::Nv12(frame) => {
-                                            crate::video_renderer::upload_nv12_frame(
-                                                width,
-                                                height,
-                                                frame.stride,
-                                                &frame.data,
-                                            )
-                                        }
-                                    };
-                                    let display_path = match native_present {
-                                        Ok(()) => "D3D11 原生预览",
-                                        Err(ref error) => {
-                                            crate::video_renderer::hide_native_video_surface();
-                                            tracing::debug!(
-                                                %error,
-                                                sequence,
-                                                "D3D11 frame upload unavailable; retaining GPUI image fallback"
-                                            );
-                                            "GPUI 图像回退（D3D11 不可用）"
-                                        }
-                                    };
-                                    tracing::trace!(
-                                        sequence,
-                                        mailbox_age_ms = mailbox_age.as_secs_f64() * 1000.0,
-                                        bgra_to_bmp_ms = conversion_elapsed.as_secs_f64() * 1000.0,
-                                        d3d11_upload_ms = upload_started.elapsed().as_secs_f64() * 1000.0,
-                                        "Video frame pipeline latency"
-                                    );
-
-                                    this.preview_status = format!(
-                                        "{display_path} · {width} × {height} · sequence {sequence}"
-                                    );
-                                    this.preview_image = Some(Arc::new(Image::from_bytes(
-                                        ImageFormat::Bmp,
-                                        bytes,
-                                    )));
-                                    changed = true;
+                        if let Some((sequence, frame, mailbox_age)) = prepared_frame {
+                            let (width, height) = match frame.as_ref() {
+                                crate::airplay::DecodedVideoFrame::Bgra(frame) => {
+                                    (frame.width, frame.height)
                                 }
-                                Err(error) => {
-                                    tracing::warn!(%error, "Could not prepare decoded frame for GPUI");
+                                crate::airplay::DecodedVideoFrame::Nv12(frame) => {
+                                    (frame.width, frame.height)
                                 }
-                            }
+                            };
+                            let upload_started = Instant::now();
+
+                            // Entity::update runs on GPUI's foreground executor.
+                            // D3D11 immediate-context calls stay on the GPUI
+                            // thread that initialized the native renderer.
+                            let native_present = match frame.as_ref() {
+                                crate::airplay::DecodedVideoFrame::Bgra(frame) => {
+                                    crate::video_renderer::upload_bgra_frame(
+                                        width,
+                                        height,
+                                        frame.stride,
+                                        &frame.data,
+                                    )
+                                }
+                                crate::airplay::DecodedVideoFrame::Nv12(frame) => {
+                                    crate::video_renderer::upload_nv12_frame(
+                                        width,
+                                        height,
+                                        frame.stride,
+                                        &frame.data,
+                                    )
+                                }
+                            };
+                            let upload_elapsed = upload_started.elapsed();
+                            let (display_path, fallback_bytes, conversion_elapsed) =
+                                match native_present {
+                                    Ok(()) => {
+                                        // The native child surface owns the visible
+                                        // image now; discard the previous GPUI bitmap.
+                                        this.preview_image = None;
+                                        ("D3D11 原生预览", None, Duration::ZERO)
+                                    }
+                                    Err(error) => {
+                                        crate::video_renderer::hide_native_video_surface();
+                                        tracing::debug!(
+                                            %error,
+                                            sequence,
+                                            "D3D11 frame upload unavailable; converting only this frame for GPUI fallback"
+                                        );
+                                        let conversion_started = Instant::now();
+                                        let fallback = match frame.as_ref() {
+                                            crate::airplay::DecodedVideoFrame::Bgra(frame) => {
+                                                bgra_frame_to_bmp(frame)
+                                            }
+                                            crate::airplay::DecodedVideoFrame::Nv12(frame) => {
+                                                crate::airplay::Nv12Frame {
+                                                    width: frame.width,
+                                                    height: frame.height,
+                                                    y_stride: frame.stride,
+                                                    uv_stride: frame.stride,
+                                                    data: &frame.data,
+                                                }
+                                                .to_bgra()
+                                                .map_err(|_| "NV12 fallback conversion failed")
+                                                .and_then(|bgra| bgra_frame_to_bmp(&bgra))
+                                            }
+                                        };
+                                        match fallback {
+                                            Ok(bytes) => {
+                                                this.preview_image = Some(Arc::new(
+                                                    Image::from_bytes(ImageFormat::Bmp, bytes.clone()),
+                                                ));
+                                                (
+                                                    "GPUI 图像回退（D3D11 不可用）",
+                                                    Some(bytes),
+                                                    conversion_started.elapsed(),
+                                                )
+                                            }
+                                            Err(fallback_error) => {
+                                                tracing::warn!(
+                                                    %fallback_error,
+                                                    sequence,
+                                                    "Could not convert failed native frame for GPUI fallback"
+                                                );
+                                                (
+                                                    "视频帧回退转换失败",
+                                                    None,
+                                                    conversion_started.elapsed(),
+                                                )
+                                            }
+                                        }
+                                    }
+                                };
+                            tracing::trace!(
+                                sequence,
+                                mailbox_age_ms = mailbox_age.as_secs_f64() * 1000.0,
+                                fallback_conversion_ms = conversion_elapsed.as_secs_f64() * 1000.0,
+                                d3d11_upload_ms = upload_elapsed.as_secs_f64() * 1000.0,
+                                fallback_frame = fallback_bytes.is_some(),
+                                "Video frame pipeline latency"
+                            );
+
+                            this.preview_status = format!(
+                                "{display_path} · {width} × {height} · sequence {sequence}"
+                            );
+                            changed = true;
                         }
                         if changed {
                             cx.notify();
