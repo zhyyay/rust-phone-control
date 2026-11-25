@@ -5,6 +5,7 @@
 //! key unwrapping remains a separate, intentionally unimplemented stage.
 
 use std::collections::VecDeque;
+use std::time::Instant;
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicU64, Ordering},
@@ -1029,13 +1030,15 @@ pub struct LatestFrameMailbox {
     replaced_before_consumption: AtomicU64,
     consumed: AtomicU64,
     cleared: AtomicU64,
-    frame: Mutex<Option<(u64, Arc<BgraFrame>)>>,
+    frame: Mutex<Option<(u64, Arc<BgraFrame>, Instant)>>,
 }
 
 #[derive(Debug, Clone)]
 pub struct FrameSnapshot {
     pub sequence: u64,
     pub frame: Arc<BgraFrame>,
+    /// Monotonic instant at which this frame entered the latest-frame mailbox.
+    pub enqueued_at: Instant,
 }
 
 impl LatestFrameMailbox {
@@ -1079,7 +1082,7 @@ impl LatestFrameMailbox {
             self.replaced_before_consumption
                 .fetch_add(1, Ordering::Relaxed);
         }
-        *slot = Some((sequence, Arc::new(frame)));
+        *slot = Some((sequence, Arc::new(frame), Instant::now()));
         self.published.fetch_add(1, Ordering::Relaxed);
         Ok(sequence)
     }
@@ -1089,7 +1092,11 @@ impl LatestFrameMailbox {
         let mut slot = self.frame.lock().map_err(|_| FrameMailboxError::Poisoned)?;
         let snapshot = slot
             .take()
-            .map(|(sequence, frame)| FrameSnapshot { sequence, frame });
+            .map(|(sequence, frame, enqueued_at)| FrameSnapshot {
+                sequence,
+                frame,
+                enqueued_at,
+            });
         if snapshot.is_some() {
             self.consumed.fetch_add(1, Ordering::Relaxed);
         }
