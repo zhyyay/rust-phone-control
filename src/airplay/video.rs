@@ -2029,7 +2029,6 @@ mod tests {
     }
 }
 
-
 #[cfg(test)]
 mod latest_frame_diagnostics_tests {
     use super::*;
