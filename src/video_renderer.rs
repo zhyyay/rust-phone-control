@@ -5,7 +5,8 @@
 //! native-window lifecycle is verified. Keep this owner on the render thread.
 
 use anyhow::{Context as _, anyhow};
-use std::{marker::PhantomData, rc::Rc};
+use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+use std::{cell::RefCell, marker::PhantomData, rc::Rc};
 use windows_062::Win32::{
     Foundation::HMODULE,
     Graphics::{
@@ -17,6 +18,32 @@ use windows_062::Win32::{
         Dxgi::IDXGIAdapter,
     },
 };
+
+thread_local! {
+    /// D3D11 immediate contexts remain on the GPUI thread that first initializes them.
+    static THREAD_RENDERER: RefCell<Option<D3d11Device>> = const { RefCell::new(None) };
+}
+
+/// Resolve GPUI's current Windows window handle and initialize the thread-local D3D11 device.
+///
+/// The HWND is borrowed from GPUI and is never destroyed or re-parented by this module.
+pub(crate) fn initialize_for_window(window: &gpui_kit::Window) -> anyhow::Result<isize> {
+    let native_handle = HasWindowHandle::window_handle(window)
+        .context("GPUI did not expose a native window handle")?;
+    let hwnd = match native_handle.as_raw() {
+        RawWindowHandle::Win32(handle) => handle.hwnd.get(),
+        other => return Err(anyhow!("expected a Win32 window handle, got {other:?}")),
+    };
+
+    THREAD_RENDERER.with(|renderer| {
+        let mut renderer = renderer.borrow_mut();
+        if renderer.is_none() {
+            *renderer = Some(D3d11Device::create_hardware()?);
+            tracing::info!("D3D11 device attached to the GPUI render thread");
+        }
+        Ok(hwnd)
+    })
+}
 
 /// Owns the D3D11 device and immediate context on the thread that created it.
 ///
