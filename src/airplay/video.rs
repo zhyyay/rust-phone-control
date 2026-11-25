@@ -1888,7 +1888,10 @@ mod tests {
         assert_eq!(mailbox.publish(second).unwrap(), 2);
         let snapshot = mailbox.take_latest().unwrap().unwrap();
         assert_eq!(snapshot.sequence, 2);
-        assert_eq!(snapshot.frame.data, vec![5, 6, 7, 8]);
+        match snapshot.frame.as_ref() {
+            DecodedVideoFrame::Bgra(frame) => assert_eq!(frame.data, vec![5, 6, 7, 8]),
+            DecodedVideoFrame::Nv12(_) => panic!("expected BGRA frame"),
+        }
         assert!(!mailbox.has_pending_frame().unwrap());
         assert!(mailbox.take_latest().unwrap().is_none());
     }
@@ -2154,7 +2157,10 @@ mod latest_frame_diagnostics_tests {
 
         let snapshot = mailbox.take_latest().unwrap().unwrap();
         assert_eq!(snapshot.sequence, 2);
-        assert_eq!(snapshot.frame.data[0], 2);
+        match snapshot.frame.as_ref() {
+            DecodedVideoFrame::Bgra(frame) => assert_eq!(frame.data[0], 2),
+            DecodedVideoFrame::Nv12(_) => panic!("expected BGRA frame"),
+        }
 
         let stats = mailbox.stats().unwrap();
         assert_eq!(stats.consumed, 1);
