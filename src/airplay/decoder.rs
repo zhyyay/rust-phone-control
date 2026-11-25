@@ -196,8 +196,7 @@ pub struct DecodedNv12Frame {
 
 #[cfg(windows)]
 impl DecodedNv12Frame {
-    /// Convert the decoder's NV12 output into a tightly packed BGRA frame
-    /// for the desktop presentation layer.
+    /// Convert the decoder's NV12 output into BGRA for the GPUI fallback path.
     ///
     /// Media Foundation exposes one default stride for the NV12 surface;
     /// the Y and interleaved UV planes use that same row pitch.
@@ -682,8 +681,8 @@ impl DecoderRecoveryPolicy {
 /// Construct and use this value on the dedicated media worker thread. It
 /// accepts complete Annex-B access units or encrypted AVCC access units when
 /// supplied with a valid per-stream cipher, decodes them via Media Foundation,
-/// publishes native NV12 output into the bounded latest-frame mailbox. It deliberately does not unwrap FairPlay keys or reconstruct
-/// transport fragments.
+/// publishes native NV12 output into the bounded latest-frame mailbox. It
+/// deliberately does not unwrap FairPlay keys or reconstruct transport fragments.
 #[cfg(windows)]
 pub struct H264FramePipeline<'runtime> {
     decoder: H264Decoder<'runtime>,
