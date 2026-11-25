@@ -190,10 +190,10 @@ impl Render for PhoneControlApp {
                                     let height = frame.height;
 
                                     // Entity::update runs on GPUI's foreground executor.
-                                    // Keep all immediate-context work here, on the same
-                                    // thread that initialized the thread-local D3D11 device.
-                                    // The GPUI bitmap remains the visible fallback until a
-                                    // dedicated presentation surface is implemented.
+                                    // Keep immediate-context work here, on the same thread
+                                    // that initialized the thread-local D3D11 device.
+                                    // The GPUI bitmap remains available as a fallback if
+                                    // native D3D11 upload or presentation fails.
                                     if let Err(error) = crate::video_renderer::upload_bgra_frame(
                                         width,
                                         height,
