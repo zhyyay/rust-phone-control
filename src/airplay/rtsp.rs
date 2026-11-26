@@ -2316,6 +2316,7 @@ fn txt_airplay_dictionary() -> Dictionary {
 
 #[cfg(test)]
 mod tests {
+    use super::MediaWorkerMessage;
     use super::SrpServer;
     use super::Zeroizing;
     use super::plist;
@@ -3963,7 +3964,9 @@ mod tests {
             timestamp: 1,
             payload: Vec::new(),
         };
-        sender.try_send(packet()).expect("fill bounded queue");
+        sender
+            .try_send(super::MediaWorkerMessage::Packet(packet()))
+            .expect("fill bounded queue");
         let running = Arc::new(AtomicBool::new(true));
         let worker_running = Arc::clone(&running);
         let worker_sender = sender.clone();
