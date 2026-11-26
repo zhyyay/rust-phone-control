@@ -720,6 +720,7 @@ pub(crate) struct D3d11Device {
     vertex_shader: Option<ID3D11VertexShader>,
     pixel_shader: Option<ID3D11PixelShader>,
     nv12_pixel_shader: Option<ID3D11PixelShader>,
+    nv12_shader_uses_bt709: Option<bool>,
     sampler: Option<ID3D11SamplerState>,
     stats_window_started: Instant,
     stats_frames: u64,
@@ -814,6 +815,7 @@ impl D3d11Device {
             vertex_shader: None,
             pixel_shader: None,
             nv12_pixel_shader: None,
+            nv12_shader_uses_bt709: None,
             sampler: None,
             stats_window_started: Instant::now(),
             stats_frames: 0,
@@ -1107,37 +1109,52 @@ float4 PSMain(VertexOutput input) : SV_Target {
     }
 
     /// Compile a limited-range BT.601 NV12 conversion shader.
-    fn ensure_nv12_pixel_shader(&mut self) -> anyhow::Result<()> {
-        if self.nv12_pixel_shader.is_some() {
+    fn ensure_nv12_pixel_shader(&mut self, width: u32, height: u32) -> anyhow::Result<()> {
+        // AirPlay H.264 streams commonly use BT.601 for SD and BT.709 for HD.
+        // Media Foundation's NV12 output currently does not carry the source
+        // VUI colorimetry through OwnedNv12Frame, so use the conventional
+        // resolution-based fallback rather than applying BT.601 to all video.
+        let use_bt709 = width >= 1280 || height >= 720;
+        if self.nv12_pixel_shader.is_some()
+            && self.nv12_shader_uses_bt709 == Some(use_bt709)
+        {
             return Ok(());
         }
-        const SOURCE: &[u8] = br#"
-struct VertexOutput {
+        self.nv12_pixel_shader = None;
+        self.nv12_shader_uses_bt709 = None;
+        let coefficients = if use_bt709 {
+            (1.792741_f32, -0.213249_f32, -0.532909_f32, 2.112402_f32)
+        } else {
+            (1.596027_f32, -0.391762_f32, -0.812968_f32, 2.017232_f32)
+        };
+        let source = format!(r#"
+struct VertexOutput {{
     float4 position : SV_Position;
     float2 uv : TEXCOORD0;
-};
+}};
 Texture2D<float> luma_plane : register(t0);
 Texture2D<float2> chroma_plane : register(t1);
 SamplerState video_sampler : register(s0);
-float4 PSMain(VertexOutput input) : SV_Target {
+float4 PSMain(VertexOutput input) : SV_Target {{
     float y = max(luma_plane.Sample(video_sampler, input.uv).r * 255.0 - 16.0, 0.0);
     float2 chroma = chroma_plane.Sample(video_sampler, input.uv).rg * 255.0 - 128.0;
     float cb = chroma.x;
     float cr = chroma.y;
     float3 rgb = float3(
-        (1.164383 * y + 1.596027 * cr) / 255.0,
-        (1.164383 * y - 0.391762 * cb - 0.812968 * cr) / 255.0,
-        (1.164383 * y + 2.017232 * cb) / 255.0
+        (1.164383 * y + {0} * cr) / 255.0,
+        (1.164383 * y + {1} * cb + {2} * cr) / 255.0,
+        (1.164383 * y + {3} * cb) / 255.0
     );
     return float4(saturate(rgb), 1.0);
-}
-"#;
+}}
+"#, coefficients.0, coefficients.1, coefficients.2, coefficients.3);
+        let source = source.as_bytes();
         let mut bytecode: Option<ID3DBlob> = None;
         // SAFETY: shader source and entry-point strings remain alive during compilation.
         unsafe {
             D3DCompile(
-                SOURCE.as_ptr().cast(),
-                SOURCE.len(),
+                source.as_ptr().cast(),
+                source.len(),
                 PCSTR(c"rust-phone-control-nv12.hlsl".as_ptr().cast()),
                 None,
                 None,
@@ -1165,14 +1182,23 @@ float4 PSMain(VertexOutput input) : SV_Target {
             .context("CreatePixelShader failed for NV12")?;
         self.nv12_pixel_shader =
             Some(shader.ok_or_else(|| anyhow!("D3D11 returned no NV12 pixel shader"))?);
-        tracing::info!("D3D11 NV12 BT.601 conversion shader created");
+        self.nv12_shader_uses_bt709 = Some(use_bt709);
+        tracing::info!(
+            matrix = if use_bt709 { "BT.709" } else { "BT.601" },
+            width,
+            height,
+            "D3D11 NV12 color-conversion shader created"
+        );
         Ok(())
     }
 
     /// Sample the uploaded Y and UV planes and present the converted RGB frame.
     fn draw_nv12_frame(&mut self) -> anyhow::Result<std::time::Duration> {
         self.ensure_video_pipeline()?;
-        self.ensure_nv12_pixel_shader()?;
+        self.ensure_nv12_pixel_shader(
+            self.nv12_texture_size.map(|size| size.0).unwrap_or(0),
+            self.nv12_texture_size.map(|size| size.1).unwrap_or(0),
+        )?;
         let target = self
             .render_target_view
             .as_ref()
