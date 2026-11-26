@@ -166,6 +166,10 @@ impl Render for PhoneControlApp {
                 let mut last_metrics_mailbox_replaced = 0u64;
                 let mut last_presented_frames = 0u64;
                 let mut last_metrics_at = Instant::now();
+                let mut mailbox_age_total_ms = 0.0f64;
+                let mut mailbox_age_max_ms = 0.0f64;
+                let mut mailbox_age_samples = 0u64;
+                let mut stale_frames_dropped = 0u64;
                 loop {
                     cx.background_executor()
                         .timer(Duration::from_millis(33))
@@ -191,7 +195,9 @@ impl Render for PhoneControlApp {
                     let prepared_frame = match crate::airplay::take_latest_video_frame() {
                         Ok(Some(snapshot)) => {
                             let mailbox_age = snapshot.enqueued_at.elapsed();
+                            let mailbox_age_ms = mailbox_age.as_secs_f64() * 1000.0;
                             if mailbox_age > Duration::from_millis(250) {
+                                stale_frames_dropped = stale_frames_dropped.saturating_add(1);
                                 tracing::warn!(
                                     sequence = snapshot.sequence,
                                     mailbox_age_ms = mailbox_age.as_millis() as u64,
@@ -199,6 +205,9 @@ impl Render for PhoneControlApp {
                                 );
                                 None
                             } else {
+                                mailbox_age_total_ms += mailbox_age_ms;
+                                mailbox_age_max_ms = mailbox_age_max_ms.max(mailbox_age_ms);
+                                mailbox_age_samples = mailbox_age_samples.saturating_add(1);
                                 Some((snapshot.sequence, snapshot.frame, mailbox_age))
                             }
                         }
@@ -268,11 +277,21 @@ impl Render for PhoneControlApp {
                                     )
                                 })
                                 .unwrap_or((0.0, 0.0, 0.0));
+                        let mailbox_age_avg_ms = if mailbox_age_samples == 0 {
+                            0.0
+                        } else {
+                            mailbox_age_total_ms / mailbox_age_samples as f64
+                        };
+                        let stale_drops_per_sec = stale_frames_dropped as f64 / elapsed;
+                        mailbox_age_total_ms = 0.0;
+                        mailbox_age_max_ms = 0.0;
+                        mailbox_age_samples = 0;
+                        stale_frames_dropped = 0;
                         last_presented_frames = presented;
                         last_metrics_at = Instant::now();
                         Some(format!(
-                            "D3D11 · {:.1} FPS · 解码 {:.1}/s · 消费 {:.1}/s · 覆盖 {:.1}/s · Present {} · 上传 {} · 重建 {} · 错误 {}",
-                            fps, decoded_fps, consumed_fps, replaced_fps, presented, uploaded, recoveries, render_errors
+                            "D3D11 · {:.1} FPS · 解码 {:.1}/s · 消费 {:.1}/s · 覆盖 {:.1}/s · 等帧 {:.1}/{:.1}ms · 过期丢弃 {:.1}/s · Present {} · 上传 {} · 重建 {} · 错误 {}",
+                            fps, decoded_fps, consumed_fps, replaced_fps, mailbox_age_avg_ms, mailbox_age_max_ms, stale_drops_per_sec, presented, uploaded, recoveries, render_errors
                         ))
                     } else {
                         None
