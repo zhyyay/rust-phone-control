@@ -377,8 +377,8 @@ fn read_mirror_stream(
 }
 
 fn send_packet_while_running(
-    sender: &mpsc::SyncSender<ReceivedMediaPacket>,
-    mut packet: ReceivedMediaPacket,
+    sender: &mpsc::SyncSender<MediaWorkerMessage>,
+    mut packet: MediaWorkerMessage,
     running: &std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) -> bool {
     use std::sync::atomic::Ordering;
