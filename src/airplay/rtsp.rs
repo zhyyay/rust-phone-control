@@ -338,9 +338,9 @@ fn read_mirror_stream(
         received = received.saturating_add(1);
         received_bytes = received_bytes.saturating_add(packet_bytes_received);
     }
-    tracing::debug!(
+    tracing::info!(
         %peer_addr,
-        received,
+        received_packets = received,
         received_bytes,
         "AirPlay mirror TCP stream reader stopped"
     );
