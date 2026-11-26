@@ -388,6 +388,13 @@ impl Render for PhoneControlApp {
                                         sequence,
                                         "Could not convert failed native frame for GPUI fallback"
                                     );
+                                    // Do not leave an older bitmap on screen as if it
+                                    // represented the current stream after conversion failed.
+                                    this.preview_image = None;
+                                    this.preview_status = format!(
+                                        "GPUI 图像回退失败 · sequence {sequence} · {error}"
+                                    );
+                                    changed = true;
                                 }
                             }
                         }
