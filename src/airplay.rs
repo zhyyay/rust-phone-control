@@ -79,11 +79,13 @@ pub fn pipeline_status_label() -> &'static str {
         3 => "配对验证通过：等待 FairPlay SAP",
         4 => "FairPlay 阻塞：未配置授权 SAP Provider",
         5 => "FairPlay：已发送 M2，等待 iPhone M3",
-        6 => "RTSP SETUP：媒体流监听已建立",
-        7 => "RTSP RECORD：等待媒体数据到达",
-        8 => "FairPlay：M3 已认证，等待媒体 SETUP",
-        9 => "视频已解码：等待桌面预览呈现",
-        10 => "镜像画面已呈现",
+        6 => "FairPlay：M3 已认证，等待媒体 SETUP",
+        7 => "RTSP SETUP：媒体流监听已建立",
+        8 => "RTSP RECORD：媒体接收会话已就绪",
+        9 => "媒体 TCP：iPhone 已连接",
+        10 => "媒体数据：首个视频包已接收",
+        11 => "视频已解码：等待桌面预览呈现",
+        12 => "镜像画面已呈现",
         _ => "AirPlay：状态未知",
     }
 }
@@ -97,7 +99,7 @@ pub(super) fn set_pipeline_stage(stage: u8) {
 /// A late UI callback must never move a disconnected/new session backwards.
 #[cfg(windows)]
 pub fn mark_video_rendered() {
-    let _ = PIPELINE_STAGE.compare_exchange(9, 10, Ordering::AcqRel, Ordering::Acquire);
+    let _ = PIPELINE_STAGE.compare_exchange(11, 12, Ordering::AcqRel, Ordering::Acquire);
 }
 
 // Serialize start/stop transitions without holding the receiver data lock
