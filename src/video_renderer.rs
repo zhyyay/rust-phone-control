@@ -1186,6 +1186,13 @@ float4 PSMain(VertexOutput input) : SV_Target {
             );
         }
         let row_pitch = u32::try_from(stride).context("BGRA row pitch exceeds the D3D11 limit")?;
+        const MAX_BGRA_UPLOAD_BYTES: usize = 128 * 1024 * 1024;
+        let upload_bytes = stride
+            .checked_mul(height as usize)
+            .ok_or_else(|| anyhow!("BGRA upload size overflow"))?;
+        if upload_bytes > MAX_BGRA_UPLOAD_BYTES {
+            bail!("BGRA upload exceeds the 128 MiB limit: {upload_bytes} bytes");
+        }
 
         // The immediate context unbinds the previous frame's SRVs after each
         // draw. Release the inactive pixel format so format switches do not
@@ -1196,7 +1203,10 @@ float4 PSMain(VertexOutput input) : SV_Target {
         self._nv12_uv_view = None;
         self.nv12_texture_size = None;
 
-        if self.video_texture_size != Some((width, height)) {
+        if self.video_texture_size != Some((width, height))
+            || self.video_texture.is_none()
+            || self._video_shader_view.is_none()
+        {
             let desc = D3D11_TEXTURE2D_DESC {
                 Width: width,
                 Height: height,
@@ -1226,8 +1236,10 @@ float4 PSMain(VertexOutput input) : SV_Target {
             }
             .context("could not create the D3D11 video shader-resource view")?;
 
+            let shader_view = shader_view
+                .ok_or_else(|| anyhow!("D3D11 returned no BGRA shader-resource view"))?;
             self.video_texture = Some(texture);
-            self._video_shader_view = shader_view;
+            self._video_shader_view = Some(shader_view);
             self.video_texture_size = Some((width, height));
             tracing::info!(width, height, "D3D11 video texture allocated");
         }
@@ -1324,7 +1336,12 @@ float4 PSMain(VertexOutput input) : SV_Target {
             padded[..uv_required].copy_from_slice(&data[y_bytes..y_bytes + uv_required]);
             Some(padded)
         };
-        if self.nv12_texture_size != Some((width, height)) {
+        if self.nv12_texture_size != Some((width, height))
+            || self.nv12_y_texture.is_none()
+            || self.nv12_uv_texture.is_none()
+            || self._nv12_y_view.is_none()
+            || self._nv12_uv_view.is_none()
+        {
             let make_desc = |texture_width, texture_height, format| D3D11_TEXTURE2D_DESC {
                 Width: texture_width,
                 Height: texture_height,
@@ -1367,10 +1384,14 @@ float4 PSMain(VertexOutput input) : SV_Target {
                     .CreateShaderResourceView(&uv_texture, None, Some(&mut uv_view))
                     .context("could not create the D3D11 NV12 UV shader view")?;
             }
+            let y_view = y_view
+                .ok_or_else(|| anyhow!("D3D11 returned no NV12 Y shader-resource view"))?;
+            let uv_view = uv_view
+                .ok_or_else(|| anyhow!("D3D11 returned no NV12 UV shader-resource view"))?;
             self.nv12_y_texture = Some(y_texture);
             self.nv12_uv_texture = Some(uv_texture);
-            self._nv12_y_view = y_view;
-            self._nv12_uv_view = uv_view;
+            self._nv12_y_view = Some(y_view);
+            self._nv12_uv_view = Some(uv_view);
             self.nv12_texture_size = Some((width, height));
             tracing::info!(
                 width,
