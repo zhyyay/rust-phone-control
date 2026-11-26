@@ -205,15 +205,8 @@ impl MirrorStreamCipher {
 /// Check counter capacity before mutating plaintext. This makes exhaustion
 /// atomic: callers never receive a partially decrypted payload on error.
 fn counter_can_advance(counter: &[u8; AES_BLOCK_BYTES], blocks: usize) -> bool {
-    let mut candidate = *counter;
-    for _ in 0..blocks {
-        if increment_counter(&mut candidate).is_err() {
-            candidate.zeroize();
-            return false;
-        }
-    }
-    candidate.zeroize();
-    true
+    let value = u128::from_be_bytes(*counter);
+    value.checked_add(blocks as u128).is_some()
 }
 
 fn increment_counter(counter: &mut [u8; AES_BLOCK_BYTES]) -> Result<(), MirrorCryptoError> {
