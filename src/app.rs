@@ -500,7 +500,6 @@ impl Render for PhoneControlApp {
                                     )
                                 }
                                 }
-                                }
                             } else {
                                 Err(anyhow::anyhow!("frame belongs to an inactive stream generation"))
                             };
