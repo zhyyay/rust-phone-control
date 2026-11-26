@@ -41,6 +41,9 @@ const MAX_MIRROR_PAYLOAD_BYTES: usize = 16 * 1024 * 1024;
 const MEDIA_ACCEPT_POLL_INTERVAL: Duration = Duration::from_millis(20);
 // Release a stale mirror TCP client that connects but never sends a packet.
 const MIRROR_CLIENT_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
+// Report a stalled post-recovery keyframe wait without dropping encrypted
+// packets or abandoning the synchronized stream cipher.
+const IDR_WAIT_WARNING_INTERVAL: Duration = Duration::from_secs(10);
 
 #[cfg(windows)]
 static ACTIVE_RTSP_SESSIONS: std::sync::atomic::AtomicUsize =
@@ -512,6 +515,8 @@ fn process_media_packets(
     // A rebuilt MFT has no reference pictures; decrypt every packet to keep
     // CTR synchronized, but do not submit delta pictures until an IDR arrives.
     let mut awaiting_idr = false;
+    let mut idr_wait_started_at: Option<Instant> = None;
+    let mut last_idr_wait_warning: Option<Instant> = None;
     let mut decoder_init_policy = super::video::DecoderInitializationPolicy::default();
     let mut processor = super::video::MirrorStreamProcessor::new();
     while let Ok(mut packet) = packets.recv() {
@@ -673,12 +678,28 @@ fn process_media_packets(
                 if let Some(cipher) = mirror_cipher.as_mut() {
                     if let Some(pipeline) = frame_pipeline.as_mut() {
                         let submit_result = if awaiting_idr {
+                            if let Some(started_at) = idr_wait_started_at {
+                                let elapsed = started_at.elapsed();
+                                let should_warn = last_idr_wait_warning
+                                    .map(|last| last.elapsed() >= IDR_WAIT_WARNING_INTERVAL)
+                                    .unwrap_or(elapsed >= IDR_WAIT_WARNING_INTERVAL);
+                                if should_warn {
+                                    tracing::warn!(
+                                        %packet.peer_addr,
+                                        waited_ms = elapsed.as_millis() as u64,
+                                        "AirPlay decoder is still waiting for an H.264 IDR; continuing to decrypt packets to preserve cipher synchronization"
+                                    );
+                                    last_idr_wait_warning = Some(Instant::now());
+                                }
+                            }
                             processor
                                 .decrypt_video_packet(cipher, &packet.payload)
                                 .map_err(super::decoder::MediaFoundationError::VideoDecryption)
                                 .and_then(|access_unit| {
                                     if super::video::access_unit_contains_h264_idr(&access_unit) {
                                         awaiting_idr = false;
+                                        idr_wait_started_at = None;
+                                        last_idr_wait_warning = None;
                                         tracing::info!(
                                             %packet.peer_addr,
                                             timestamp = packet.timestamp,
@@ -770,6 +791,8 @@ fn process_media_packets(
                                 match recovery {
                                     Ok(()) => {
                                         awaiting_idr = true;
+                                        idr_wait_started_at = Some(Instant::now());
+                                        last_idr_wait_warning = None;
                                         tracing::warn!(
                                         %packet.peer_addr,
                                         timestamp = packet.timestamp,
