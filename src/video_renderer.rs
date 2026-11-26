@@ -350,6 +350,10 @@ pub(crate) fn upload_nv12_frame(
             if child_raw == 0 {
                 return Err(original_error);
             }
+            // Hide the old surface before replacing its device/swap chain.
+            // If recreation fails, the stale last frame must not masquerade as
+            // a live preview; a later successful Present reveals the child again.
+            unsafe { ShowWindow(HWND(child_raw as *mut c_void), SW_HIDE) };
 
             tracing::warn!(
                 error = %reason,
@@ -466,6 +470,10 @@ pub(crate) fn upload_bgra_frame(
             if child_raw == 0 {
                 return Err(original_error);
             }
+            // Hide the old surface before replacing its device/swap chain.
+            // If recreation fails, the stale last frame must not masquerade as
+            // a live preview; a later successful Present reveals the child again.
+            unsafe { ShowWindow(HWND(child_raw as *mut c_void), SW_HIDE) };
 
             tracing::warn!(
                 error = %reason,
