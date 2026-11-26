@@ -296,7 +296,12 @@ impl Render for PhoneControlApp {
                     };
                     let completed_fallback = completed_fallback.filter(
                         |(sequence, _, _, _, _)| {
-                            !newer_frame_pending && *sequence >= latest_observed_frame_sequence
+                            // A result removed from the worker slot before the
+                            // UI update must not resurrect the previous session's
+                            // bitmap after this tick observes a mailbox clear.
+                            !mailbox_cleared
+                                && !newer_frame_pending
+                                && *sequence >= latest_observed_frame_sequence
                         },
                     );
 
