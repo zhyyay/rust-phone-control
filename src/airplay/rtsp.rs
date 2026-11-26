@@ -91,6 +91,8 @@ struct MediaSession {
     local_addr: std::net::SocketAddr,
     running: std::sync::Arc<std::sync::atomic::AtomicBool>,
     frames: Arc<super::video::LatestFrameMailbox>,
+    accepted_clients: Arc<std::sync::atomic::AtomicU64>,
+    disconnected_clients: Arc<std::sync::atomic::AtomicU64>,
     accept_worker: Option<JoinHandle<()>>,
     worker: Option<JoinHandle<()>>,
 }
@@ -124,6 +126,10 @@ impl MediaSession {
         let running = Arc::new(AtomicBool::new(true));
         let worker_running = Arc::clone(&running);
         let frames = Arc::clone(&stream_context.frames);
+        let accepted_clients = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let disconnected_clients = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let worker_accepted_clients = Arc::clone(&accepted_clients);
+        let worker_disconnected_clients = Arc::clone(&disconnected_clients);
         let (sender, packets) = mpsc::sync_channel(MEDIA_PACKET_QUEUE_CAPACITY);
 
         let worker = thread::Builder::new()
@@ -131,7 +137,16 @@ impl MediaSession {
             .spawn(move || process_media_packets(packets, stream_context))?;
         let accept_worker = match thread::Builder::new()
             .name("airplay-mirror-tcp".to_owned())
-            .spawn(move || accept_mirror_connections(listener, worker_running, peer_ip, sender))
+            .spawn(move || {
+                accept_mirror_connections(
+                    listener,
+                    worker_running,
+                    peer_ip,
+                    sender,
+                    worker_accepted_clients,
+                    worker_disconnected_clients,
+                )
+            })
         {
             Ok(worker) => worker,
             Err(error) => {
@@ -146,6 +161,8 @@ impl MediaSession {
             local_addr,
             running,
             frames,
+            accepted_clients,
+            disconnected_clients,
             accept_worker: Some(accept_worker),
             worker: Some(worker),
         })
@@ -204,6 +221,8 @@ fn accept_mirror_connections(
     running: std::sync::Arc<std::sync::atomic::AtomicBool>,
     expected_peer_ip: std::net::IpAddr,
     sender: mpsc::SyncSender<ReceivedMediaPacket>,
+    accepted_clients: Arc<std::sync::atomic::AtomicU64>,
+    disconnected_clients: Arc<std::sync::atomic::AtomicU64>,
 ) {
     use std::sync::atomic::Ordering;
 
@@ -218,9 +237,11 @@ fn accept_mirror_connections(
                     tracing::warn!(%error, "Could not set AirPlay mirror TCP read timeout");
                     continue;
                 }
-                tracing::info!(%peer_addr, "AirPlay mirror TCP client connected");
+                let accepted = accepted_clients.fetch_add(1, Ordering::Relaxed) + 1;
+                tracing::info!(%peer_addr, accepted, "AirPlay mirror TCP client connected");
                 read_mirror_stream(stream, peer_addr, &sender, &running);
-                tracing::info!(%peer_addr, "AirPlay mirror TCP client disconnected");
+                let disconnected = disconnected_clients.fetch_add(1, Ordering::Relaxed) + 1;
+                tracing::info!(%peer_addr, disconnected, "AirPlay mirror TCP client disconnected");
             }
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
                 thread::sleep(MEDIA_ACCEPT_POLL_INTERVAL);
@@ -2181,6 +2202,74 @@ mod tests {
             "media listener port must be released after stopping an active client"
         );
         drop(client);
+    }
+
+    #[test]
+    fn media_session_accepts_a_new_client_after_previous_client_disconnects() {
+        use super::super::video::LatestFrameMailbox;
+        use std::io::Write;
+        use std::net::Shutdown;
+        use std::sync::Arc;
+        use std::sync::atomic::Ordering;
+        use std::time::{Duration, Instant};
+
+        fn wait_for_counter(
+            counter: &std::sync::atomic::AtomicU64,
+            expected: u64,
+            description: &str,
+        ) {
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while counter.load(Ordering::Acquire) < expected && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            assert!(
+                counter.load(Ordering::Acquire) >= expected,
+                "timed out waiting for {description}"
+            );
+        }
+
+        let peer_ip = "127.0.0.1".parse().expect("loopback IP");
+        let frames = Arc::new(LatestFrameMailbox::new());
+        let mut media = super::MediaSession::start_with_context(
+            peer_ip,
+            super::MirrorStreamContext {
+                connection_id: None,
+                pair_verify_shared_secret: None,
+                fairplay_video_key: None,
+                media_foundation: None,
+                frames,
+            },
+        )
+        .expect("start media session");
+        let port = media.port();
+
+        let mut first = TcpStream::connect(("127.0.0.1", port))
+            .expect("connect first mirror client");
+        first.write_all(&[0x00]).expect("send partial first packet");
+        wait_for_counter(&media.accepted_clients, 1, "first client acceptance");
+        first
+            .shutdown(Shutdown::Both)
+            .expect("close first mirror client");
+        wait_for_counter(
+            &media.disconnected_clients,
+            1,
+            "first client disconnection",
+        );
+        drop(first);
+
+        let mut second = TcpStream::connect(("127.0.0.1", port))
+            .expect("connect second mirror client after disconnect");
+        second.write_all(&[0x00]).expect("send partial second packet");
+        wait_for_counter(&media.accepted_clients, 2, "second client acceptance");
+        second
+            .shutdown(Shutdown::Both)
+            .expect("close second mirror client");
+        wait_for_counter(
+            &media.disconnected_clients,
+            2,
+            "second client disconnection",
+        );
+        media.stop();
     }
 
     #[test]
