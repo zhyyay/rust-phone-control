@@ -1020,6 +1020,8 @@ pub fn serve_with_fairplay_provider(
                                         .mark_challenge_sent(challenge.mode, *challenge.challenge)
                                 }) {
                                     tracing::warn!(%error, "FairPlay provider returned an invalid challenge");
+                                    #[cfg(windows)]
+                                    super::set_pipeline_stage(3);
                                     let response = fairplay_error_response(
                                         500,
                                         "Internal Server Error",
@@ -1042,6 +1044,8 @@ pub fn serve_with_fairplay_provider(
                             Err(error) => {
                                 let status = fairplay_provider_error_status(&error);
                                 tracing::warn!(%error, status, "FairPlay SAP provider rejected M1");
+                                #[cfg(windows)]
+                                super::set_pipeline_stage(3);
                                 let reason = reason_phrase(status);
                                 let response =
                                     fairplay_error_response(status, reason, &request.cseq);
