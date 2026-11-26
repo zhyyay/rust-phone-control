@@ -675,6 +675,7 @@ impl<'runtime> H264Decoder<'runtime> {
                 if buffer_size as usize > MAX_DECODED_NV12_BYTES {
                     return Err(MediaFoundationError::OutputBufferTooLarge);
                 }
+                validate_output_allocation_budget(buffer_size as usize, max_frame_bytes)?;
                 let buffer = unsafe { MFCreateMemoryBuffer(buffer_size) }
                     .map_err(|error| MediaFoundationError::BufferFailed(error.code().0))?;
                 let sample = unsafe { MFCreateSample() }
@@ -843,6 +844,17 @@ const MAX_DECODED_NV12_BYTES: usize = 128 * 1024 * 1024;
 
 /// Maximum decoded NV12 memory retained for one submitted access unit.
 const MAX_DECODED_BYTES_PER_ACCESS_UNIT: usize = 256 * 1024 * 1024;
+
+/// Reject an output allocation that cannot fit the remaining access-unit budget.
+fn validate_output_allocation_budget(
+    allocation_bytes: usize,
+    remaining_budget: usize,
+) -> Result<(), MediaFoundationError> {
+    if allocation_bytes > remaining_budget {
+        return Err(MediaFoundationError::OutputMemoryBudgetExceeded);
+    }
+    Ok(())
+}
 
 /// Validate an access-unit length before allocating a Media Foundation buffer.
 fn checked_access_unit_length(length: usize) -> Result<u32, MediaFoundationError> {
@@ -1201,6 +1213,16 @@ impl std::error::Error for MediaFoundationError {}
 mod tests {
     use super::*;
 
+
+    #[test]
+    fn output_allocation_must_fit_remaining_access_unit_budget() {
+        assert_eq!(validate_output_allocation_budget(0, 0), Ok(()));
+        assert_eq!(validate_output_allocation_budget(64, 64), Ok(()));
+        assert_eq!(
+            validate_output_allocation_budget(65, 64),
+            Err(MediaFoundationError::OutputMemoryBudgetExceeded)
+        );
+    }
 
     #[test]
     fn access_unit_length_is_checked_before_buffer_allocation() {
