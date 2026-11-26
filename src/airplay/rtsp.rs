@@ -691,11 +691,7 @@ fn process_media_packets(
                                 })
                         } else {
                             pipeline
-                                .submit_encrypted_access_unit(
-                                    &processor,
-                                    cipher,
-                                    &packet.payload,
-                                )
+                                .submit_encrypted_access_unit(&processor, cipher, &packet.payload)
                                 .map(Some)
                         };
                         match submit_result {
