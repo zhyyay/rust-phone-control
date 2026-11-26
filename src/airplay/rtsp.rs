@@ -60,6 +60,7 @@ struct MirrorStreamContext {
 struct MediaSession {
     local_addr: std::net::SocketAddr,
     running: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    frames: Arc<super::video::LatestFrameMailbox>,
     accept_worker: Option<JoinHandle<()>>,
     worker: Option<JoinHandle<()>>,
 }
@@ -92,6 +93,7 @@ impl MediaSession {
         let local_addr = listener.local_addr()?;
         let running = Arc::new(AtomicBool::new(true));
         let worker_running = Arc::clone(&running);
+        let frames = Arc::clone(&stream_context.frames);
         let (sender, packets) = mpsc::sync_channel(MEDIA_PACKET_QUEUE_CAPACITY);
 
         let worker = thread::Builder::new()
@@ -113,6 +115,7 @@ impl MediaSession {
         Ok(Self {
             local_addr,
             running,
+            frames,
             accept_worker: Some(accept_worker),
             worker: Some(worker),
         })
@@ -148,6 +151,10 @@ impl MediaSession {
             }
         }
 
+        match self.frames.clear() {
+            Ok(()) => tracing::debug!(%self.local_addr, "Cleared pending decoded frames after media session stop"),
+            Err(error) => tracing::warn!(%self.local_addr, %error, "Could not clear decoded frames after media session stop"),
+        }
         tracing::info!(%self.local_addr, "AirPlay media session stopped");
     }
 }
@@ -2014,13 +2021,27 @@ mod tests {
     #[test]
     fn teardown_releases_media_event_and_timing_channels_together() {
         use std::net::{TcpListener, UdpSocket};
+        use std::sync::Arc;
+        use super::super::video::{BgraFrame, LatestFrameMailbox};
 
         let peer_ip = "127.0.0.1".parse().expect("loopback IP");
+        let frames = Arc::new(LatestFrameMailbox::new());
+        frames.publish(BgraFrame { width: 1, height: 1, stride: 4, data: vec![0; 4] })
+            .expect("publish a pending frame before teardown");
         let mut event_channel =
             Some(super::super::event::EventChannel::bind(peer_ip).expect("event channel"));
         let mut timing_client =
             Some(super::super::timing::TimingClient::start(peer_ip, 9).expect("timing client"));
-        let mut media_receiver = Some(super::MediaSession::start(peer_ip).expect("media session"));
+        let mut media_receiver = Some(super::MediaSession::start_with_context(
+            peer_ip,
+            super::MirrorStreamContext {
+                connection_id: None,
+                pair_verify_shared_secret: None,
+                fairplay_video_key: None,
+                media_foundation: None,
+                frames: Arc::clone(&frames),
+            },
+        ).expect("media session"));
 
         let event_port = event_channel.as_ref().expect("event channel").port();
         let timing_port = timing_client.as_ref().expect("timing client").port();
@@ -2031,6 +2052,7 @@ mod tests {
         assert!(event_channel.is_none());
         assert!(timing_client.is_none());
         assert!(media_receiver.is_none());
+        assert!(!frames.has_pending_frame().expect("read mailbox after teardown"));
         assert!(
             TcpListener::bind(("0.0.0.0", event_port)).is_ok(),
             "event TCP port must be released"
