@@ -886,7 +886,7 @@ pub fn serve_with_fairplay_provider(
                         // the previous key before invalidating the key material;
                         // otherwise the old stream could keep decoding after
                         // this connection has begun a fresh FairPlay exchange.
-                        *media_receiver = None;
+                        media_receiver = None;
                         fairplay_ekey = None;
                         fairplay_eiv = None;
                         fairplay_video_key = None;
