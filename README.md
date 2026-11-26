@@ -13,6 +13,12 @@ A Windows-first Rust desktop application for iPhone control experiments, BLE HID
 
 BLE HID input and AirPlay video are independent connections. AssistiveTouch pointer control is not native touchscreen injection, and relative mouse movement is not precise absolute-coordinate control.
 
+## Media recovery behavior
+
+- Decoder/MFT failures trigger a bounded Media Foundation rebuild using the accepted SPS/PPS.
+- Recoverable AVC framing and decoder failures do not discard a still-synchronized stream cipher.
+- Cryptographic failures remain fail-closed because CTR state may be unusable.
+
 ## AirPlay status and limitations
 
 The built-in receiver now has mDNS discovery, RTSP request framing, Pair-Setup / Pair-Verify handling, controller approval, FairPlay message framing and an authorized-provider integration boundary, stream SETUP validation, bounded screen-mirroring TCP reception, H.264 access-unit parsing, a Windows Media Foundation decoder path, and a D3D11/GPUI frame presentation path.
