@@ -271,6 +271,7 @@ fn read_mirror_stream(
     use std::sync::atomic::Ordering;
 
     let mut received = 0u64;
+    let mut received_bytes = 0u64;
     while running.load(Ordering::Acquire) {
         let mut header = [0u8; SCREEN_MIRROR_HEADER_SIZE];
         match read_exact_while_running(
@@ -330,12 +331,19 @@ fn read_mirror_stream(
         // dropping one encrypted packet would advance the sender's CTR stream
         // without advancing the receiver's cipher, corrupting every later
         // packet. A bounded blocking send applies backpressure instead.
+        let packet_bytes_received = packet_bytes.len() as u64;
         if !send_packet_while_running(sender, owned, running) {
             break;
         }
         received = received.saturating_add(1);
+        received_bytes = received_bytes.saturating_add(packet_bytes_received);
     }
-    tracing::debug!(%peer_addr, received, "AirPlay mirror TCP stream reader stopped");
+    tracing::debug!(
+        %peer_addr,
+        received,
+        received_bytes,
+        "AirPlay mirror TCP stream reader stopped"
+    );
 }
 
 fn send_packet_while_running(
