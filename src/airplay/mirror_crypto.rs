@@ -182,6 +182,11 @@ impl MirrorStreamCipher {
     /// The final partial block consumes a complete counter block. Calling
     /// this method for the next payload therefore starts at the next block.
     pub fn decrypt_packet(&mut self, payload: &mut [u8]) -> Result<(), MirrorCryptoError> {
+        let block_count = payload.len().div_ceil(AES_BLOCK_BYTES);
+        if !counter_can_advance(&self.counter, block_count) {
+            return Err(MirrorCryptoError::CounterExhausted);
+        }
+
         for chunk in payload.chunks_mut(AES_BLOCK_BYTES) {
             let mut counter_block = Block::<Aes128>::clone_from_slice(&self.counter);
             self.cipher.encrypt_block(&mut counter_block);
@@ -190,10 +195,25 @@ impl MirrorStreamCipher {
                 *byte ^= *mask;
             }
 
+            counter_block.zeroize();
             increment_counter(&mut self.counter)?;
         }
         Ok(())
     }
+}
+
+/// Check counter capacity before mutating plaintext. This makes exhaustion
+/// atomic: callers never receive a partially decrypted payload on error.
+fn counter_can_advance(counter: &[u8; AES_BLOCK_BYTES], blocks: usize) -> bool {
+    let mut candidate = *counter;
+    for _ in 0..blocks {
+        if increment_counter(&mut candidate).is_err() {
+            candidate.zeroize();
+            return false;
+        }
+    }
+    candidate.zeroize();
+    true
 }
 
 fn increment_counter(counter: &mut [u8; AES_BLOCK_BYTES]) -> Result<(), MirrorCryptoError> {
@@ -313,15 +333,33 @@ mod tests {
     }
 
     #[test]
-    fn fails_closed_when_counter_would_wrap() {
+    fn fails_closed_without_partially_mutating_payload_when_counter_would_wrap() {
         let material = MirrorStreamKeyMaterial {
             key: [0; AES_BLOCK_BYTES],
             iv: [0xff; AES_BLOCK_BYTES],
         };
         let mut cipher = MirrorStreamCipher::new(&material);
+        let mut payload = [0x5a; 17];
         assert_eq!(
-            cipher.decrypt_packet(&mut [0u8; 1]),
+            cipher.decrypt_packet(&mut payload),
             Err(MirrorCryptoError::CounterExhausted)
         );
+        assert_eq!(payload, [0x5a; 17]);
+    }
+
+    #[test]
+    fn empty_payload_does_not_consume_a_counter_block() {
+        let material = MirrorStreamKeyMaterial {
+            key: [0x31; AES_BLOCK_BYTES],
+            iv: [0x42; AES_BLOCK_BYTES],
+        };
+        let mut cipher = MirrorStreamCipher::new(&material);
+        cipher.decrypt_packet(&mut []).expect("empty payload");
+        let mut actual = [0u8; AES_BLOCK_BYTES];
+        let mut expected = [0u8; AES_BLOCK_BYTES];
+        let mut fresh = MirrorStreamCipher::new(&material);
+        cipher.decrypt_packet(&mut actual).expect("decrypt after empty payload");
+        fresh.decrypt_packet(&mut expected).expect("decrypt first block");
+        assert_eq!(actual, expected);
     }
 }
