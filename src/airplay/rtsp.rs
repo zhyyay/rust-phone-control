@@ -681,7 +681,9 @@ fn process_media_packets(
                                     decrypted_access_units_submitted.saturating_add(1);
                                 decoded_frames_published = decoded_frames_published
                                     .saturating_add(published_frames as u64);
-                                if published_frames > 0 && decoded_frames_published == published_frames as u64 {
+                                if published_frames > 0
+                                    && decoded_frames_published == published_frames as u64
+                                {
                                     #[cfg(windows)]
                                     super::set_pipeline_stage(11);
                                     tracing::info!(
