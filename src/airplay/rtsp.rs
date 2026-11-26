@@ -438,7 +438,11 @@ fn process_media_packets(
         pair_verify_complete = stream_context.pair_verify_shared_secret.is_some(),
         "AirPlay media worker initialized with negotiated stream context"
     );
+    let processing_started_at = Instant::now();
     let mut received = 0u64;
+    let mut received_payload_bytes = 0u64;
+    let mut codec_configuration_bytes = 0u64;
+    let mut video_payload_bytes = 0u64;
     let mut codec_configurations = 0u64;
     let mut invalid_codec_configurations = 0u64;
     let mut video_packets = 0u64;
@@ -490,6 +494,12 @@ fn process_media_packets(
     let mut processor = super::video::MirrorStreamProcessor::new();
     while let Ok(mut packet) = packets.recv() {
         received = received.saturating_add(1);
+        let packet_payload_bytes = packet.payload.len() as u64;
+        received_payload_bytes = received_payload_bytes.saturating_add(packet_payload_bytes);
+        if packet.packet_type == super::media::ScreenMirrorPacketType::CodecConfiguration {
+            codec_configuration_bytes =
+                codec_configuration_bytes.saturating_add(packet_payload_bytes);
+        }
         // Video packets are the hot path; only clone codec metadata when
         // the packet can actually replace that metadata.
         let is_codec_configuration =
@@ -633,6 +643,7 @@ fn process_media_packets(
                 has_configuration,
             } => {
                 video_packets = video_packets.saturating_add(1);
+                video_payload_bytes = video_payload_bytes.saturating_add(packet_payload_bytes);
                 if let Some(cipher) = mirror_cipher.as_mut() {
                     if let Some(pipeline) = frame_pipeline.as_mut() {
                         match pipeline.submit_encrypted_access_unit(
@@ -726,9 +737,13 @@ fn process_media_packets(
     tracing::info!(
         stream_connection_id = ?stream_connection_id,
         received,
+        received_payload_bytes,
+        codec_configuration_bytes,
+        video_packets,
+        video_payload_bytes,
+        processing_elapsed_ms = processing_started_at.elapsed().as_millis() as u64,
         codec_configurations,
         invalid_codec_configurations,
-        video_packets,
         packets_waiting_for_fairplay,
         decode_errors,
         decoded_frames_published,
