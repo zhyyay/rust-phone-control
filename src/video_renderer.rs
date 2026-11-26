@@ -1129,7 +1129,7 @@ float4 PSMain(VertexOutput input) : SV_Target {
             self.immediate_context.Draw(3, 0);
             self.immediate_context
                 .PSSetShaderResources(0, Some(&[None, None]));
-            swap_chain.Present(1, DXGI_PRESENT(0)).ok()
+            swap_chain.Present(1, DXGI_PRESENT(0))
         }
         .context("D3D11 NV12 draw or IDXGISwapChain::Present failed")?;
         Ok(present_started.elapsed())
@@ -1197,7 +1197,7 @@ float4 PSMain(VertexOutput input) : SV_Target {
             self.immediate_context.Draw(3, 0);
             self.immediate_context
                 .PSSetShaderResources(0, Some(&[None]));
-            swap_chain.Present(1, DXGI_PRESENT(0)).ok()
+            swap_chain.Present(1, DXGI_PRESENT(0))
         }
         .context("D3D11 video draw or IDXGISwapChain::Present failed")?;
         Ok(present_started.elapsed())
