@@ -663,13 +663,8 @@ impl<'runtime> H264Decoder<'runtime> {
             unsafe { buffer.Unlock() }
                 .map_err(|error| MediaFoundationError::BufferFailed(error.code().0))?;
             if signed_stride < 0 {
-                crate::airplay::video::normalize_nv12_bottom_up(
-                    &mut data,
-                    width,
-                    height,
-                    stride,
-                )
-                .map_err(MediaFoundationError::FrameConversion)?;
+                crate::airplay::video::normalize_nv12_bottom_up(&mut data, width, height, stride)
+                    .map_err(MediaFoundationError::FrameConversion)?;
             }
 
             return Ok(Some(DecodedNv12Frame {
