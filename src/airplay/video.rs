@@ -1106,12 +1106,16 @@ pub struct LatestFrameMailbox {
     consumed: AtomicU64,
     cleared: AtomicU64,
     clear_events: AtomicU64,
-    frame: Mutex<Option<(u64, Arc<DecodedVideoFrame>, Instant)>>,
+    /// Incremented on every clear so snapshots already held by UI work can be rejected.
+    generation: AtomicU64,
+    frame: Mutex<Option<(u64, u64, Arc<DecodedVideoFrame>, Instant)>>,
 }
 
 #[derive(Debug, Clone)]
 pub struct FrameSnapshot {
     pub sequence: u64,
+    /// Stream generation captured when this frame was published.
+    pub generation: u64,
     pub frame: Arc<DecodedVideoFrame>,
     /// Monotonic instant at which this frame entered the latest-frame mailbox.
     pub enqueued_at: Instant,
@@ -1198,11 +1202,12 @@ impl LatestFrameMailbox {
     fn publish_frame(&self, frame: DecodedVideoFrame) -> Result<u64, FrameMailboxError> {
         let mut slot = self.frame.lock().map_err(|_| FrameMailboxError::Poisoned)?;
         let sequence = self.sequence.fetch_add(1, Ordering::AcqRel).wrapping_add(1);
+        let generation = self.generation.load(Ordering::Acquire);
         if slot.is_some() {
             self.replaced_before_consumption
                 .fetch_add(1, Ordering::Relaxed);
         }
-        *slot = Some((sequence, Arc::new(frame), Instant::now()));
+        *slot = Some((sequence, generation, Arc::new(frame), Instant::now()));
         self.published.fetch_add(1, Ordering::Relaxed);
         Ok(sequence)
     }
@@ -1212,8 +1217,9 @@ impl LatestFrameMailbox {
         let mut slot = self.frame.lock().map_err(|_| FrameMailboxError::Poisoned)?;
         let snapshot = slot
             .take()
-            .map(|(sequence, frame, enqueued_at)| FrameSnapshot {
+            .map(|(sequence, generation, frame, enqueued_at)| FrameSnapshot {
                 sequence,
+                generation,
                 frame,
                 enqueued_at,
             });
@@ -1229,8 +1235,14 @@ impl LatestFrameMailbox {
         if slot.take().is_some() {
             self.cleared.fetch_add(1, Ordering::Relaxed);
         }
+        self.generation.fetch_add(1, Ordering::AcqRel);
         self.clear_events.fetch_add(1, Ordering::Release);
         Ok(())
+    }
+
+    /// Return whether a previously consumed snapshot still belongs to the active stream.
+    pub fn is_generation_current(&self, generation: u64) -> bool {
+        self.generation.load(Ordering::Acquire) == generation
     }
 
     /// Read counters without consuming the pending frame.
