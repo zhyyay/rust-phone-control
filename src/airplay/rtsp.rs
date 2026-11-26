@@ -3,8 +3,9 @@
 //! The handler supports persistent RTSP connections, bounded request bodies,
 //! OPTIONS, /info, Pair-Setup, Pair-Verify, FairPlay framing, session and stream
 //! SETUP, RECORD, feedback, and TEARDOWN. FairPlay cryptographic responses
-//! and sender media decryption are not implemented; the decoder can be
-//! initialized from avcC metadata but is not yet fed real video access units.
+//! and bounded media transport. End-to-end video still requires an authorized
+//! FairPlay SAP provider and verified sender-packet decryption before frames can
+//! be decoded and presented.
 
 use std::io::{self, Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -1049,6 +1050,8 @@ pub fn serve_with_fairplay_provider(
                             tracing::warn!(
                                 "FairPlay M3 received without an active authenticated SAP negotiation"
                             );
+                            #[cfg(windows)]
+                            super::set_pipeline_stage(3);
                             // A late or unsolicited M3 cannot inherit any
                             // wrapped key material from an earlier exchange.
                             media_receiver = None;
@@ -1066,6 +1069,8 @@ pub fn serve_with_fairplay_provider(
                         let state_validation = session.accept(message.clone());
                         if let Err(error) = state_validation {
                             tracing::warn!(%error, "FairPlay M3 state validation failed");
+                            #[cfg(windows)]
+                            super::set_pipeline_stage(3);
                             // A rejected M3 invalidates every piece of material
                             // from this exchange, including the wrapped key and IV.
                             media_receiver = None;
@@ -1107,6 +1112,8 @@ pub fn serve_with_fairplay_provider(
                                 fairplay_session = None;
                                 let status = fairplay_provider_error_status(&error);
                                 tracing::warn!(%error, status, "FairPlay SAP provider rejected M3");
+                                #[cfg(windows)]
+                                super::set_pipeline_stage(3);
                                 let response = fairplay_error_response(
                                     status,
                                     reason_phrase(status),
@@ -1121,6 +1128,8 @@ pub fn serve_with_fairplay_provider(
                             phase = message.phase as u8,
                             "Unexpected receiver-originated FairPlay phase from sender"
                         );
+                        #[cfg(windows)]
+                        super::set_pipeline_stage(3);
                         // An out-of-order record invalidates the in-flight
                         // negotiation. Do not leave previously derived keys
                         // available after a protocol violation.
@@ -1136,6 +1145,8 @@ pub fn serve_with_fairplay_provider(
                     }
                     Err(error) => {
                         tracing::warn!(%error, "AirPlay FairPlay setup framing rejected");
+                        #[cfg(windows)]
+                        super::set_pipeline_stage(3);
                         // Malformed FairPlay input is a hard boundary: discard
                         // every key and negotiation object from this exchange.
                         media_receiver = None;
@@ -1245,8 +1256,13 @@ pub fn serve_with_fairplay_provider(
                     pair_verify_shared_secret.as_deref(),
                 ) {
                     Ok(body) => {
-                        #[cfg(windows)]
-                        super::set_pipeline_stage(6);
+                        // Session-level SETUP only negotiates event/timing
+                        // channels. Advance the media stage only after the
+                        // stream-level SETUP has actually created its listener.
+                        if media_receiver.is_some() {
+                            #[cfg(windows)]
+                            super::set_pipeline_stage(6);
+                        }
                         write_binary_plist_response(&mut stream, &request.cseq, &body)?;
                     }
                     Err((status, reason)) => {
