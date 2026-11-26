@@ -165,7 +165,7 @@ impl Render for PhoneControlApp {
                 let fallback_conversion_in_flight = Arc::new(AtomicBool::new(false));
                 let worker_cancel = fallback_worker_cancel;
                 let fallback_conversion_result: Arc<
-                    Mutex<Option<(u64, u32, u32, Result<Vec<u8>, &'static str>, Duration)>>,
+                    Mutex<Option<(u64, u64, u32, u32, Result<Vec<u8>, &'static str>, Duration)>>,
                 > = Arc::new(Mutex::new(None));
                 let mut mailbox_stats_log_at = Instant::now();
                 let mut last_mailbox_published = 0u64;
