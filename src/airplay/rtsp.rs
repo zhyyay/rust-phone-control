@@ -274,14 +274,30 @@ fn send_packet_while_running(
     running: &std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) -> bool {
     use std::sync::atomic::Ordering;
+    let blocked_at = Instant::now();
+    let mut reported_backpressure = false;
     loop {
         if !running.load(Ordering::Acquire) {
             return false;
         }
         match sender.try_send(packet) {
-            Ok(()) => return true,
+            Ok(()) => {
+                if reported_backpressure {
+                    tracing::debug!(
+                        blocked_ms = blocked_at.elapsed().as_millis() as u64,
+                        "AirPlay media queue backpressure cleared"
+                    );
+                }
+                return true;
+            }
             Err(mpsc::TrySendError::Full(returned)) => {
                 packet = returned;
+                if !reported_backpressure && blocked_at.elapsed() >= Duration::from_millis(100) {
+                    reported_backpressure = true;
+                    tracing::warn!(
+                        "AirPlay media queue is saturated; applying TCP backpressure without dropping encrypted packets"
+                    );
+                }
                 thread::sleep(Duration::from_millis(2));
             }
             Err(mpsc::TrySendError::Disconnected(_)) => return false,
