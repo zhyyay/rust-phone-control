@@ -512,11 +512,7 @@ impl<'runtime> H264Decoder<'runtime> {
 
     /// Submit one complete Annex-B H.264 access unit.
     pub fn submit_access_unit(&mut self, access_unit: &[u8]) -> Result<(), MediaFoundationError> {
-        if access_unit.is_empty() {
-            return Err(MediaFoundationError::EmptyInput);
-        }
-        let length =
-            u32::try_from(access_unit.len()).map_err(|_| MediaFoundationError::InputTooLarge)?;
+        let length = checked_access_unit_length(access_unit.len())?;
         let buffer = unsafe { MFCreateMemoryBuffer(length) }
             .map_err(|error| MediaFoundationError::BufferFailed(error.code().0))?;
         let mut destination = std::ptr::null_mut();
@@ -839,7 +835,6 @@ fn bounded_drain_limit(requested: usize) -> usize {
 }
 
 /// Maximum Annex-B access-unit size accepted by the decode pipeline.
-#[cfg(windows)]
 const MAX_DECODE_ACCESS_UNIT_BYTES: usize = 64 * 1024 * 1024;
 
 /// Maximum NV12 output buffer accepted from a Media Foundation transform.
@@ -848,6 +843,17 @@ const MAX_DECODED_NV12_BYTES: usize = 128 * 1024 * 1024;
 
 /// Maximum decoded NV12 memory retained for one submitted access unit.
 const MAX_DECODED_BYTES_PER_ACCESS_UNIT: usize = 256 * 1024 * 1024;
+
+/// Validate an access-unit length before allocating a Media Foundation buffer.
+fn checked_access_unit_length(length: usize) -> Result<u32, MediaFoundationError> {
+    if length == 0 {
+        return Err(MediaFoundationError::EmptyInput);
+    }
+    if length > MAX_DECODE_ACCESS_UNIT_BYTES {
+        return Err(MediaFoundationError::InputTooLarge);
+    }
+    u32::try_from(length).map_err(|_| MediaFoundationError::InputTooLarge)
+}
 
 /// Sum frame payload sizes with overflow checking.
 fn frame_bytes_total(frames: &[DecodedNv12Frame]) -> Result<usize, MediaFoundationError> {
@@ -1194,6 +1200,23 @@ impl std::error::Error for MediaFoundationError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+
+    #[test]
+    fn access_unit_length_is_checked_before_buffer_allocation() {
+        assert_eq!(
+            checked_access_unit_length(0),
+            Err(MediaFoundationError::EmptyInput)
+        );
+        assert_eq!(
+            checked_access_unit_length(MAX_DECODE_ACCESS_UNIT_BYTES),
+            Ok(MAX_DECODE_ACCESS_UNIT_BYTES as u32)
+        );
+        assert_eq!(
+            checked_access_unit_length(MAX_DECODE_ACCESS_UNIT_BYTES + 1),
+            Err(MediaFoundationError::InputTooLarge)
+        );
+    }
 
     #[test]
     fn decoder_drain_limit_is_bounded() {
