@@ -357,12 +357,14 @@ pub(crate) fn upload_nv12_frame(
         let device = renderer
             .as_mut()
             .ok_or_else(|| anyhow!("D3D11 renderer has not been initialized for a GPUI window"))?;
+        let upload_started = Instant::now();
         device.upload_nv12(width, height, y_stride, uv_stride, data)?;
+        let upload_time = upload_started.elapsed();
         UPLOADED_FRAMES.fetch_add(1, Ordering::Relaxed);
-        device.draw_nv12_frame()
+        device.draw_nv12_frame().map(|present_time| (upload_time, present_time))
     });
-    let present_time = match initial_result {
-        Ok(elapsed) => elapsed,
+    let (upload_time, present_time) = match initial_result {
+        Ok(timings) => timings,
         Err(original_error) => {
             RENDER_ERRORS.fetch_add(1, Ordering::Relaxed);
             // Treat device removal/reset the same way as the BGRA path. Do not
@@ -416,9 +418,11 @@ pub(crate) fn upload_nv12_frame(
                     let device = renderer
                         .as_mut()
                         .ok_or_else(|| anyhow!("replacement D3D11 device is unavailable"))?;
+                    let upload_started = Instant::now();
                     device.upload_nv12(width, height, y_stride, uv_stride, data)?;
+                    let upload_time = upload_started.elapsed();
                     UPLOADED_FRAMES.fetch_add(1, Ordering::Relaxed);
-                    device.draw_nv12_frame()
+                    device.draw_nv12_frame().map(|present_time| (upload_time, present_time))
                 })
                 .context("D3D11 NV12 preview retry failed after device recreation")?;
             // Keep the cooldown active if the first frame on the replacement
@@ -440,6 +444,7 @@ pub(crate) fn upload_nv12_frame(
         if elapsed >= Duration::from_secs(1) {
             tracing::info!(
                 fps = device.stats_frames as f64 / elapsed.as_secs_f64(),
+                upload_ms = upload_time.as_secs_f64() * 1000.0,
                 present_ms = present_time.as_secs_f64() * 1000.0,
                 frames = device.stats_frames,
                 "D3D11 NV12 preview performance"
@@ -476,13 +481,15 @@ pub(crate) fn upload_bgra_frame(
         let device = renderer
             .as_mut()
             .ok_or_else(|| anyhow!("D3D11 renderer has not been initialized for a GPUI window"))?;
+        let upload_started = Instant::now();
         device.upload_bgra(width, height, stride, data)?;
+        let upload_time = upload_started.elapsed();
         UPLOADED_FRAMES.fetch_add(1, Ordering::Relaxed);
-        device.draw_video_frame()
+        device.draw_video_frame().map(|present_time| (upload_time, present_time))
     });
 
-    let present_time = match initial_result {
-        Ok(elapsed) => elapsed,
+    let (upload_time, present_time) = match initial_result {
+        Ok(timings) => timings,
         Err(original_error) => {
             RENDER_ERRORS.fetch_add(1, Ordering::Relaxed);
             // Rebuild only when the driver reports device removal/reset. Shader,
@@ -536,9 +543,11 @@ pub(crate) fn upload_bgra_frame(
                     let device = renderer
                         .as_mut()
                         .ok_or_else(|| anyhow!("replacement D3D11 device is unavailable"))?;
+                    let upload_started = Instant::now();
                     device.upload_bgra(width, height, stride, data)?;
+                    let upload_time = upload_started.elapsed();
                     UPLOADED_FRAMES.fetch_add(1, Ordering::Relaxed);
-                    device.draw_video_frame()
+                    device.draw_video_frame().map(|present_time| (upload_time, present_time))
                 })
                 .context("D3D11 preview retry failed after device recreation")?;
             // Do not clear the cooldown until the replacement has presented
@@ -562,6 +571,7 @@ pub(crate) fn upload_bgra_frame(
             let fps = device.stats_frames as f64 / elapsed.as_secs_f64();
             tracing::info!(
                 fps,
+                upload_ms = upload_time.as_secs_f64() * 1000.0,
                 present_ms = present_time.as_secs_f64() * 1000.0,
                 frames = device.stats_frames,
                 "D3D11 preview performance"
