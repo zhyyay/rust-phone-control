@@ -2133,6 +2133,57 @@ mod tests {
     }
 
     #[test]
+    fn media_session_stop_interrupts_an_idle_partial_mirror_packet() {
+        use super::super::video::LatestFrameMailbox;
+        use std::io::Write;
+        use std::net::TcpListener;
+        use std::sync::Arc;
+        use std::time::{Duration, Instant};
+
+        let peer_ip = "127.0.0.1".parse().expect("loopback IP");
+        let frames = Arc::new(LatestFrameMailbox::new());
+        let mut media = super::MediaSession::start_with_context(
+            peer_ip,
+            super::MirrorStreamContext {
+                connection_id: None,
+                pair_verify_shared_secret: None,
+                fairplay_video_key: None,
+                media_foundation: None,
+                frames: Arc::clone(&frames),
+            },
+        )
+        .expect("start media session");
+        let port = media.port();
+        let mut client =
+            TcpStream::connect(("127.0.0.1", port)).expect("connect mirror TCP client");
+        client
+            .write_all(&[0x00])
+            .expect("send an incomplete mirror packet header");
+
+        // Let the accept worker enter its bounded header read before stopping.
+        std::thread::sleep(Duration::from_millis(50));
+        let started = Instant::now();
+        media.stop();
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "stopping an idle mirror client must not block shutdown"
+        );
+        assert_eq!(
+            frames
+                .stats()
+                .expect("read mailbox teardown stats")
+                .clear_events,
+            1,
+            "stopping the media session must publish one mailbox clear event"
+        );
+        assert!(
+            TcpListener::bind(("0.0.0.0", port)).is_ok(),
+            "media listener port must be released after stopping an active client"
+        );
+        drop(client);
+    }
+
+    #[test]
     fn mirror_reader_times_out_when_peer_stops_mid_packet() {
         use std::net::TcpListener;
         use std::sync::atomic::AtomicBool;
