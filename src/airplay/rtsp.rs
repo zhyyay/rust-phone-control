@@ -684,11 +684,15 @@ fn process_media_packets(
                                 if published_frames > 0
                                     && decoded_frames_published == published_frames as u64
                                 {
+                                    let sequence =
+                                        frames.stats().ok().map(|stats| stats.published);
                                     #[cfg(windows)]
-                                    super::set_pipeline_stage(11);
+                                    if let Some(sequence) = sequence {
+                                        super::mark_video_decoded(sequence);
+                                    }
                                     tracing::info!(
                                         published_frames,
-                                        sequence = frames.stats().ok().map(|stats| stats.published),
+                                        sequence,
                                         "First decoded AirPlay video frame published to preview mailbox"
                                     );
                                 }
