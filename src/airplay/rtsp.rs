@@ -1,11 +1,10 @@
 //! Bounded RTSP/HTTP control parser for the AirPlay endpoint.
 //!
 //! The handler supports persistent RTSP connections, bounded request bodies,
-//! OPTIONS, /info, Pair-Setup, Pair-Verify, FairPlay framing, session and stream
-//! SETUP, RECORD, feedback, and TEARDOWN. FairPlay cryptographic responses
-//! and bounded media transport. When an authorized FairPlay SAP provider
-//! supplies authenticated keys, the media worker decrypts ordered access units,
-//! submits H.264 to Media Foundation, and publishes decoded frames to the UI.
+//! OPTIONS, /info, Pair-Setup, Pair-Verify, FairPlay message framing, session
+//! and stream SETUP, RECORD, feedback, and TEARDOWN. With an authorized SAP
+//! provider, the media worker decrypts ordered access units and feeds H.264 to
+//! Media Foundation; decoded frames are then published to the desktop preview.
 
 use std::io::{self, Read, Write};
 use std::net::{TcpListener, TcpStream};
