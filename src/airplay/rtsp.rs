@@ -145,7 +145,8 @@ impl MediaSession {
                     sender,
                     worker_accepted_clients,
                     worker_disconnected_clients,
-                ) {
+                )
+            }) {
             Ok(worker) => worker,
             Err(error) => {
                 running.store(false, Ordering::Release);
