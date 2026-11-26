@@ -2,9 +2,9 @@
 //!
 //! The endpoint publishes mDNS, handles RTSP control and pairing exchanges,
 //! negotiates session/event/timing channels, and accepts the screen-mirroring
-//! TCP data stream. The RTSP media worker still cannot decrypt sender video
-//! until FairPlay key recovery is implemented; the GPUI preview consumes the
-//! latest-frame mailbox once a decoded frame is published.
+//! TCP data stream. End-to-end mirroring requires an authorized FairPlay SAP
+//! provider and verified sender-media decryption; only decoded frames are
+//! published to the GPUI preview mailbox.
 //! Only the screen-mirroring discovery bit is advertised; audio, FairPlay
 //! key recovery, PTP synchronization, and other unsupported features remain disabled.
 
@@ -79,8 +79,8 @@ pub fn pipeline_status_label() -> &'static str {
         3 => "配对验证通过：等待 FairPlay SAP",
         4 => "FairPlay 阻塞：未配置授权 SAP Provider",
         5 => "FairPlay：已发送 M2，等待 iPhone M3",
-        6 => "RTSP SETUP：会话参数已协商",
-        7 => "RTSP RECORD：媒体接收会话已启动",
+        6 => "RTSP SETUP：媒体流监听已建立",
+        7 => "RTSP RECORD：等待媒体数据到达",
         8 => "FairPlay：M3 已认证，等待媒体 SETUP",
         _ => "AirPlay：状态未知",
     }
@@ -324,7 +324,7 @@ fn start_inner(fairplay_provider: Option<Arc<dyn FairPlaySapProvider>>) -> anyho
         video_frames,
     });
     tracing::info!(
-        "Built-in AirPlay discovery/control endpoint started; secure mirroring is not implemented yet"
+        "Built-in AirPlay discovery/control endpoint started; video mirroring requires an authorized FairPlay SAP provider"
     );
     Ok(())
 }
