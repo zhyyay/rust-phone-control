@@ -556,17 +556,22 @@ impl<'runtime> H264Decoder<'runtime> {
     ) -> Result<Vec<DecodedNv12Frame>, MediaFoundationError> {
         const MAX_INPUT_RETRIES: usize = 4;
 
-        let mut frames = Vec::new();
+        let mut frames = Vec::with_capacity(MAX_FRAMES_PER_DRAIN);
         for attempt in 0..MAX_INPUT_RETRIES {
-            frames.extend(self.drain_available_frames(MAX_FRAMES_PER_DRAIN)?);
+            let remaining = MAX_FRAMES_PER_DRAIN.saturating_sub(frames.len());
+            frames.extend(self.drain_available_frames(remaining)?);
             match self.submit_access_unit(access_unit) {
                 Ok(()) => {
-                    frames.extend(self.drain_available_frames(MAX_FRAMES_PER_DRAIN)?);
+                    let remaining = MAX_FRAMES_PER_DRAIN.saturating_sub(frames.len());
+                    frames.extend(self.drain_available_frames(remaining)?);
                     return Ok(frames);
                 }
                 Err(MediaFoundationError::ProcessInputFailed(hr))
                     if hr == MF_E_NOTACCEPTING_HR && attempt + 1 < MAX_INPUT_RETRIES =>
                 {
+                    if frames.len() == MAX_FRAMES_PER_DRAIN {
+                        return Err(MediaFoundationError::OutputBacklog);
+                    }
                     // The transform still has output queued. Drain another
                     // bounded batch before retrying the same not-yet-accepted
                     // access unit.
@@ -1011,6 +1016,7 @@ pub enum MediaFoundationError {
     FrameMailbox(crate::airplay::video::FrameMailboxError),
     ProcessOutputFailed(i32),
     RepeatedOutputStreamChange,
+    OutputBacklog,
     DecoderRecoveryLimitReached,
 }
 
@@ -1117,6 +1123,9 @@ impl fmt::Display for MediaFoundationError {
             Self::RepeatedOutputStreamChange => {
                 f.write_str("H.264 decoder repeatedly changed its output type")
             }
+            Self::OutputBacklog => {
+                f.write_str("H.264 decoder output backlog exceeded the per-access-unit frame limit")
+            }
             Self::DecoderRecoveryLimitReached => {
                 f.write_str("H.264 decoder rebuild retry limit reached before a frame was decoded")
             }
@@ -1134,7 +1143,10 @@ mod tests {
     fn decoder_drain_limit_is_bounded() {
         assert_eq!(bounded_drain_limit(0), 0);
         assert_eq!(bounded_drain_limit(1), 1);
-        assert_eq!(bounded_drain_limit(MAX_FRAMES_PER_DRAIN), MAX_FRAMES_PER_DRAIN);
+        assert_eq!(
+            bounded_drain_limit(MAX_FRAMES_PER_DRAIN),
+            MAX_FRAMES_PER_DRAIN
+        );
         assert_eq!(bounded_drain_limit(usize::MAX), MAX_FRAMES_PER_DRAIN);
     }
 
@@ -1157,6 +1169,14 @@ mod tests {
         policy.record_decoded_frame();
         assert_eq!(policy.attempts_without_frame(), 0);
         assert!(policy.begin_rebuild());
+    }
+
+    #[test]
+    fn decoder_output_backlog_error_is_actionable() {
+        assert_eq!(
+            MediaFoundationError::OutputBacklog.to_string(),
+            "H.264 decoder output backlog exceeded the per-access-unit frame limit"
+        );
     }
 
     #[test]
