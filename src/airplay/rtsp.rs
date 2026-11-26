@@ -546,7 +546,9 @@ fn process_media_packets(
                 {
                     match configuration.video_dimensions() {
                         Ok(Some(dimensions)) => {
-                            if let Err(error) = pipeline.rebuild_decoder(dimensions.width, dimensions.height) {
+                            if let Err(error) =
+                                pipeline.rebuild_decoder(dimensions.width, dimensions.height)
+                            {
                                 tracing::warn!(%error, "Could not rebuild decoder after mirror TCP reconnect");
                                 frame_pipeline = None;
                             } else {
@@ -557,7 +559,9 @@ fn process_media_packets(
                         }
                         Ok(None) => {
                             frame_pipeline = None;
-                            tracing::warn!("Cannot resume mirror preview after reconnect without SPS dimensions");
+                            tracing::warn!(
+                                "Cannot resume mirror preview after reconnect without SPS dimensions"
+                            );
                         }
                         Err(error) => {
                             frame_pipeline = None;
@@ -569,7 +573,9 @@ fn process_media_packets(
                     idr_wait_started_at = Some(Instant::now());
                     last_idr_wait_warning = None;
                 }
-                tracing::info!("AirPlay mirror TCP connection ended; preview cleared and decoder awaiting a fresh IDR");
+                tracing::info!(
+                    "AirPlay mirror TCP connection ended; preview cleared and decoder awaiting a fresh IDR"
+                );
                 continue;
             }
         };
