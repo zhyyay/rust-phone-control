@@ -783,7 +783,27 @@ fn process_media_packets(
                                             timestamp = packet.timestamp,
                                             "H.264 IDR received; resuming decode after decoder recovery"
                                         );
-                                        pipeline.submit_access_unit(&access_unit).map(Some)
+                                        pipeline
+                                            .submit_access_unit_and_drain_with(
+                                                &access_unit,
+                                                |frame| {
+                                                    frames
+                                                        .publish_nv12(
+                                                            super::video::OwnedNv12Frame {
+                                                                width: frame.width,
+                                                                height: frame.height,
+                                                                y_stride: frame.stride,
+                                                                uv_stride: frame.stride,
+                                                                data: frame.data,
+                                                            },
+                                                        )
+                                                        .map(|_| ())
+                                                        .map_err(
+                                                            super::decoder::MediaFoundationError::FrameMailbox,
+                                                        )
+                                                },
+                                            )
+                                            .map(Some)
                                     } else {
                                         Ok(None)
                                     }
