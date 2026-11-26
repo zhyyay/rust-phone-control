@@ -1086,6 +1086,8 @@ pub fn serve_with_fairplay_provider(
                                 let response_body =
                                     super::fairplay::build_m4(&keys.acknowledgement);
                                 fairplay_video_key = Some(keys.video_key);
+                                #[cfg(windows)]
+                                super::set_pipeline_stage(8);
                                 write_binary_response(&mut stream, &request.cseq, &response_body)?;
                                 tracing::info!(
                                     has_fairplay_ekey = fairplay_ekey.is_some(),
@@ -1271,18 +1273,21 @@ pub fn serve_with_fairplay_provider(
                 if media_receiver.is_some() {
                     tracing::info!(
                         media_listener_active = true,
-                        media_worker_active = media_receiver.is_some(),
-                        "AirPlay RECORD request accepted; media reception state recorded"
+                        stream_setup_complete = true,
+                        "AirPlay RECORD accepted; negotiated media listener is ready"
                     );
+                    #[cfg(windows)]
+                    super::set_pipeline_stage(7);
                 } else {
-                    // Apple senders may issue RECORD before the stream-level
-                    // SETUP. Keep the session open and wait for that SETUP.
+                    // Some senders issue RECORD before stream-level SETUP.
+                    // A successful RECORD response alone is not proof that a
+                    // media listener exists, so retain the previous protocol
+                    // stage until SETUP actually creates that listener.
                     tracing::info!(
+                        stream_setup_complete = false,
                         "AirPlay RECORD accepted; awaiting stream-level SETUP before media reception"
                     );
                 }
-                #[cfg(windows)]
-                super::set_pipeline_stage(7);
                 write_response(&mut stream, &response, 200)?;
             }
             ("POST", "/feedback", "RTSP/1.0") => {
