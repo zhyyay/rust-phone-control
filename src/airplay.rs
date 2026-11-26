@@ -422,6 +422,18 @@ pub fn take_latest_video_frame() -> anyhow::Result<Option<FrameSnapshot>> {
         .map_err(|error| anyhow::anyhow!(error))
 }
 
+/// Check whether a consumed frame snapshot still belongs to the active stream.
+#[cfg(windows)]
+pub fn is_video_frame_generation_current(generation: u64) -> anyhow::Result<bool> {
+    let runtime = receiver_slot()
+        .lock()
+        .map_err(|_| anyhow::anyhow!("AirPlay runtime lock is poisoned"))?;
+    let Some(runtime) = runtime.as_ref() else {
+        return Ok(false);
+    };
+    Ok(runtime.video_frames.is_generation_current(generation))
+}
+
 /// Check whether a newer decoded frame is waiting for presentation.
 ///
 /// The preview uses this after an asynchronous fallback conversion to avoid
