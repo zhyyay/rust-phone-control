@@ -593,6 +593,87 @@ impl<'runtime> H264Decoder<'runtime> {
         ))
     }
 
+    /// Submit an access unit while publishing each decoded frame immediately.
+    ///
+    /// Unlike the collecting API, this keeps only the current decoded frame
+    /// alive in this call, reducing peak memory when a transform emits a burst.
+    pub fn submit_access_unit_and_drain_with<F>(
+        &mut self,
+        access_unit: &[u8],
+        mut publish: F,
+    ) -> Result<usize, MediaFoundationError>
+    where
+        F: FnMut(DecodedNv12Frame) -> Result<(), MediaFoundationError>,
+    {
+        const MAX_INPUT_RETRIES: usize = 4;
+
+        let mut published = 0usize;
+        let mut decoded_bytes = 0usize;
+        for attempt in 0..MAX_INPUT_RETRIES {
+            self.drain_available_frames_with_budget_and(
+                MAX_FRAMES_PER_DRAIN.saturating_sub(published),
+                MAX_DECODED_BYTES_PER_ACCESS_UNIT.saturating_sub(decoded_bytes),
+                &mut published,
+                &mut decoded_bytes,
+                &mut publish,
+            )?;
+            match self.submit_access_unit(access_unit) {
+                Ok(()) => {
+                    self.drain_available_frames_with_budget_and(
+                        MAX_FRAMES_PER_DRAIN.saturating_sub(published),
+                        MAX_DECODED_BYTES_PER_ACCESS_UNIT.saturating_sub(decoded_bytes),
+                        &mut published,
+                        &mut decoded_bytes,
+                        &mut publish,
+                    )?;
+                    return Ok(published);
+                }
+                Err(MediaFoundationError::ProcessInputFailed(hr)) if hr == MF_E_NOTACCEPTING_HR => {
+                    if published == MAX_FRAMES_PER_DRAIN {
+                        return Err(MediaFoundationError::OutputBacklog);
+                    }
+                    if attempt + 1 == MAX_INPUT_RETRIES {
+                        return Err(MediaFoundationError::ProcessInputFailed(hr));
+                    }
+                }
+                Err(error) => return Err(error),
+            }
+        }
+
+        Err(MediaFoundationError::ProcessInputFailed(MF_E_NOTACCEPTING_HR))
+    }
+
+    fn drain_available_frames_with_budget_and<F>(
+        &mut self,
+        limit: usize,
+        byte_budget: usize,
+        published: &mut usize,
+        decoded_bytes: &mut usize,
+        publish: &mut F,
+    ) -> Result<(), MediaFoundationError>
+    where
+        F: FnMut(DecodedNv12Frame) -> Result<(), MediaFoundationError>,
+    {
+        let limit = bounded_drain_limit(limit);
+        for _ in 0..limit {
+            let remaining = byte_budget.saturating_sub(*decoded_bytes);
+            match self.try_get_frame_with_budget(remaining)? {
+                Some(frame) => {
+                    *decoded_bytes = decoded_bytes
+                        .checked_add(frame.data.len())
+                        .ok_or(MediaFoundationError::FrameSizeOverflow)?;
+                    if *decoded_bytes > byte_budget {
+                        return Err(MediaFoundationError::OutputMemoryBudgetExceeded);
+                    }
+                    publish(frame)?;
+                    *published = published.saturating_add(1);
+                }
+                None => break,
+            }
+        }
+        Ok(())
+    }
+
     /// Submit one Annex-B access unit, drain decoded frames, and convert
     /// each NV12 output into tightly packed BGRA for the desktop mailbox.
     pub fn submit_access_unit_and_drain_bgra(
@@ -987,23 +1068,24 @@ impl<'runtime> H264FramePipeline<'runtime> {
             return Err(MediaFoundationError::InputTooLarge);
         }
 
-        let decoded = self.decoder.submit_access_unit_and_drain(access_unit)?;
-        let mut published = 0usize;
-        for frame in decoded {
-            self.frames
-                .publish_nv12(crate::airplay::video::OwnedNv12Frame {
-                    width: frame.width,
-                    height: frame.height,
-                    // Media Foundation exposes one default stride for both NV12
-                    // planes; keep the mailbox representation plane-specific
-                    // for decoder backends that can provide distinct pitches.
-                    y_stride: frame.stride,
-                    uv_stride: frame.stride,
-                    data: frame.data,
-                })
-                .map_err(MediaFoundationError::FrameMailbox)?;
-            published = published.saturating_add(1);
-        }
+        let published = self.decoder.submit_access_unit_and_drain_with(
+            access_unit,
+            |frame| {
+                self.frames
+                    .publish_nv12(crate::airplay::video::OwnedNv12Frame {
+                        width: frame.width,
+                        height: frame.height,
+                        // Media Foundation exposes one default stride for both NV12
+                        // planes; keep the mailbox representation plane-specific
+                        // for decoder backends that can provide distinct pitches.
+                        y_stride: frame.stride,
+                        uv_stride: frame.stride,
+                        data: frame.data,
+                    })
+                    .map(|_| ())
+                    .map_err(MediaFoundationError::FrameMailbox)
+            },
+        )?;
         if published > 0 {
             self.recovery.record_decoded_frame();
         }
