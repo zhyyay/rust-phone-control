@@ -19,7 +19,7 @@ The built-in receiver now has mDNS discovery, RTSP request framing, Pair-Setup /
 
 **End-to-end wireless mirroring is not yet working.** The project does not contain an authorized FairPlay SAP provider, so it deliberately rejects FairPlay negotiation instead of fabricating challenges or media keys. Without authenticated FairPlay keys, encrypted iPhone video cannot be decrypted and displayed. A bound media port, RTSP RECORD response, or initialized decoder is not evidence of a visible mirror; acceptance requires real decoded frames reaching the preview.
 
-The receiver status is intended to distinguish protocol milestones: discovery/listening → RTSP client → Pair-Verify → FairPlay M1/M2 → authenticated M3 → stream SETUP → RECORD/media listener → decoded frame → rendered frame. RECORD may arrive before stream-level SETUP and must not be reported as active media reception until the media listener exists.
+The receiver status distinguishes the actual pipeline milestones: discovery/listening → RTSP client → Pair-Verify → FairPlay M1/M2 → authenticated M3 → stream SETUP/listener → RECORD → media TCP peer connected → first ordered media packet → first decoded frame → first desktop-presented frame. RECORD and stream-level SETUP may arrive in either order; the state machine preserves that ordering. A disconnected media TCP peer returns the status to listener-ready so a reconnect is visible.
 
 The SRP implementation currently uses num-bigint modular exponentiation, which is variable-time. It is a development implementation and must not be treated as production-grade cryptography until secret-exponent operations are replaced with a reviewed constant-time implementation and the protocol is independently audited.
 
