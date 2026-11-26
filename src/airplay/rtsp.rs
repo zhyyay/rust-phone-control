@@ -247,6 +247,8 @@ fn accept_mirror_connections(
                     continue;
                 }
                 let accepted = accepted_clients.fetch_add(1, Ordering::Relaxed) + 1;
+                #[cfg(windows)]
+                super::set_pipeline_stage(9);
                 tracing::info!(%peer_addr, accepted, "AirPlay mirror TCP client connected");
                 read_mirror_stream(stream, peer_addr, &sender, &running);
                 let disconnected = disconnected_clients.fetch_add(1, Ordering::Relaxed) + 1;
@@ -335,6 +337,16 @@ fn read_mirror_stream(
         let packet_bytes_received = packet_bytes.len() as u64;
         if !send_packet_while_running(sender, owned, running) {
             break;
+        }
+        if received == 0 {
+            #[cfg(windows)]
+            super::set_pipeline_stage(10);
+            tracing::info!(
+                %peer_addr,
+                packet_type = ?parsed.packet_type,
+                payload_bytes = payload_size,
+                "First AirPlay media packet accepted into ordered processing queue"
+            );
         }
         received = received.saturating_add(1);
         received_bytes = received_bytes.saturating_add(packet_bytes_received);
@@ -667,7 +679,7 @@ fn process_media_packets(
                                     .saturating_add(published_frames as u64);
                                 if published_frames > 0 && decoded_frames_published == published_frames as u64 {
                                     #[cfg(windows)]
-                                    super::set_pipeline_stage(9);
+                                    super::set_pipeline_stage(11);
                                     tracing::info!(
                                         published_frames,
                                         sequence = frames.stats().ok().map(|stats| stats.published),
@@ -851,6 +863,8 @@ pub fn serve_with_fairplay_provider(
     let mut event_channel: Option<EventChannel> = None;
     let mut timing_client: Option<TimingClient> = None;
     let mut media_receiver: Option<MediaSession> = None;
+    // RECORD and stream-level SETUP may arrive in either order on iOS.
+    let mut record_received = false;
     tracing::info!("AirPlay RTSP session started");
 
     loop {
@@ -1105,7 +1119,7 @@ pub fn serve_with_fairplay_provider(
                                     super::fairplay::build_m4(&keys.acknowledgement);
                                 fairplay_video_key = Some(keys.video_key);
                                 #[cfg(windows)]
-                                super::set_pipeline_stage(8);
+                                super::set_pipeline_stage(6);
                                 write_binary_response(&mut stream, &request.cseq, &response_body)?;
                                 tracing::info!(
                                     has_fairplay_ekey = fairplay_ekey.is_some(),
@@ -1274,7 +1288,7 @@ pub fn serve_with_fairplay_provider(
                         // stream-level SETUP has actually created its listener.
                         if media_receiver.is_some() {
                             #[cfg(windows)]
-                            super::set_pipeline_stage(6);
+                            super::set_pipeline_stage(if record_received { 8 } else { 7 });
                         }
                         write_binary_plist_response(&mut stream, &request.cseq, &body)?;
                     }
@@ -1299,6 +1313,7 @@ pub fn serve_with_fairplay_provider(
                     "RTSP/1.0 200 OK\r\nCSeq: {}\r\nServer: RustPhoneControl/0.1\r\nContent-Length: 0\r\n\r\n",
                     request.cseq
                 );
+                record_received = true;
                 if media_receiver.is_some() {
                     tracing::info!(
                         media_listener_active = true,
@@ -1306,7 +1321,7 @@ pub fn serve_with_fairplay_provider(
                         "AirPlay RECORD accepted; negotiated media listener is ready"
                     );
                     #[cfg(windows)]
-                    super::set_pipeline_stage(7);
+                    super::set_pipeline_stage(8);
                 } else {
                     // Some senders issue RECORD before stream-level SETUP.
                     // A successful RECORD response alone is not proof that a
