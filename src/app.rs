@@ -172,6 +172,7 @@ impl Render for PhoneControlApp {
                 let mut last_mailbox_replaced = 0u64;
                 let mut last_mailbox_consumed = 0u64;
                 let mut last_mailbox_cleared = 0u64;
+                let mut last_mailbox_clear_events = 0u64;
                 let mut last_metrics_mailbox_published = 0u64;
                 let mut last_metrics_mailbox_consumed = 0u64;
                 let mut last_metrics_mailbox_replaced = 0u64;
@@ -205,6 +206,22 @@ impl Render for PhoneControlApp {
                     if refresh_pairing {
                         pairing_refresh_ticks = 0;
                     }
+
+                    // Session teardown clears the mailbox even when its last frame was
+                    // already consumed. Observe that event to remove the texture and
+                    // any asynchronous bitmap fallback left by the previous session.
+                    let mailbox_cleared = match crate::airplay::video_frame_mailbox_stats() {
+                        Ok(Some(stats)) => {
+                            let cleared = stats.clear_events != last_mailbox_clear_events;
+                            last_mailbox_clear_events = stats.clear_events;
+                            cleared
+                        }
+                        Ok(None) => false,
+                        Err(error) => {
+                            tracing::debug!(%error, "Could not observe video mailbox clear events");
+                            false
+                        }
+                    };
 
                     // Keep decoder output in its native format. Do not spend CPU
                     // converting every frame into a GPUI bitmap: the bitmap is
@@ -340,6 +357,20 @@ impl Render for PhoneControlApp {
                     let updated = this.update(cx, |this, cx| {
                         let mut changed = false;
                         let mut next_fallback_mode = fallback_mode;
+                        if mailbox_cleared {
+                            crate::video_renderer::hide_native_video_surface();
+                            if let Some(cancel) = fallback_conversion_cancel.take() {
+                                cancel.store(true, Ordering::Release);
+                            }
+                            if let Ok(mut result) = fallback_conversion_result.lock() {
+                                *result = None;
+                            }
+                            this.preview_image = None;
+                            this.preview_status = "镜像已断开，等待 iPhone 重新投屏".to_owned();
+                            next_fallback_mode = false;
+                            tracing::debug!("Cleared native and bitmap preview after mirror session teardown");
+                            changed = true;
+                        }
                         if let Some(label) = metrics {
                             if this.d3d11_metrics_label != label {
                                 this.d3d11_metrics_label = label;
