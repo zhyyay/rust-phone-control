@@ -260,7 +260,11 @@ fn accept_mirror_connections(
                 read_mirror_stream(stream, peer_addr, &sender, &running);
                 // FIFO ordering ensures all packets from this peer are processed
                 // before the worker clears its preview at the disconnect boundary.
-                if sender.send(MediaWorkerMessage::StreamDisconnected).is_err() {
+                if !send_packet_while_running(
+                    &sender,
+                    MediaWorkerMessage::StreamDisconnected,
+                    &running,
+                ) {
                     tracing::debug!(%peer_addr, "AirPlay media worker stopped before disconnect marker");
                     break;
                 }
