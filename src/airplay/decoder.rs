@@ -13,7 +13,7 @@ use std::mem::ManuallyDrop;
 use windows_062::Win32::{
     Media::MediaFoundation::{
         MF_MT_DEFAULT_STRIDE, MF_MT_FRAME_RATE, MF_MT_FRAME_SIZE, MF_MT_INTERLACE_MODE,
-        MF_MT_MAJOR_TYPE, MF_MT_PIXEL_ASPECT_RATIO, MF_MT_SUBTYPE, MFCreateMediaType,
+        MF_MT_MAJOR_TYPE, MF_MT_PIXEL_ASPECT_RATIO, MF_MT_SUBTYPE, IMFMediaBuffer, MFCreateMediaType,
         MFCreateMemoryBuffer, MFCreateSample, MFMediaType_Video, MFT_CATEGORY_VIDEO_DECODER,
         MFT_ENUM_FLAG_LOCALMFT, MFT_ENUM_FLAG_SORTANDFILTER, MFT_ENUM_FLAG_SYNCMFT,
         MFT_OUTPUT_DATA_BUFFER, MFT_OUTPUT_STREAM_PROVIDES_SAMPLES, MFT_REGISTER_TYPE_INFO,
@@ -218,6 +218,44 @@ impl DecodedNv12Frame {
 ///
 /// This object is thread-local because Windows COM interfaces are not Send/Sync.
 /// Create and use it on the dedicated media worker thread.
+/// Guarantees that a successful IMFMediaBuffer::Lock is paired with Unlock,
+/// including early-return paths while validating or copying the buffer.
+#[cfg(windows)]
+struct MediaBufferLock<'a> {
+    buffer: &'a IMFMediaBuffer,
+    locked: bool,
+}
+
+#[cfg(windows)]
+impl<'a> MediaBufferLock<'a> {
+    fn new(buffer: &'a IMFMediaBuffer) -> Self {
+        Self {
+            buffer,
+            locked: true,
+        }
+    }
+
+    fn unlock(mut self) -> Result<(), MediaFoundationError> {
+        let result = unsafe { self.buffer.Unlock() };
+        self.locked = false;
+        result.map_err(|error| MediaFoundationError::BufferFailed(error.code().0))
+    }
+}
+
+#[cfg(windows)]
+impl Drop for MediaBufferLock<'_> {
+    fn drop(&mut self) {
+        if self.locked {
+            if let Err(error) = unsafe { self.buffer.Unlock() } {
+                tracing::warn!(
+                    hresult = format_args!("0x{:08X}", error.code().0 as u32),
+                    "Media Foundation buffer unlock failed during cleanup"
+                );
+            }
+        }
+    }
+}
+
 #[cfg(windows)]
 pub struct H264Decoder<'runtime> {
     _runtime: &'runtime MediaFoundationRuntime,
@@ -432,16 +470,15 @@ impl<'runtime> H264Decoder<'runtime> {
         // SAFETY: Lock exposes writable storage until the matching Unlock.
         unsafe { buffer.Lock(&mut destination, None, None) }
             .map_err(|error| MediaFoundationError::BufferFailed(error.code().0))?;
+        let buffer_lock = MediaBufferLock::new(&buffer);
         if destination.is_null() {
-            let _ = unsafe { buffer.Unlock() };
             return Err(MediaFoundationError::NullBuffer);
         }
         // SAFETY: the allocated buffer has at least length bytes.
         unsafe {
             std::ptr::copy_nonoverlapping(access_unit.as_ptr(), destination, access_unit.len());
         }
-        unsafe { buffer.Unlock() }
-            .map_err(|error| MediaFoundationError::BufferFailed(error.code().0))?;
+        buffer_lock.unlock()?;
         unsafe { buffer.SetCurrentLength(length) }
             .map_err(|error| MediaFoundationError::BufferFailed(error.code().0))?;
 
@@ -657,14 +694,13 @@ impl<'runtime> H264Decoder<'runtime> {
             let mut source = std::ptr::null_mut();
             unsafe { buffer.Lock(&mut source, None, None) }
                 .map_err(|error| MediaFoundationError::BufferFailed(error.code().0))?;
+            let buffer_lock = MediaBufferLock::new(&buffer);
             if source.is_null() {
-                let _ = unsafe { buffer.Unlock() };
                 return Err(MediaFoundationError::NullBuffer);
             }
             // SAFETY: current_length is the valid data length reported by MF.
             let mut data = unsafe { std::slice::from_raw_parts(source, current_length) }.to_vec();
-            unsafe { buffer.Unlock() }
-                .map_err(|error| MediaFoundationError::BufferFailed(error.code().0))?;
+            buffer_lock.unlock()?;
             if signed_stride < 0 {
                 crate::airplay::video::normalize_nv12_bottom_up(&mut data, width, height, stride)
                     .map_err(MediaFoundationError::FrameConversion)?;
