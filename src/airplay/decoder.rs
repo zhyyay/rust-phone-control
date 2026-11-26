@@ -640,7 +640,9 @@ impl<'runtime> H264Decoder<'runtime> {
             }
         }
 
-        Err(MediaFoundationError::ProcessInputFailed(MF_E_NOTACCEPTING_HR))
+        Err(MediaFoundationError::ProcessInputFailed(
+            MF_E_NOTACCEPTING_HR,
+        ))
     }
 
     fn drain_available_frames_with_budget_and<F>(
@@ -1068,9 +1070,9 @@ impl<'runtime> H264FramePipeline<'runtime> {
             return Err(MediaFoundationError::InputTooLarge);
         }
 
-        let published = self.decoder.submit_access_unit_and_drain_with(
-            access_unit,
-            |frame| {
+        let published = self
+            .decoder
+            .submit_access_unit_and_drain_with(access_unit, |frame| {
                 self.frames
                     .publish_nv12(crate::airplay::video::OwnedNv12Frame {
                         width: frame.width,
@@ -1084,8 +1086,7 @@ impl<'runtime> H264FramePipeline<'runtime> {
                     })
                     .map(|_| ())
                     .map_err(MediaFoundationError::FrameMailbox)
-            },
-        )?;
+            })?;
         if published > 0 {
             self.recovery.record_decoded_frame();
         }
