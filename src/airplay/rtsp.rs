@@ -1295,6 +1295,13 @@ pub fn serve_with_fairplay_provider(
                         if media_receiver.is_some() {
                             #[cfg(windows)]
                             super::set_pipeline_stage(if record_received { 8 } else { 7 });
+                        } else {
+                            // A successful session-level SETUP replaces the
+                            // previous RTSP media session. RECORD from that
+                            // older session must not leak into this one.
+                            record_received = false;
+                            #[cfg(windows)]
+                            super::set_pipeline_stage(if fairplay_video_key.is_some() { 6 } else { 3 });
                         }
                         write_binary_plist_response(&mut stream, &request.cseq, &body)?;
                     }
