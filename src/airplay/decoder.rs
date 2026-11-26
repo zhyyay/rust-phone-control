@@ -277,7 +277,9 @@ impl ProcessOutputBufferGuard {
         }
     }
 
-    fn take(mut self) -> (
+    fn take(
+        mut self,
+    ) -> (
         Option<windows_062::Win32::Media::MediaFoundation::IMFSample>,
         Option<windows_062::Win32::Media::MediaFoundation::IMFCollection>,
     ) {
@@ -552,7 +554,6 @@ impl<'runtime> H264Decoder<'runtime> {
         &mut self,
         access_unit: &[u8],
     ) -> Result<Vec<DecodedNv12Frame>, MediaFoundationError> {
-        const MAX_FRAMES_PER_DRAIN: usize = 16;
         const MAX_INPUT_RETRIES: usize = 4;
 
         let mut frames = Vec::new();
@@ -596,11 +597,15 @@ impl<'runtime> H264Decoder<'runtime> {
     }
 
     /// Retrieve up to the requested number of immediately available frames.
+    ///
+    /// The effective limit is capped to keep a single media-worker turn bounded,
+    /// even when callers pass an unexpectedly large value.
     pub fn drain_available_frames(
         &mut self,
         limit: usize,
     ) -> Result<Vec<DecodedNv12Frame>, MediaFoundationError> {
-        let mut frames = Vec::with_capacity(limit.min(16));
+        let limit = bounded_drain_limit(limit);
+        let mut frames = Vec::with_capacity(limit);
         for _ in 0..limit {
             match self.try_get_frame()? {
                 Some(frame) => frames.push(frame),
@@ -778,6 +783,14 @@ impl<'runtime> H264Decoder<'runtime> {
             }));
         }
     }
+}
+
+/// Maximum number of decoded frames collected during one drain operation.
+const MAX_FRAMES_PER_DRAIN: usize = 16;
+
+/// Return the bounded frame count used by one decoder drain operation.
+fn bounded_drain_limit(requested: usize) -> usize {
+    requested.min(MAX_FRAMES_PER_DRAIN)
 }
 
 /// Maximum Annex-B access-unit size accepted by the decode pipeline.
@@ -1116,6 +1129,14 @@ impl std::error::Error for MediaFoundationError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn decoder_drain_limit_is_bounded() {
+        assert_eq!(bounded_drain_limit(0), 0);
+        assert_eq!(bounded_drain_limit(1), 1);
+        assert_eq!(bounded_drain_limit(MAX_FRAMES_PER_DRAIN), MAX_FRAMES_PER_DRAIN);
+        assert_eq!(bounded_drain_limit(usize::MAX), MAX_FRAMES_PER_DRAIN);
+    }
 
     #[test]
     fn repeated_output_stream_change_has_a_clear_error_message() {
