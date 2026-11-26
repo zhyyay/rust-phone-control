@@ -78,9 +78,10 @@ pub fn pipeline_status_label() -> &'static str {
         2 => "RTSP：iPhone 已连接，等待配对验证",
         3 => "配对验证通过：等待 FairPlay SAP",
         4 => "FairPlay 阻塞：未配置授权 SAP Provider",
-        5 => "FairPlay：Provider 已返回 M2，等待后续消息",
-        6 => "RTSP SETUP：媒体会话已协商",
-        7 => "RTSP RECORD：发送端已开始媒体会话",
+        5 => "FairPlay：已发送 M2，等待 iPhone M3",
+        6 => "RTSP SETUP：会话参数已协商",
+        7 => "RTSP RECORD：媒体接收会话已启动",
+        8 => "FairPlay：M3 已认证，等待媒体 SETUP",
         _ => "AirPlay：状态未知",
     }
 }
