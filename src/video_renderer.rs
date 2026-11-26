@@ -361,7 +361,9 @@ pub(crate) fn upload_nv12_frame(
         device.upload_nv12(width, height, y_stride, uv_stride, data)?;
         let upload_time = upload_started.elapsed();
         UPLOADED_FRAMES.fetch_add(1, Ordering::Relaxed);
-        device.draw_nv12_frame().map(|present_time| (upload_time, present_time))
+        device
+            .draw_nv12_frame()
+            .map(|present_time| (upload_time, present_time))
     });
     let (upload_time, present_time) = match initial_result {
         Ok(timings) => timings,
@@ -422,7 +424,9 @@ pub(crate) fn upload_nv12_frame(
                     device.upload_nv12(width, height, y_stride, uv_stride, data)?;
                     let upload_time = upload_started.elapsed();
                     UPLOADED_FRAMES.fetch_add(1, Ordering::Relaxed);
-                    device.draw_nv12_frame().map(|present_time| (upload_time, present_time))
+                    device
+                        .draw_nv12_frame()
+                        .map(|present_time| (upload_time, present_time))
                 })
                 .context("D3D11 NV12 preview retry failed after device recreation")?;
             // Keep the cooldown active if the first frame on the replacement
@@ -485,7 +489,9 @@ pub(crate) fn upload_bgra_frame(
         device.upload_bgra(width, height, stride, data)?;
         let upload_time = upload_started.elapsed();
         UPLOADED_FRAMES.fetch_add(1, Ordering::Relaxed);
-        device.draw_video_frame().map(|present_time| (upload_time, present_time))
+        device
+            .draw_video_frame()
+            .map(|present_time| (upload_time, present_time))
     });
 
     let (upload_time, present_time) = match initial_result {
@@ -547,7 +553,9 @@ pub(crate) fn upload_bgra_frame(
                     device.upload_bgra(width, height, stride, data)?;
                     let upload_time = upload_started.elapsed();
                     UPLOADED_FRAMES.fetch_add(1, Ordering::Relaxed);
-                    device.draw_video_frame().map(|present_time| (upload_time, present_time))
+                    device
+                        .draw_video_frame()
+                        .map(|present_time| (upload_time, present_time))
                 })
                 .context("D3D11 preview retry failed after device recreation")?;
             // Do not clear the cooldown until the replacement has presented
