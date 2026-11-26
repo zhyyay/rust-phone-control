@@ -180,6 +180,11 @@ impl Render for PhoneControlApp {
                 let mut mailbox_age_max_ms = 0.0f64;
                 let mut mailbox_age_samples = 0u64;
                 let mut stale_frames_dropped = 0u64;
+                // Mailbox sequence numbers are monotonic for this receiver
+                // lifetime. Keep the newest observed value even when its
+                // frame is rejected as stale, so an older async fallback can
+                // never replace a newer (but intentionally dropped) frame.
+                let mut latest_observed_frame_sequence = 0u64;
                 loop {
                     cx.background_executor()
                         .timer(Duration::from_millis(33))
@@ -204,6 +209,8 @@ impl Render for PhoneControlApp {
                     // created only if native D3D11 presentation actually fails.
                     let prepared_frame = match crate::airplay::take_latest_video_frame() {
                         Ok(Some(snapshot)) => {
+                            latest_observed_frame_sequence =
+                                latest_observed_frame_sequence.max(snapshot.sequence);
                             let mailbox_age = snapshot.enqueued_at.elapsed();
                             let mailbox_age_ms = mailbox_age.as_secs_f64() * 1000.0;
                             if mailbox_age > Duration::from_millis(250) {
@@ -257,6 +264,9 @@ impl Render for PhoneControlApp {
                         .lock()
                         .ok()
                         .and_then(|mut result| result.take());
+                    let completed_fallback = completed_fallback.filter(
+                        |(sequence, _, _, _, _)| *sequence >= latest_observed_frame_sequence,
+                    );
 
                     let metrics = if refresh_pairing {
                         let (presented, uploaded, recoveries, render_errors) =
