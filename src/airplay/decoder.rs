@@ -1213,7 +1213,6 @@ impl std::error::Error for MediaFoundationError {}
 mod tests {
     use super::*;
 
-
     #[test]
     fn output_allocation_must_fit_remaining_access_unit_budget() {
         assert_eq!(validate_output_allocation_budget(0, 0), Ok(()));
