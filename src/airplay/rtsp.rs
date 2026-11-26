@@ -2542,8 +2542,19 @@ mod tests {
         let running = Arc::new(AtomicBool::new(true));
         let worker_running = Arc::clone(&running);
         let (sender, receiver) = mpsc::sync_channel(4);
+        let accepted_clients = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let disconnected_clients = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let worker_accepted_clients = Arc::clone(&accepted_clients);
+        let worker_disconnected_clients = Arc::clone(&disconnected_clients);
         let worker = thread::spawn(move || {
-            super::accept_mirror_connections(listener, worker_running, address.ip(), sender);
+            super::accept_mirror_connections(
+                listener,
+                worker_running,
+                address.ip(),
+                sender,
+                worker_accepted_clients,
+                worker_disconnected_clients,
+            );
         });
 
         let mut heartbeat = [0u8; super::SCREEN_MIRROR_HEADER_SIZE];
