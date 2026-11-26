@@ -344,6 +344,7 @@ impl Render for PhoneControlApp {
                         } else {
                             mailbox_age_total_ms / mailbox_age_samples as f64
                         };
+                        let mailbox_age_peak_ms = mailbox_age_max_ms;
                         let stale_drops_per_sec = stale_frames_dropped as f64 / elapsed;
                         mailbox_age_total_ms = 0.0;
                         mailbox_age_max_ms = 0.0;
@@ -353,7 +354,7 @@ impl Render for PhoneControlApp {
                         last_metrics_at = Instant::now();
                         Some(format!(
                             "D3D11 · {:.1} FPS · 解码 {:.1}/s · 消费 {:.1}/s · 覆盖 {:.1}/s · 清空 {:.1}/s · 等帧 {:.1}/{:.1}ms · 过期丢弃 {:.1}/s · Present {} · 上传 {} · 重建 {} · 错误 {}",
-                            fps, decoded_fps, consumed_fps, replaced_fps, cleared_fps, mailbox_age_avg_ms, mailbox_age_max_ms, stale_drops_per_sec, presented, uploaded, recoveries, render_errors
+                            fps, decoded_fps, consumed_fps, replaced_fps, cleared_fps, mailbox_age_avg_ms, mailbox_age_peak_ms, stale_drops_per_sec, presented, uploaded, recoveries, render_errors
                         ))
                     } else {
                         None
