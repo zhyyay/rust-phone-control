@@ -1159,6 +1159,8 @@ pub struct OwnedNv12Frame {
     pub y_stride: usize,
     /// Byte distance between consecutive interleaved chroma rows.
     pub uv_stride: usize,
+    /// Matrix signaled by the stream SPS VUI, or Unspecified when absent.
+    pub color_matrix: AvcColorMatrix,
     pub data: Vec<u8>,
 }
 
@@ -2301,6 +2303,7 @@ mod tests {
                 height: 4,
                 y_stride: 6,
                 uv_stride: 6,
+                color_matrix: AvcColorMatrix::Unspecified,
                 data,
             }),
             Ok(1)
@@ -2328,6 +2331,7 @@ mod tests {
             height: 4,
             y_stride: 6,
             uv_stride: 8,
+            color_matrix: AvcColorMatrix::Unspecified,
             data: vec![0; 36],
         };
         assert_eq!(mailbox.publish_nv12(frame), Ok(1));
@@ -2349,6 +2353,7 @@ mod tests {
                 height: 4,
                 y_stride: 6,
                 uv_stride: 6,
+                color_matrix: AvcColorMatrix::Unspecified,
                 data: vec![0; 33],
             }),
             Err(FrameMailboxError::BufferTooSmall)
