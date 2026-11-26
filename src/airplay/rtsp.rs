@@ -145,9 +145,7 @@ impl MediaSession {
                     sender,
                     worker_accepted_clients,
                     worker_disconnected_clients,
-                )
-            })
-        {
+                ) {
             Ok(worker) => worker,
             Err(error) => {
                 running.store(false, Ordering::Release);
@@ -2243,23 +2241,21 @@ mod tests {
         .expect("start media session");
         let port = media.port();
 
-        let mut first = TcpStream::connect(("127.0.0.1", port))
-            .expect("connect first mirror client");
+        let mut first =
+            TcpStream::connect(("127.0.0.1", port)).expect("connect first mirror client");
         first.write_all(&[0x00]).expect("send partial first packet");
         wait_for_counter(&media.accepted_clients, 1, "first client acceptance");
         first
             .shutdown(Shutdown::Both)
             .expect("close first mirror client");
-        wait_for_counter(
-            &media.disconnected_clients,
-            1,
-            "first client disconnection",
-        );
+        wait_for_counter(&media.disconnected_clients, 1, "first client disconnection");
         drop(first);
 
         let mut second = TcpStream::connect(("127.0.0.1", port))
             .expect("connect second mirror client after disconnect");
-        second.write_all(&[0x00]).expect("send partial second packet");
+        second
+            .write_all(&[0x00])
+            .expect("send partial second packet");
         wait_for_counter(&media.accepted_clients, 2, "second client acceptance");
         second
             .shutdown(Shutdown::Both)
