@@ -49,6 +49,7 @@ pub enum AvcConfigError {
     TooManyParameterSets,
     TrailingData,
     InvalidNalLength,
+    InvalidNalHeader,
     TruncatedNal,
     OutputTooLarge,
     InvalidSps,
@@ -297,6 +298,14 @@ impl AvcConfiguration {
                 .ok_or(AvcConfigError::SizeOverflow)?;
             if end > data.len() {
                 return Err(AvcConfigError::TruncatedNal);
+            }
+            // AVCC carries complete H.264 NAL units, not RTP packetization
+            // units. Reject forbidden_zero_bit and the unspecified type 0
+            // before forwarding bytes to the decoder.
+            let nal_header = data[offset];
+            let nal_type = nal_header & 0x1f;
+            if nal_header & 0x80 != 0 || nal_type == 0 {
+                return Err(AvcConfigError::InvalidNalHeader);
             }
             let next_length = output
                 .len()
@@ -1784,6 +1793,31 @@ mod tests {
         assert_eq!(
             configuration.access_unit_to_annex_b(&[]),
             Err(AvcConfigError::InvalidNalLength)
+        );
+    }
+
+    #[test]
+    fn avcc_access_unit_parser_rejects_forbidden_and_zero_nal_headers() {
+        let configuration = AvcConfiguration {
+            profile: 0x64,
+            compatibility: 0,
+            level: 0x1f,
+            nal_length_size: 4,
+            sequence_parameter_sets: vec![vec![0x67]],
+            picture_parameter_sets: vec![vec![0x68]],
+        };
+
+        assert_eq!(
+            configuration.access_unit_to_annex_b(&[0, 0, 0, 1, 0xe5]),
+            Err(AvcConfigError::InvalidNalHeader)
+        );
+        assert_eq!(
+            configuration.access_unit_to_annex_b(&[0, 0, 0, 1, 0x00]),
+            Err(AvcConfigError::InvalidNalHeader)
+        );
+        assert_eq!(
+            configuration.access_unit_to_annex_b(&[0, 0, 0, 1, 0x65]),
+            Ok(vec![0, 0, 0, 1, 0x65])
         );
     }
 
