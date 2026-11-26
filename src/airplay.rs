@@ -94,6 +94,9 @@ pub fn pipeline_status_label() -> &'static str {
 
 #[cfg(windows)]
 pub(super) fn set_pipeline_stage(stage: u8) {
+    if stage <= 8 {
+        PIPELINE_FRAME_SEQUENCE.store(0, Ordering::Release);
+    }
     PIPELINE_STAGE.store(stage, Ordering::Release);
 }
 
