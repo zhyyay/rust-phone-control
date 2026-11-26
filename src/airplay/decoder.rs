@@ -237,7 +237,9 @@ impl<'a> MediaBufferLock<'a> {
 
     fn unlock(mut self) -> Result<(), MediaFoundationError> {
         let result = unsafe { self.buffer.Unlock() };
-        self.locked = false;
+        if result.is_ok() {
+            self.locked = false;
+        }
         result.map_err(|error| MediaFoundationError::BufferFailed(error.code().0))
     }
 }
