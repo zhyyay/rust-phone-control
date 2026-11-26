@@ -1305,7 +1305,11 @@ pub fn serve_with_fairplay_provider(
                             // older session must not leak into this one.
                             record_received = false;
                             #[cfg(windows)]
-                            super::set_pipeline_stage(if fairplay_video_key.is_some() { 6 } else { 3 });
+                            super::set_pipeline_stage(if fairplay_video_key.is_some() {
+                                6
+                            } else {
+                                3
+                            });
                         }
                         write_binary_plist_response(&mut stream, &request.cseq, &body)?;
                     }
