@@ -3777,15 +3777,21 @@ mod tests {
         let first = packet(101, &[0x10, 0x11, 0x12, 0x13]);
         let second = packet(202, &[0x20, 0x21]);
         // Deliberately split the fixed header and payload over separate writes.
-        client.write_all(&first[..17]).expect("write partial header");
-        client.write_all(&first[17..SCREEN_MIRROR_HEADER_SIZE])
+        client
+            .write_all(&first[..17])
+            .expect("write partial header");
+        client
+            .write_all(&first[17..SCREEN_MIRROR_HEADER_SIZE])
             .expect("finish first header");
-        client.write_all(&first[SCREEN_MIRROR_HEADER_SIZE..SCREEN_MIRROR_HEADER_SIZE + 1])
+        client
+            .write_all(&first[SCREEN_MIRROR_HEADER_SIZE..SCREEN_MIRROR_HEADER_SIZE + 1])
             .expect("write partial first payload");
         // Coalesce the rest of packet one and all of packet two in one TCP write.
         let mut tail = first[SCREEN_MIRROR_HEADER_SIZE + 1..].to_vec();
         tail.extend_from_slice(&second);
-        client.write_all(&tail).expect("write coalesced packet tail");
+        client
+            .write_all(&tail)
+            .expect("write coalesced packet tail");
         client.shutdown(Shutdown::Write).expect("finish TCP stream");
 
         let received_first = receiver
