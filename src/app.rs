@@ -453,6 +453,9 @@ impl Render for PhoneControlApp {
                                     );
                                     changed = true;
                                 }
+                                Err(_) => {
+                                    tracing::debug!(sequence, generation, "Discarding failed fallback from an inactive stream generation");
+                                }
                             }
                         }
 
@@ -495,6 +498,7 @@ impl Render for PhoneControlApp {
                                         frame.uv_stride,
                                         &frame.data,
                                     )
+                                }
                                 }
                             } else {
                                 Err(anyhow::anyhow!("frame belongs to an inactive stream generation"))
