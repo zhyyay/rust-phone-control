@@ -527,7 +527,7 @@ fn process_media_packets(
             None
         }
     };
-    let mut frame_pipeline = None;
+    let mut frame_pipeline: Option<super::decoder::H264FramePipeline<'_>> = None;
     // A rebuilt MFT has no reference pictures; decrypt every packet to keep
     // CTR synchronized, but do not submit delta pictures until an IDR arrives.
     let mut awaiting_idr = false;
@@ -2785,6 +2785,9 @@ mod tests {
         let received = receiver
             .recv_timeout(Duration::from_secs(2))
             .expect("TCP packet forwarded");
+        let MediaWorkerMessage::Packet(received) = received else {
+            panic!("expected a framed media packet");
+        };
         assert_eq!(
             received.packet_type,
             super::super::media::ScreenMirrorPacketType::Video
@@ -2881,16 +2884,22 @@ mod tests {
         worker.join().expect("mirror listener stops");
 
         let first_packet = first_packet.expect("first client packet is received");
-        let second_packet =
-            second_packet.expect("second client packet is received after reconnect");
-        assert_eq!(
-            first_packet.packet_type,
-            crate::airplay::media::ScreenMirrorPacketType::Heartbeat
-        );
-        assert_eq!(
-            second_packet.packet_type,
-            crate::airplay::media::ScreenMirrorPacketType::Heartbeat
-        );
+        let second_packet = second_packet.expect("disconnect marker follows first client packet");
+        let third_message = receiver.recv_timeout(Duration::from_secs(2));
+        running.store(false, Ordering::Release);
+        worker.join().expect("mirror listener stops");
+        let third_message = third_message.expect("second client packet is received after reconnect");
+        assert!(matches!(
+            first_packet,
+            super::MediaWorkerMessage::Packet(ref packet)
+                if packet.packet_type == crate::airplay::media::ScreenMirrorPacketType::Heartbeat
+        ));
+        assert!(matches!(second_packet, super::MediaWorkerMessage::StreamDisconnected));
+        assert!(matches!(
+            third_message,
+            super::MediaWorkerMessage::Packet(ref packet)
+                if packet.packet_type == crate::airplay::media::ScreenMirrorPacketType::Heartbeat
+        ));
     }
 
     #[test]
@@ -3956,7 +3965,11 @@ mod tests {
         let worker_running = Arc::clone(&running);
         let worker_sender = sender.clone();
         let worker = thread::spawn(move || {
-            super::send_packet_while_running(&worker_sender, packet(), &worker_running)
+            super::send_packet_while_running(
+                &worker_sender,
+                super::MediaWorkerMessage::Packet(packet()),
+                &worker_running
+            )
         });
 
         thread::sleep(Duration::from_millis(20));
@@ -4026,6 +4039,12 @@ mod tests {
         let received_second = receiver
             .recv_timeout(Duration::from_secs(2))
             .expect("receive second framed packet");
+        let MediaWorkerMessage::Packet(received_first) = received_first else {
+            panic!("expected first framed media packet");
+        };
+        let MediaWorkerMessage::Packet(received_second) = received_second else {
+            panic!("expected second framed media packet");
+        };
         assert_eq!(received_first.timestamp, 101);
         assert_eq!(received_first.payload, vec![0x10, 0x11, 0x12, 0x13]);
         assert_eq!(received_second.timestamp, 202);
