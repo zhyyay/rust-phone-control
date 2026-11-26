@@ -854,7 +854,13 @@ pub fn split_annex_b(data: &[u8]) -> Vec<NalUnit<'_>> {
     loop {
         let payload_start = start + code_len;
         let next = find_start_code(data, payload_start);
-        let payload_end = next.map_or(data.len(), |(offset, _)| offset);
+        let raw_payload_end = next.map_or(data.len(), |(offset, _)| offset);
+        // Annex-B permits trailing_zero_8bits between NAL units and at the
+        // end of the byte stream. They are framing bytes, not part of the NAL.
+        let mut payload_end = raw_payload_end;
+        while payload_end > payload_start && data[payload_end - 1] == 0 {
+            payload_end -= 1;
+        }
 
         if payload_start < payload_end {
             units.push(NalUnit {
@@ -1421,6 +1427,17 @@ impl<'a> Nv12Frame<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn annex_b_split_excludes_trailing_zero_bytes_from_each_nal() {
+        let data = [
+            0, 0, 0, 1, 0x67, 0x64, 0, 0, 0, 1, 0x68, 0xee, 0, 0,
+        ];
+        let units = split_annex_b(&data);
+        assert_eq!(units.len(), 2);
+        assert_eq!(units[0].bytes, &[0x67, 0x64]);
+        assert_eq!(units[1].bytes, &[0x68, 0xee]);
+    }
 
     #[test]
     fn decoder_initialization_policy_allows_only_two_attempts_per_configuration() {
