@@ -171,9 +171,11 @@ impl Render for PhoneControlApp {
                 let mut last_mailbox_published = 0u64;
                 let mut last_mailbox_replaced = 0u64;
                 let mut last_mailbox_consumed = 0u64;
+                let mut last_mailbox_cleared = 0u64;
                 let mut last_metrics_mailbox_published = 0u64;
                 let mut last_metrics_mailbox_consumed = 0u64;
                 let mut last_metrics_mailbox_replaced = 0u64;
+                let mut last_metrics_mailbox_cleared = 0u64;
                 let mut last_presented_frames = 0u64;
                 let mut last_metrics_at = Instant::now();
                 let mut mailbox_age_total_ms = 0.0f64;
@@ -243,12 +245,14 @@ impl Render for PhoneControlApp {
                                     replaced_per_sec = stats.replaced_before_consumption
                                         .saturating_sub(last_mailbox_replaced),
                                     consumed_per_sec = stats.consumed.saturating_sub(last_mailbox_consumed),
+                                    cleared_per_sec = stats.cleared.saturating_sub(last_mailbox_cleared),
                                     pending = stats.pending,
                                     "Decoded video frame mailbox"
                                 );
                                 last_mailbox_published = stats.published;
                                 last_mailbox_replaced = stats.replaced_before_consumption;
                                 last_mailbox_consumed = stats.consumed;
+                                last_mailbox_cleared = stats.cleared;
                             }
                             Ok(None) => {}
                             Err(error) => tracing::debug!(%error, "Could not read video frame mailbox stats"),
@@ -284,7 +288,7 @@ impl Render for PhoneControlApp {
                             crate::video_renderer::preview_metrics();
                         let elapsed = last_metrics_at.elapsed().as_secs_f64().max(0.001);
                         let fps = presented.saturating_sub(last_presented_frames) as f64 / elapsed;
-                        let (decoded_fps, consumed_fps, replaced_fps) =
+                        let (decoded_fps, consumed_fps, replaced_fps, cleared_fps) =
                             crate::airplay::video_frame_mailbox_stats()
                                 .ok()
                                 .flatten()
@@ -298,16 +302,21 @@ impl Render for PhoneControlApp {
                                     let replaced = stats
                                         .replaced_before_consumption
                                         .saturating_sub(last_metrics_mailbox_replaced);
+                                    let cleared = stats
+                                        .cleared
+                                        .saturating_sub(last_metrics_mailbox_cleared);
                                     last_metrics_mailbox_published = stats.published;
                                     last_metrics_mailbox_consumed = stats.consumed;
                                     last_metrics_mailbox_replaced = stats.replaced_before_consumption;
+                                    last_metrics_mailbox_cleared = stats.cleared;
                                     (
                                         published as f64 / elapsed,
                                         consumed as f64 / elapsed,
                                         replaced as f64 / elapsed,
+                                        cleared as f64 / elapsed,
                                     )
                                 })
-                                .unwrap_or((0.0, 0.0, 0.0));
+                                .unwrap_or((0.0, 0.0, 0.0, 0.0));
                         let mailbox_age_avg_ms = if mailbox_age_samples == 0 {
                             0.0
                         } else {
@@ -321,8 +330,8 @@ impl Render for PhoneControlApp {
                         last_presented_frames = presented;
                         last_metrics_at = Instant::now();
                         Some(format!(
-                            "D3D11 · {:.1} FPS · 解码 {:.1}/s · 消费 {:.1}/s · 覆盖 {:.1}/s · 等帧 {:.1}/{:.1}ms · 过期丢弃 {:.1}/s · Present {} · 上传 {} · 重建 {} · 错误 {}",
-                            fps, decoded_fps, consumed_fps, replaced_fps, mailbox_age_avg_ms, mailbox_age_max_ms, stale_drops_per_sec, presented, uploaded, recoveries, render_errors
+                            "D3D11 · {:.1} FPS · 解码 {:.1}/s · 消费 {:.1}/s · 覆盖 {:.1}/s · 清空 {:.1}/s · 等帧 {:.1}/{:.1}ms · 过期丢弃 {:.1}/s · Present {} · 上传 {} · 重建 {} · 错误 {}",
+                            fps, decoded_fps, consumed_fps, replaced_fps, cleared_fps, mailbox_age_avg_ms, mailbox_age_max_ms, stale_drops_per_sec, presented, uploaded, recoveries, render_errors
                         ))
                     } else {
                         None
