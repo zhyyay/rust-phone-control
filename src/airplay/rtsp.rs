@@ -509,6 +509,9 @@ fn process_media_packets(
         }
     };
     let mut frame_pipeline = None;
+    // A rebuilt MFT has no reference pictures; decrypt every packet to keep
+    // CTR synchronized, but do not submit delta pictures until an IDR arrives.
+    let mut awaiting_idr = false;
     let mut decoder_init_policy = super::video::DecoderInitializationPolicy::default();
     let mut processor = super::video::MirrorStreamProcessor::new();
     while let Ok(mut packet) = packets.recv() {
@@ -669,12 +672,45 @@ fn process_media_packets(
                 video_payload_bytes = video_payload_bytes.saturating_add(packet_payload_bytes);
                 if let Some(cipher) = mirror_cipher.as_mut() {
                     if let Some(pipeline) = frame_pipeline.as_mut() {
-                        match pipeline.submit_encrypted_access_unit(
-                            &processor,
-                            cipher,
-                            &packet.payload,
-                        ) {
-                            Ok(published_frames) => {
+                        let submit_result = if awaiting_idr {
+                            processor
+                                .decrypt_video_packet(cipher, &packet.payload)
+                                .map_err(super::decoder::MediaFoundationError::VideoDecryption)
+                                .and_then(|access_unit| {
+                                    if super::video::access_unit_contains_h264_idr(&access_unit) {
+                                        awaiting_idr = false;
+                                        tracing::info!(
+                                            %packet.peer_addr,
+                                            timestamp = packet.timestamp,
+                                            "H.264 IDR received; resuming decode after decoder recovery"
+                                        );
+                                        pipeline.submit_access_unit(&access_unit).map(Some)
+                                    } else {
+                                        Ok(None)
+                                    }
+                                })
+                        } else {
+                            pipeline
+                                .submit_encrypted_access_unit(
+                                    &processor,
+                                    cipher,
+                                    &packet.payload,
+                                )
+                                .map(Some)
+                        };
+                        match submit_result {
+                            Ok(None) => {
+                                decrypted_access_units_discarded =
+                                    decrypted_access_units_discarded.saturating_add(1);
+                                tracing::trace!(
+                                    %packet.peer_addr,
+                                    timestamp = packet.timestamp,
+                                    payload_bytes,
+                                    received,
+                                    "Discarded decrypted H.264 delta access unit while waiting for IDR"
+                                );
+                            }
+                            Ok(Some(published_frames)) => {
                                 decrypted_access_units_submitted =
                                     decrypted_access_units_submitted.saturating_add(1);
                                 decoded_frames_published = decoded_frames_published
@@ -736,12 +772,15 @@ fn process_media_packets(
                                 };
 
                                 match recovery {
-                                    Ok(()) => tracing::warn!(
+                                    Ok(()) => {
+                                        awaiting_idr = true;
+                                        tracing::warn!(
                                         %packet.peer_addr,
                                         timestamp = packet.timestamp,
                                         %error,
-                                        "AirPlay decoder failed; rebuilt Media Foundation pipeline and retained stream cipher"
-                                    ),
+                                        "AirPlay decoder failed; rebuilt Media Foundation pipeline and retained stream cipher; waiting for IDR"
+                                        )
+                                    }
                                     Err(recovery_error) => {
                                         if let Err(clear_error) = frames.clear() {
                                             tracing::warn!(%clear_error, "Could not clear preview after decoder failure");
