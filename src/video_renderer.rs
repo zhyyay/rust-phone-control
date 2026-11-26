@@ -701,44 +701,61 @@ impl D3d11Device {
             .context("IDXGIFactory2::CreateSwapChainForHwnd failed")?;
             self.swap_chain = Some(swap_chain);
             self.swap_chain_hwnd = requested_hwnd;
-            self.rebuild_render_target()?;
             self.swap_chain_size = Some((width, height));
+            if let Err(error) = self.rebuild_render_target() {
+                // Do not leave a half-initialized HWND-bound chain behind.
+                // The next sync can retry creation from a clean state.
+                self.swap_chain = None;
+                self.swap_chain_size = None;
+                self.swap_chain_hwnd = 0;
+                return Err(error).context("could not initialize the new swap-chain render target");
+            }
             tracing::info!(
                 width,
                 height,
                 "D3D11 HWND swap chain created; native surface remains hidden"
             );
-        } else if self.swap_chain_size != Some((width, height)) {
-            // Unbind the RTV before dropping our reference. D3D11's immediate
-            // context otherwise keeps the old back buffer alive and
-            // ResizeBuffers can fail with DXGI_ERROR_INVALID_CALL.
-            // SAFETY: the render target belongs to this immediate context.
-            unsafe {
-                self.immediate_context.OMSetRenderTargets(
-                    None,
-                    None::<&windows_062::Win32::Graphics::Direct3D11::ID3D11DepthStencilView>,
-                );
+        } else {
+            if self.swap_chain_size != Some((width, height)) {
+                // Unbind the RTV before dropping our reference. D3D11's immediate
+                // context otherwise keeps the old back buffer alive and
+                // ResizeBuffers can fail with DXGI_ERROR_INVALID_CALL.
+                // SAFETY: the render target belongs to this immediate context.
+                unsafe {
+                    self.immediate_context.OMSetRenderTargets(
+                        None,
+                        None::<&windows_062::Win32::Graphics::Direct3D11::ID3D11DepthStencilView>,
+                    );
+                }
+                self.render_target_view = None;
+                let swap_chain = self
+                    .swap_chain
+                    .as_ref()
+                    .ok_or_else(|| anyhow!("DXGI swap chain unexpectedly absent"))?;
+                // SAFETY: swap chain belongs to this renderer and all old RTV refs
+                // have been dropped before resizing its buffers.
+                unsafe {
+                    swap_chain.ResizeBuffers(
+                        0,
+                        width,
+                        height,
+                        DXGI_FORMAT_UNKNOWN,
+                        DXGI_SWAP_CHAIN_FLAG(0),
+                    )
+                }
+                .context("IDXGISwapChain::ResizeBuffers failed")?;
+                // Record the successful buffer resize before RTV creation. If
+                // GetBuffer/CreateRenderTargetView fails, the next sync retries
+                // RTV creation without issuing ResizeBuffers a second time.
+                self.swap_chain_size = Some((width, height));
+                tracing::debug!(width, height, "D3D11 swap chain buffers resized");
             }
-            self.render_target_view = None;
-            let swap_chain = self
-                .swap_chain
-                .as_ref()
-                .ok_or_else(|| anyhow!("DXGI swap chain unexpectedly absent"))?;
-            // SAFETY: swap chain belongs to this renderer and all old RTV refs
-            // have been dropped before resizing its buffers.
-            unsafe {
-                swap_chain.ResizeBuffers(
-                    0,
-                    width,
-                    height,
-                    DXGI_FORMAT_UNKNOWN,
-                    DXGI_SWAP_CHAIN_FLAG(0),
-                )
+
+            // RTV creation is independently retryable after a transient failure.
+            if self.render_target_view.is_none() {
+                self.rebuild_render_target()
+                    .context("could not restore the swap-chain render target")?;
             }
-            .context("IDXGISwapChain::ResizeBuffers failed")?;
-            self.rebuild_render_target()?;
-            self.swap_chain_size = Some((width, height));
-            tracing::debug!(width, height, "D3D11 swap chain resized");
         }
 
         Ok(())
