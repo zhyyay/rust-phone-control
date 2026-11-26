@@ -3,9 +3,9 @@
 //! The handler supports persistent RTSP connections, bounded request bodies,
 //! OPTIONS, /info, Pair-Setup, Pair-Verify, FairPlay framing, session and stream
 //! SETUP, RECORD, feedback, and TEARDOWN. FairPlay cryptographic responses
-//! and bounded media transport. End-to-end video still requires an authorized
-//! FairPlay SAP provider and verified sender-packet decryption before frames can
-//! be decoded and presented.
+//! and bounded media transport. When an authorized FairPlay SAP provider
+//! supplies authenticated keys, the media worker decrypts ordered access units,
+//! submits H.264 to Media Foundation, and publishes decoded frames to the UI.
 
 use std::io::{self, Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -665,6 +665,15 @@ fn process_media_packets(
                                     decrypted_access_units_submitted.saturating_add(1);
                                 decoded_frames_published = decoded_frames_published
                                     .saturating_add(published_frames as u64);
+                                if published_frames > 0 && decoded_frames_published == published_frames as u64 {
+                                    #[cfg(windows)]
+                                    super::set_pipeline_stage(9);
+                                    tracing::info!(
+                                        published_frames,
+                                        sequence = frames.stats().ok().map(|stats| stats.published),
+                                        "First decoded AirPlay video frame published to preview mailbox"
+                                    );
+                                }
                                 tracing::debug!(
                                 %packet.peer_addr,
                                 timestamp = packet.timestamp,
