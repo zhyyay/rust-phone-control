@@ -577,9 +577,7 @@ impl<'runtime> H264Decoder<'runtime> {
                     frames.extend(drained);
                     return Ok(frames);
                 }
-                Err(MediaFoundationError::ProcessInputFailed(hr))
-                    if hr == MF_E_NOTACCEPTING_HR =>
-                {
+                Err(MediaFoundationError::ProcessInputFailed(hr)) if hr == MF_E_NOTACCEPTING_HR => {
                     if frames.len() == MAX_FRAMES_PER_DRAIN {
                         return Err(MediaFoundationError::OutputBacklog);
                     }
