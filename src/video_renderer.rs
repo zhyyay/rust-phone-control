@@ -1115,9 +1115,7 @@ float4 PSMain(VertexOutput input) : SV_Target {
         // VUI colorimetry through OwnedNv12Frame, so use the conventional
         // resolution-based fallback rather than applying BT.601 to all video.
         let use_bt709 = width >= 1280 || height >= 720;
-        if self.nv12_pixel_shader.is_some()
-            && self.nv12_shader_uses_bt709 == Some(use_bt709)
-        {
+        if self.nv12_pixel_shader.is_some() && self.nv12_shader_uses_bt709 == Some(use_bt709) {
             return Ok(());
         }
         self.nv12_pixel_shader = None;
@@ -1127,7 +1125,8 @@ float4 PSMain(VertexOutput input) : SV_Target {
         } else {
             (1.596027_f32, -0.391762_f32, -0.812968_f32, 2.017232_f32)
         };
-        let source = format!(r#"
+        let source = format!(
+            r#"
 struct VertexOutput {{
     float4 position : SV_Position;
     float2 uv : TEXCOORD0;
@@ -1147,7 +1146,9 @@ float4 PSMain(VertexOutput input) : SV_Target {{
     );
     return float4(saturate(rgb), 1.0);
 }}
-"#, coefficients.0, coefficients.1, coefficients.2, coefficients.3);
+"#,
+            coefficients.0, coefficients.1, coefficients.2, coefficients.3
+        );
         let source = source.as_bytes();
         let mut bytecode: Option<ID3DBlob> = None;
         // SAFETY: shader source and entry-point strings remain alive during compilation.
