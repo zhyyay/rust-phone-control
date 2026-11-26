@@ -202,13 +202,25 @@ pub(crate) fn sync_native_video_surface(
             let device = renderer
                 .as_mut()
                 .ok_or_else(|| anyhow!("D3D11 renderer is not initialized"))?;
+            let surface_changed = device.swap_chain.is_none()
+                || device.swap_chain_hwnd != child_raw
+                || device.swap_chain_size != Some((width as u32, height as u32))
+                || device.render_target_view.is_none();
+
+            if surface_changed {
+                // Hide only while the HWND-bound back buffer is being created
+                // or resized. sync_native_video_surface runs during layout;
+                // hiding unconditionally here can blank a freshly presented
+                // frame on the next GPUI prepaint and cause visible flicker.
+                // SAFETY: child_hwnd is the owned native preview child.
+                unsafe {
+                    ShowWindow(child_hwnd, SW_HIDE);
+                }
+            }
+
             device.ensure_swap_chain(child_hwnd, width as u32, height as u32)
         })?;
 
-        // Never expose the diagnostic clear color as if it were a phone image.
-        unsafe {
-            ShowWindow(child_hwnd, SW_HIDE);
-        }
         Ok(())
     })
 }
