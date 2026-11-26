@@ -1218,10 +1218,20 @@ mod tests {
     }
 
     #[test]
-    fn decoded_frame_payload_total_checks_overflow() {
+    fn decoded_frame_payload_total_sums_frame_sizes() {
         let frames = vec![
-            DecodedNv12Frame { width: 2, height: 2, stride: 2, data: vec![0; 6] },
-            DecodedNv12Frame { width: 2, height: 2, stride: 2, data: vec![0; 10] },
+            DecodedNv12Frame {
+                width: 2,
+                height: 2,
+                stride: 2,
+                data: vec![0; 6],
+            },
+            DecodedNv12Frame {
+                width: 2,
+                height: 2,
+                stride: 2,
+                data: vec![0; 10],
+            },
         ];
         assert_eq!(frame_bytes_total(&frames).unwrap(), 16);
     }
