@@ -497,6 +497,7 @@ impl Render for PhoneControlApp {
                                         frame.y_stride,
                                         frame.uv_stride,
                                         &frame.data,
+                                        frame.color_matrix,
                                     )
                                 }
                                 }
