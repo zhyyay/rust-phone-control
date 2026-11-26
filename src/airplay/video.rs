@@ -926,6 +926,13 @@ pub fn classify_nal(codec: VideoCodec, nal: &[u8]) -> NalUnitKind {
             if nal.len() < 2 || nal[0] & 0x80 != 0 || nal[1] & 0x07 == 0 {
                 return NalUnitKind::Invalid;
             }
+            // This receiver currently supports only single-layer HEVC streams.
+            // Reject non-zero nuh_layer_id rather than passing an unsupported
+            // multilayer NAL to a decoder configured for the base layer.
+            let layer_id = ((nal[0] & 0x01) << 5) | (nal[1] >> 3);
+            if layer_id != 0 {
+                return NalUnitKind::Invalid;
+            }
             match (nal[0] >> 1) & 0x3f {
                 0..=31 => {
                     if matches!((nal[0] >> 1) & 0x3f, 19 | 20) {
@@ -1458,6 +1465,15 @@ mod tests {
         assert_eq!(
             classify_nal(VideoCodec::Hevc, &[0x26, 0x01]),
             NalUnitKind::HevcIdr
+        );
+        // nuh_layer_id is split across bit 0 of byte 0 and bits 3..7 of byte 1.
+        assert_eq!(
+            classify_nal(VideoCodec::Hevc, &[0x27, 0x01]),
+            NalUnitKind::Invalid
+        );
+        assert_eq!(
+            classify_nal(VideoCodec::Hevc, &[0x26, 0x09]),
+            NalUnitKind::Invalid
         );
         assert_eq!(
             classify_nal(VideoCodec::Hevc, &[0x42]),
