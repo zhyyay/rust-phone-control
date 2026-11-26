@@ -2877,18 +2877,18 @@ mod tests {
             .expect("reconnected client sends heartbeat");
         drop(second);
 
-        let first_packet = receiver.recv_timeout(Duration::from_secs(2));
-        let second_packet = receiver.recv_timeout(Duration::from_secs(2));
+        let first_packet = receiver
+            .recv_timeout(Duration::from_secs(2))
+            .expect("first client packet is received");
+        let second_packet = receiver
+            .recv_timeout(Duration::from_secs(2))
+            .expect("disconnect marker follows first client packet");
+        let third_message = receiver
+            .recv_timeout(Duration::from_secs(2))
+            .expect("second client packet is received after reconnect");
 
         running.store(false, Ordering::Release);
         worker.join().expect("mirror listener stops");
-
-        let first_packet = first_packet.expect("first client packet is received");
-        let second_packet = second_packet.expect("disconnect marker follows first client packet");
-        let third_message = receiver.recv_timeout(Duration::from_secs(2));
-        running.store(false, Ordering::Release);
-        worker.join().expect("mirror listener stops");
-        let third_message = third_message.expect("second client packet is received after reconnect");
         assert!(matches!(
             first_packet,
             super::MediaWorkerMessage::Packet(ref packet)
