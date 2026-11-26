@@ -445,6 +445,9 @@ pub fn stop() -> anyhow::Result<()> {
 
     tracing::info!("AirPlay shutdown: stopping control server and client workers");
     drop(server);
+    // Client-session guards may restore the waiting label while workers exit.
+    // Publish the stopped state only after every RTSP worker has been joined.
+    PIPELINE_STAGE.store(0, Ordering::Release);
     tracing::info!("AirPlay shutdown: control server stopped");
 
     drop(advertisement);
