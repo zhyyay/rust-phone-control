@@ -264,8 +264,19 @@ impl Render for PhoneControlApp {
                         .lock()
                         .ok()
                         .and_then(|mut result| result.take());
+                    // A frame may arrive after this tick consumed its mailbox
+                    // snapshot but before the completed fallback is published.
+                    // Treat a pending frame as newer and let the next tick
+                    // decide whether it is fresh enough to present.
+                    let newer_frame_pending = if completed_fallback.is_some() {
+                        crate::airplay::has_pending_video_frame().unwrap_or(true)
+                    } else {
+                        false
+                    };
                     let completed_fallback = completed_fallback.filter(
-                        |(sequence, _, _, _, _)| *sequence >= latest_observed_frame_sequence,
+                        |(sequence, _, _, _, _)| {
+                            !newer_frame_pending && *sequence >= latest_observed_frame_sequence
+                        },
                     );
 
                     let metrics = if refresh_pairing {
