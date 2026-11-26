@@ -259,6 +259,55 @@ impl Drop for MediaBufferLock<'_> {
 }
 
 #[cfg(windows)]
+/// Owns the COM fields of an MFT_OUTPUT_DATA_BUFFER while ProcessOutput is
+/// executing. The generated bindings use ManuallyDrop for these fields because
+/// Media Foundation may write COM references into them. Keeping this guard
+/// alive across the FFI call also makes panic/unwind cleanup explicit.
+struct ProcessOutputBufferGuard {
+    output: *mut MFT_OUTPUT_DATA_BUFFER,
+    active: bool,
+}
+
+#[cfg(windows)]
+impl ProcessOutputBufferGuard {
+    fn new(output: &mut MFT_OUTPUT_DATA_BUFFER) -> Self {
+        Self {
+            output,
+            active: true,
+        }
+    }
+
+    fn take(mut self) -> (
+        Option<windows_062::Win32::Media::MediaFoundation::IMFSample>,
+        Option<windows_062::Win32::Media::MediaFoundation::IMFCollection>,
+    ) {
+        self.active = false;
+        // SAFETY: the guard exclusively owns cleanup of these ManuallyDrop
+        // fields until they are taken exactly once.
+        unsafe {
+            (
+                ManuallyDrop::take(&mut (*self.output).pSample),
+                ManuallyDrop::take(&mut (*self.output).pEvents),
+            )
+        }
+    }
+}
+
+#[cfg(windows)]
+impl Drop for ProcessOutputBufferGuard {
+    fn drop(&mut self) {
+        if self.active {
+            // SAFETY: the guard was created from a live output buffer and is
+            // the sole owner of these ManuallyDrop COM fields.
+            unsafe {
+                drop(ManuallyDrop::take(&mut (*self.output).pSample));
+                drop(ManuallyDrop::take(&mut (*self.output).pEvents));
+            }
+        }
+    }
+}
+
+#[cfg(windows)]
 pub struct H264Decoder<'runtime> {
     _runtime: &'runtime MediaFoundationRuntime,
     transform: windows_062::Win32::Media::MediaFoundation::IMFTransform,
@@ -600,15 +649,16 @@ impl<'runtime> H264Decoder<'runtime> {
                 dwStatus: 0,
                 pEvents: ManuallyDrop::new(None),
             };
+            // Keep ownership of both generated COM fields across the FFI call.
+            // If an unwind occurs while ProcessOutput is executing, the guard
+            // releases any sample/event references that were left in the buffer.
+            let output_guard = ProcessOutputBufferGuard::new(&mut output);
             let mut status = 0u32;
             let result = unsafe {
                 self.transform
                     .ProcessOutput(0, std::slice::from_mut(&mut output), &mut status)
             };
-            // These generated fields are ManuallyDrop because COM references may
-            // be returned even when ProcessOutput reports a stream-change status.
-            let sample = unsafe { ManuallyDrop::take(&mut output.pSample) };
-            let events = unsafe { ManuallyDrop::take(&mut output.pEvents) };
+            let (sample, events) = output_guard.take();
             drop(events);
 
             if let Err(error) = result {
