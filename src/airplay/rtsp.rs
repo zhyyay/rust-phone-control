@@ -3742,6 +3742,68 @@ mod tests {
     }
 
     #[test]
+    fn mirror_tcp_reader_preserves_packet_boundaries_across_fragmented_and_coalesced_writes() {
+        use std::io::Write;
+        use std::net::{Shutdown, TcpListener};
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::{Arc, mpsc};
+        use std::thread;
+        use std::time::Duration;
+
+        fn packet(timestamp: u64, payload: &[u8]) -> Vec<u8> {
+            let mut bytes = vec![0u8; SCREEN_MIRROR_HEADER_SIZE + payload.len()];
+            bytes[0..4].copy_from_slice(&(payload.len() as u32).to_le_bytes());
+            bytes[4..6].copy_from_slice(&0u16.to_le_bytes());
+            bytes[8..16].copy_from_slice(&timestamp.to_le_bytes());
+            bytes[SCREEN_MIRROR_HEADER_SIZE..].copy_from_slice(payload);
+            bytes
+        }
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind TCP listener");
+        let mut client = TcpStream::connect(listener.local_addr().expect("listener address"))
+            .expect("connect TCP client");
+        let (server, peer_addr) = listener.accept().expect("accept TCP client");
+        server
+            .set_read_timeout(Some(Duration::from_millis(50)))
+            .expect("set read timeout");
+
+        let running = Arc::new(AtomicBool::new(true));
+        let worker_running = Arc::clone(&running);
+        let (sender, receiver) = mpsc::sync_channel(4);
+        let worker = thread::spawn(move || {
+            super::read_mirror_stream(server, peer_addr, &sender, &worker_running);
+        });
+
+        let first = packet(101, &[0x10, 0x11, 0x12, 0x13]);
+        let second = packet(202, &[0x20, 0x21]);
+        // Deliberately split the fixed header and payload over separate writes.
+        client.write_all(&first[..17]).expect("write partial header");
+        client.write_all(&first[17..SCREEN_MIRROR_HEADER_SIZE])
+            .expect("finish first header");
+        client.write_all(&first[SCREEN_MIRROR_HEADER_SIZE..SCREEN_MIRROR_HEADER_SIZE + 1])
+            .expect("write partial first payload");
+        // Coalesce the rest of packet one and all of packet two in one TCP write.
+        let mut tail = first[SCREEN_MIRROR_HEADER_SIZE + 1..].to_vec();
+        tail.extend_from_slice(&second);
+        client.write_all(&tail).expect("write coalesced packet tail");
+        client.shutdown(Shutdown::Write).expect("finish TCP stream");
+
+        let received_first = receiver
+            .recv_timeout(Duration::from_secs(2))
+            .expect("receive first framed packet");
+        let received_second = receiver
+            .recv_timeout(Duration::from_secs(2))
+            .expect("receive second framed packet");
+        assert_eq!(received_first.timestamp, 101);
+        assert_eq!(received_first.payload, vec![0x10, 0x11, 0x12, 0x13]);
+        assert_eq!(received_second.timestamp, 202);
+        assert_eq!(received_second.payload, vec![0x20, 0x21]);
+
+        running.store(false, Ordering::Release);
+        worker.join().expect("mirror TCP reader exits");
+    }
+
+    #[test]
     fn unsupported_info_qualifier_is_rejected() {
         let mut request = Dictionary::new();
         request.insert(
