@@ -633,7 +633,7 @@ impl<'runtime> H264Decoder<'runtime> {
         let mut frames = Vec::with_capacity(limit);
         let mut decoded_bytes = 0usize;
         for _ in 0..limit {
-            match self.try_get_frame()? {
+            match self.try_get_frame_with_budget(byte_budget.saturating_sub(decoded_bytes))? {
                 Some(frame) => {
                     let next_bytes = decoded_bytes
                         .checked_add(frame.data.len())
@@ -652,6 +652,13 @@ impl<'runtime> H264Decoder<'runtime> {
 
     /// Retrieve one decoded NV12 frame, or None when more input is required.
     pub fn try_get_frame(&mut self) -> Result<Option<DecodedNv12Frame>, MediaFoundationError> {
+        self.try_get_frame_with_budget(MAX_DECODED_NV12_BYTES)
+    }
+
+    fn try_get_frame_with_budget(
+        &mut self,
+        max_frame_bytes: usize,
+    ) -> Result<Option<DecodedNv12Frame>, MediaFoundationError> {
         const MAX_STREAM_CHANGE_RETRIES: usize = 4;
         let mut stream_change_retries = 0;
 
@@ -776,6 +783,9 @@ impl<'runtime> H264Decoder<'runtime> {
                 as usize;
             if current_length > MAX_DECODED_NV12_BYTES {
                 return Err(MediaFoundationError::OutputBufferTooLarge);
+            }
+            if current_length > max_frame_bytes {
+                return Err(MediaFoundationError::OutputMemoryBudgetExceeded);
             }
             if current_length < required_length {
                 return Err(MediaFoundationError::OutputBufferTooSmall {
