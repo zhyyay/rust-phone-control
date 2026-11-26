@@ -500,6 +500,7 @@ impl Render for PhoneControlApp {
                                     )
                                 }
                                 }
+                                }
                             } else {
                                 Err(anyhow::anyhow!("frame belongs to an inactive stream generation"))
                             };
@@ -573,10 +574,14 @@ impl Render for PhoneControlApp {
                                                     // renderer recovery invalidated this fallback.
                                                     if !cancel.load(Ordering::Acquire)
                                                         && !conversion_cancel.load(Ordering::Acquire)
+                                                        && crate::airplay::is_video_frame_generation_current(generation)
+                                                            .unwrap_or(false)
                                                     {
                                                         if let Ok(mut slot) = result_slot.lock() {
                                                             if !cancel.load(Ordering::Acquire)
                                                                 && !conversion_cancel.load(Ordering::Acquire)
+                                                                && crate::airplay::is_video_frame_generation_current(generation)
+                                                                    .unwrap_or(false)
                                                             {
                                                                 *slot = Some((
                                                                     sequence,
