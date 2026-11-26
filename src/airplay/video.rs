@@ -330,6 +330,20 @@ pub struct AvcVideoDimensions {
     pub height: u32,
 }
 
+/// H.264 VUI matrix coefficients relevant to NV12-to-RGB conversion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AvcColorMatrix {
+    Bt601,
+    Bt709,
+    Unspecified,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct AvcSpsInfo {
+    dimensions: AvcVideoDimensions,
+    color_matrix: AvcColorMatrix,
+}
+
 impl AvcConfiguration {
     /// Read the dimensions from the first SPS in this configuration.
     ///
@@ -338,12 +352,23 @@ impl AvcConfiguration {
     pub fn video_dimensions(&self) -> Result<Option<AvcVideoDimensions>, AvcConfigError> {
         self.sequence_parameter_sets
             .first()
-            .map(|sps| parse_h264_sps_dimensions(sps))
+            .map(|sps| parse_h264_sps_info(sps).map(|info| info.dimensions))
+            .transpose()
+    }
+
+    /// Read the first SPS VUI matrix coefficients when present.
+    ///
+    /// Unspecified or absent VUI metadata is reported explicitly so renderers
+    /// can apply a documented fallback instead of pretending it was signaled.
+    pub fn video_color_matrix(&self) -> Result<Option<AvcColorMatrix>, AvcConfigError> {
+        self.sequence_parameter_sets
+            .first()
+            .map(|sps| parse_h264_sps_info(sps).map(|info| info.color_matrix))
             .transpose()
     }
 }
 
-fn parse_h264_sps_dimensions(sps: &[u8]) -> Result<AvcVideoDimensions, AvcConfigError> {
+fn parse_h264_sps_info(sps: &[u8]) -> Result<AvcSpsInfo, AvcConfigError> {
     if sps.len() < 4 || sps[0] & 0x80 != 0 || sps[0] & 0x1f != 7 {
         return Err(AvcConfigError::InvalidSps);
     }
@@ -511,10 +536,97 @@ fn parse_h264_sps_dimensions(sps: &[u8]) -> Result<AvcVideoDimensions, AvcConfig
         return Err(AvcConfigError::InvalidSps);
     }
 
-    Ok(AvcVideoDimensions {
+    let dimensions = AvcVideoDimensions {
         width: u32::try_from(width).map_err(|_| AvcConfigError::InvalidSps)?,
         height: u32::try_from(height).map_err(|_| AvcConfigError::InvalidSps)?,
+    };
+    let color_matrix = if bits.read_bit()? {
+        parse_h264_vui_color_matrix(&mut bits)?
+    } else {
+        AvcColorMatrix::Unspecified
+    };
+
+    Ok(AvcSpsInfo {
+        dimensions,
+        color_matrix,
     })
+}
+
+fn parse_h264_vui_color_matrix(bits: &mut H264BitReader<'_>) -> Result<AvcColorMatrix, AvcConfigError> {
+    if bits.read_bit()? {
+        let aspect_ratio_idc = bits.read_bits(8)?;
+        if aspect_ratio_idc == 255 {
+            bits.read_bits(16)?;
+            bits.read_bits(16)?;
+        }
+    }
+    if bits.read_bit()? {
+        bits.read_bit()?;
+    }
+    let mut matrix = AvcColorMatrix::Unspecified;
+    if bits.read_bit()? {
+        bits.read_bits(3)?; // video_format
+        bits.read_bit()?; // video_full_range_flag
+        if bits.read_bit()? {
+            let _colour_primaries = bits.read_bits(8)?;
+            let _transfer_characteristics = bits.read_bits(8)?;
+            matrix = match bits.read_bits(8)? {
+                1 => AvcColorMatrix::Bt709,
+                5 | 6 => AvcColorMatrix::Bt601,
+                _ => AvcColorMatrix::Unspecified,
+            };
+        }
+    }
+    if bits.read_bit()? {
+        bits.read_ue()?;
+        bits.read_ue()?;
+    }
+    if bits.read_bit()? {
+        bits.read_bits(32)?;
+        bits.read_bits(32)?;
+        bits.read_bit()?;
+    }
+    let nal_hrd = bits.read_bit()?;
+    if nal_hrd {
+        skip_h264_hrd_parameters(bits)?;
+    }
+    let vcl_hrd = bits.read_bit()?;
+    if vcl_hrd {
+        skip_h264_hrd_parameters(bits)?;
+    }
+    if nal_hrd || vcl_hrd {
+        bits.read_bit()?;
+    }
+    bits.read_bit()?; // pic_struct_present_flag
+    if bits.read_bit()? {
+        bits.read_bit()?; // motion_vectors_over_pic_boundaries_flag
+        bits.read_ue()?;
+        bits.read_ue()?;
+        bits.read_ue()?;
+        bits.read_ue()?;
+        bits.read_ue()?;
+        bits.read_ue()?;
+    }
+    Ok(matrix)
+}
+
+fn skip_h264_hrd_parameters(bits: &mut H264BitReader<'_>) -> Result<(), AvcConfigError> {
+    let cpb_count_minus1 = bits.read_ue()?;
+    if cpb_count_minus1 > 31 {
+        return Err(AvcConfigError::InvalidSps);
+    }
+    bits.read_bits(4)?; // bit_rate_scale
+    bits.read_bits(4)?; // cpb_size_scale
+    for _ in 0..=cpb_count_minus1 {
+        bits.read_ue()?;
+        bits.read_ue()?;
+        bits.read_bit()?;
+    }
+    bits.read_bits(5)?;
+    bits.read_bits(5)?;
+    bits.read_bits(5)?;
+    bits.read_bits(5)?;
+    Ok(())
 }
 
 fn skip_scaling_list(bits: &mut H264BitReader<'_>, size: usize) -> Result<(), AvcConfigError> {
