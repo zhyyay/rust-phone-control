@@ -1210,6 +1210,10 @@ fn bgra_frame_to_bmp(
     let pixel_bytes = row_bytes
         .checked_mul(height)
         .ok_or("BMP image size overflow")?;
+    const MAX_FALLBACK_BITMAP_BYTES: usize = 128 * 1024 * 1024;
+    if pixel_bytes > MAX_FALLBACK_BITMAP_BYTES {
+        return Err("fallback bitmap exceeds 128 MiB");
+    }
     let file_bytes = 54usize
         .checked_add(pixel_bytes)
         .ok_or("BMP file size overflow")?;
