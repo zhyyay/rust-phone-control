@@ -19,7 +19,8 @@ use windows_062::Win32::{
     Foundation::{HMODULE, HWND},
     Graphics::{
         Direct3D::{
-            D3D_DRIVER_TYPE_HARDWARE, D3D_FEATURE_LEVEL, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST,
+            D3D_DRIVER_TYPE_HARDWARE, D3D_DRIVER_TYPE_WARP, D3D_FEATURE_LEVEL,
+            D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST,
             Fxc::{D3DCOMPILE_ENABLE_STRICTNESS, D3DCompile},
         },
         Direct3D11::{
@@ -663,9 +664,10 @@ impl D3d11Device {
         let mut device = None;
         let mut immediate_context = None;
 
-        // SAFETY: output pointers refer to valid, writable Option slots for the
-        // duration of the call. The adapter is null to select the default GPU.
-        unsafe {
+        // SAFETY: output slots are valid for both attempts. Prefer the
+        // hardware adapter, but retain a WARP software path for machines,
+        // remote sessions, or drivers that cannot create a hardware device.
+        let hardware_result = unsafe {
             D3D11CreateDevice(
                 None::<&IDXGIAdapter>,
                 D3D_DRIVER_TYPE_HARDWARE,
@@ -677,16 +679,49 @@ impl D3d11Device {
                 None,
                 Some(&mut immediate_context),
             )
-        }
-        .context("D3D11CreateDevice failed for the default hardware adapter")?;
+        };
+        let (driver_name, creation_result) = match hardware_result {
+            Ok(()) => ("hardware", Ok(())),
+            Err(hardware_error) => {
+                tracing::warn!(
+                    error = %hardware_error,
+                    "Hardware D3D11 device creation failed; retrying with WARP"
+                );
+                device = None;
+                immediate_context = None;
+                let warp_result = unsafe {
+                    D3D11CreateDevice(
+                        None::<&IDXGIAdapter>,
+                        D3D_DRIVER_TYPE_WARP,
+                        HMODULE::default(),
+                        D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+                        None,
+                        D3D11_SDK_VERSION,
+                        Some(&mut device),
+                        None,
+                        Some(&mut immediate_context),
+                    )
+                };
+                if let Err(warp_error) = &warp_result {
+                    tracing::error!(
+                        hardware_error = %hardware_error,
+                        warp_error = %warp_error,
+                        "Both hardware and WARP D3D11 device creation failed"
+                    );
+                }
+                ("WARP", warp_result)
+            }
+        };
+        creation_result.context("D3D11CreateDevice failed for both hardware and WARP drivers")?;
 
         let device = device.ok_or_else(|| anyhow!("D3D11CreateDevice returned no device"))?;
         let immediate_context = immediate_context
             .ok_or_else(|| anyhow!("D3D11CreateDevice returned no immediate context"))?;
 
         tracing::info!(
+            driver = driver_name,
             feature_level = ?unsafe { device.GetFeatureLevel() },
-            "D3D11 hardware device created"
+            "D3D11 device created"
         );
 
         Ok(Self {
