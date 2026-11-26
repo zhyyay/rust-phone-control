@@ -1013,6 +1013,7 @@ pub struct H264FramePipeline<'runtime> {
     parameter_sets: Vec<u8>,
     recovery: DecoderRecoveryPolicy,
     frames: std::sync::Arc<crate::airplay::video::LatestFrameMailbox>,
+    color_matrix: crate::airplay::video::AvcColorMatrix,
 }
 
 #[cfg(windows)]
@@ -1030,6 +1031,7 @@ impl<'runtime> H264FramePipeline<'runtime> {
             parameter_sets: Vec::new(),
             recovery: DecoderRecoveryPolicy::default(),
             frames,
+            color_matrix: crate::airplay::video::AvcColorMatrix::Unspecified,
         })
     }
 
@@ -1044,6 +1046,10 @@ impl<'runtime> H264FramePipeline<'runtime> {
             .map_err(MediaFoundationError::InvalidAvcConfiguration)?
             .ok_or(MediaFoundationError::MissingSps)?;
         let mut pipeline = Self::new(runtime, dimensions.width, dimensions.height, frames)?;
+        pipeline.color_matrix = configuration
+            .video_color_matrix()
+            .map_err(MediaFoundationError::InvalidAvcConfiguration)?
+            .unwrap_or(crate::airplay::video::AvcColorMatrix::Unspecified);
 
         // avcC carries the stream's SPS/PPS. Submit them before the first
         // picture so Media Foundation has the codec state needed to decode
@@ -1082,6 +1088,7 @@ impl<'runtime> H264FramePipeline<'runtime> {
                         // for decoder backends that can provide distinct pitches.
                         y_stride: frame.stride,
                         uv_stride: frame.stride,
+                        color_matrix: self.color_matrix,
                         data: frame.data,
                     })
                     .map(|_| ())
