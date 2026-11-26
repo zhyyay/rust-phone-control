@@ -1039,6 +1039,8 @@ pub struct LatestFrameMailboxStats {
     pub replaced_before_consumption: u64,
     pub consumed: u64,
     pub cleared: u64,
+    /// Number of explicit mailbox clear operations, including empty mailboxes.
+    pub clear_events: u64,
     pub pending: bool,
 }
 
@@ -1049,6 +1051,7 @@ pub struct LatestFrameMailbox {
     replaced_before_consumption: AtomicU64,
     consumed: AtomicU64,
     cleared: AtomicU64,
+    clear_events: AtomicU64,
     frame: Mutex<Option<(u64, Arc<DecodedVideoFrame>, Instant)>>,
 }
 
@@ -1172,6 +1175,7 @@ impl LatestFrameMailbox {
         if slot.take().is_some() {
             self.cleared.fetch_add(1, Ordering::Relaxed);
         }
+        self.clear_events.fetch_add(1, Ordering::Release);
         Ok(())
     }
 
@@ -1187,6 +1191,7 @@ impl LatestFrameMailbox {
             replaced_before_consumption: self.replaced_before_consumption.load(Ordering::Relaxed),
             consumed: self.consumed.load(Ordering::Relaxed),
             cleared: self.cleared.load(Ordering::Relaxed),
+            clear_events: self.clear_events.load(Ordering::Acquire),
             pending,
         })
     }
