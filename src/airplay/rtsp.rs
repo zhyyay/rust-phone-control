@@ -1536,6 +1536,12 @@ fn handle_setup_request(
                 ));
             };
 
+            // Stream-level SETUP may be repeated within one RTSP session.
+            // Join the previous media workers before creating another decoder
+            // pipeline against the shared frame mailbox; otherwise the old
+            // worker could clear or publish frames after the replacement starts.
+            *media_receiver = None;
+
             let (media_foundation, frames) =
                 super::media_pipeline_context().unwrap_or_else(|error| {
                     tracing::warn!(%error, "Could not obtain AirPlay decoder presentation context");
