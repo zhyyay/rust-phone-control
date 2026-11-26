@@ -818,6 +818,7 @@ impl D3d11Device {
             pixel_shader: None,
             nv12_pixel_shader: None,
             nv12_shader_uses_bt709: None,
+            nv12_color_matrix_override: None,
             sampler: None,
             stats_window_started: Instant::now(),
             stats_frames: 0,
@@ -1343,13 +1344,7 @@ float4 PSMain(VertexOutput input) : SV_Target {{
         height: u32,
         stride: usize,
         data: &[u8],
-        color_matrix: crate::airplay::video::AvcColorMatrix,
     ) -> anyhow::Result<()> {
-        self.nv12_color_matrix_override = match color_matrix {
-            crate::airplay::video::AvcColorMatrix::Bt601 => Some(false),
-            crate::airplay::video::AvcColorMatrix::Bt709 => Some(true),
-            crate::airplay::video::AvcColorMatrix::Unspecified => None,
-        };
         if width == 0 || height == 0 || width > 8192 || height > 8192 {
             bail!("invalid D3D11 video texture dimensions: {width}x{height}");
         }
@@ -1464,7 +1459,13 @@ float4 PSMain(VertexOutput input) : SV_Target {{
         y_stride: usize,
         uv_stride: usize,
         data: &[u8],
+        color_matrix: crate::airplay::video::AvcColorMatrix,
     ) -> anyhow::Result<()> {
+        self.nv12_color_matrix_override = match color_matrix {
+            crate::airplay::video::AvcColorMatrix::Bt601 => Some(false),
+            crate::airplay::video::AvcColorMatrix::Bt709 => Some(true),
+            crate::airplay::video::AvcColorMatrix::Unspecified => None,
+        };
         if width == 0
             || height == 0
             || width % 2 != 0
