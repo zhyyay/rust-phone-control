@@ -444,16 +444,29 @@ pub(crate) fn upload_nv12_frame(
             .as_mut()
             .ok_or_else(|| anyhow!("D3D11 renderer disappeared after NV12 Present"))?;
         device.stats_frames += 1;
+        let upload_ms = upload_time.as_secs_f64() * 1000.0;
+        let present_ms = present_time.as_secs_f64() * 1000.0;
+        device.stats_upload_total_ms += upload_ms;
+        device.stats_upload_max_ms = device.stats_upload_max_ms.max(upload_ms);
+        device.stats_present_total_ms += present_ms;
+        device.stats_present_max_ms = device.stats_present_max_ms.max(present_ms);
         let elapsed = device.stats_window_started.elapsed();
         if elapsed >= Duration::from_secs(1) {
+            let frames = device.stats_frames as f64;
             tracing::info!(
-                fps = device.stats_frames as f64 / elapsed.as_secs_f64(),
-                upload_ms = upload_time.as_secs_f64() * 1000.0,
-                present_ms = present_time.as_secs_f64() * 1000.0,
+                fps = frames / elapsed.as_secs_f64(),
+                upload_avg_ms = device.stats_upload_total_ms / frames,
+                upload_max_ms = device.stats_upload_max_ms,
+                present_avg_ms = device.stats_present_total_ms / frames,
+                present_max_ms = device.stats_present_max_ms,
                 frames = device.stats_frames,
                 "D3D11 NV12 preview performance"
             );
             device.stats_frames = 0;
+            device.stats_upload_total_ms = 0.0;
+            device.stats_upload_max_ms = 0.0;
+            device.stats_present_total_ms = 0.0;
+            device.stats_present_max_ms = 0.0;
             device.stats_window_started = Instant::now();
         }
         Ok(())
@@ -574,17 +587,29 @@ pub(crate) fn upload_bgra_frame(
             .as_mut()
             .ok_or_else(|| anyhow!("D3D11 renderer is unavailable after Present"))?;
         device.stats_frames += 1;
+        let upload_ms = upload_time.as_secs_f64() * 1000.0;
+        let present_ms = present_time.as_secs_f64() * 1000.0;
+        device.stats_upload_total_ms += upload_ms;
+        device.stats_upload_max_ms = device.stats_upload_max_ms.max(upload_ms);
+        device.stats_present_total_ms += present_ms;
+        device.stats_present_max_ms = device.stats_present_max_ms.max(present_ms);
         let elapsed = device.stats_window_started.elapsed();
-        if elapsed >= std::time::Duration::from_secs(1) {
-            let fps = device.stats_frames as f64 / elapsed.as_secs_f64();
+        if elapsed >= Duration::from_secs(1) {
+            let frames = device.stats_frames as f64;
             tracing::info!(
-                fps,
-                upload_ms = upload_time.as_secs_f64() * 1000.0,
-                present_ms = present_time.as_secs_f64() * 1000.0,
+                fps = frames / elapsed.as_secs_f64(),
+                upload_avg_ms = device.stats_upload_total_ms / frames,
+                upload_max_ms = device.stats_upload_max_ms,
+                present_avg_ms = device.stats_present_total_ms / frames,
+                present_max_ms = device.stats_present_max_ms,
                 frames = device.stats_frames,
                 "D3D11 preview performance"
             );
             device.stats_frames = 0;
+            device.stats_upload_total_ms = 0.0;
+            device.stats_upload_max_ms = 0.0;
+            device.stats_present_total_ms = 0.0;
+            device.stats_present_max_ms = 0.0;
             device.stats_window_started = Instant::now();
         }
         Ok(())
@@ -625,6 +650,10 @@ pub(crate) struct D3d11Device {
     sampler: Option<ID3D11SamplerState>,
     stats_window_started: Instant,
     stats_frames: u64,
+    stats_upload_total_ms: f64,
+    stats_upload_max_ms: f64,
+    stats_present_total_ms: f64,
+    stats_present_max_ms: f64,
     _thread_affinity: PhantomData<Rc<()>>,
 }
 
@@ -681,6 +710,10 @@ impl D3d11Device {
             sampler: None,
             stats_window_started: Instant::now(),
             stats_frames: 0,
+            stats_upload_total_ms: 0.0,
+            stats_upload_max_ms: 0.0,
+            stats_present_total_ms: 0.0,
+            stats_present_max_ms: 0.0,
             _thread_affinity: PhantomData,
         })
     }
