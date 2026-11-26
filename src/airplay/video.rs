@@ -261,8 +261,22 @@ impl AvcConfiguration {
 
     /// Convert one AVCC length-prefixed access unit to Annex-B.
     pub fn access_unit_to_annex_b(&self, data: &[u8]) -> Result<Vec<u8>, AvcConfigError> {
+        // AvcConfiguration is public and may be constructed without parse(),
+        // so validate the prefix width again at this API boundary.
+        if !matches!(self.nal_length_size, 1 | 2 | 4) {
+            return Err(AvcConfigError::UnsupportedNalLengthSize);
+        }
+        if data.is_empty() {
+            return Err(AvcConfigError::InvalidNalLength);
+        }
+        if data.len() > MAX_ANNEX_B_ACCESS_UNIT_BYTES {
+            return Err(AvcConfigError::OutputTooLarge);
+        }
+
         let mut offset = 0usize;
-        let mut output = Vec::with_capacity(data.len().saturating_add(16));
+        // The four-byte start codes are accounted for incrementally below;
+        // don't reserve an unchecked input-size-plus-overhead allocation.
+        let mut output = Vec::with_capacity(data.len());
         while offset < data.len() {
             if data.len().saturating_sub(offset) < self.nal_length_size {
                 return Err(AvcConfigError::InvalidNalLength);
@@ -1718,6 +1732,57 @@ mod tests {
         );
         assert_eq!(
             parsed.access_unit_to_annex_b(&[0, 0, 0, 0]),
+            Err(AvcConfigError::InvalidNalLength)
+        );
+    }
+
+    #[test]
+    fn avcc_access_unit_parser_supports_one_two_and_four_byte_lengths() {
+        let mut configuration = AvcConfiguration {
+            profile: 0x64,
+            compatibility: 0,
+            level: 0x1f,
+            nal_length_size: 1,
+            sequence_parameter_sets: vec![vec![0x67]],
+            picture_parameter_sets: vec![vec![0x68]],
+        };
+
+        for (length_size, packet) in [
+            (1, vec![2, 0x65, 0xaa]),
+            (2, vec![0, 2, 0x65, 0xaa]),
+            (4, vec![0, 0, 0, 2, 0x65, 0xaa]),
+        ] {
+            configuration.nal_length_size = length_size;
+            assert_eq!(
+                configuration.access_unit_to_annex_b(&packet),
+                Ok(vec![0, 0, 0, 1, 0x65, 0xaa]),
+                "length prefix width {length_size}"
+            );
+        }
+    }
+
+    #[test]
+    fn avcc_access_unit_parser_rejects_invalid_public_prefix_width_and_empty_input() {
+        let mut configuration = AvcConfiguration {
+            profile: 0x64,
+            compatibility: 0,
+            level: 0x1f,
+            nal_length_size: 3,
+            sequence_parameter_sets: vec![vec![0x67]],
+            picture_parameter_sets: vec![vec![0x68]],
+        };
+        assert_eq!(
+            configuration.access_unit_to_annex_b(&[0, 0, 2, 0x65, 0xaa]),
+            Err(AvcConfigError::UnsupportedNalLengthSize)
+        );
+        configuration.nal_length_size = 0;
+        assert_eq!(
+            configuration.access_unit_to_annex_b(&[]),
+            Err(AvcConfigError::UnsupportedNalLengthSize)
+        );
+        configuration.nal_length_size = 4;
+        assert_eq!(
+            configuration.access_unit_to_annex_b(&[]),
             Err(AvcConfigError::InvalidNalLength)
         );
     }
