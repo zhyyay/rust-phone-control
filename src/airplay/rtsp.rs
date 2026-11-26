@@ -205,6 +205,15 @@ impl MediaSession {
                 tracing::warn!(%self.local_addr, %error, "Could not clear decoded frames after media session stop")
             }
         }
+        let accepted_clients = self.accepted_clients.load(Ordering::Relaxed);
+        let disconnected_clients = self.disconnected_clients.load(Ordering::Relaxed);
+        tracing::info!(
+            %self.local_addr,
+            accepted_clients,
+            disconnected_clients,
+            active_clients = accepted_clients.saturating_sub(disconnected_clients),
+            "AirPlay media session client summary"
+        );
         tracing::info!(%self.local_addr, "AirPlay media session stopped");
     }
 }
