@@ -1169,9 +1169,9 @@ impl fmt::Display for MediaFoundationError {
             Self::OutputBacklog => {
                 f.write_str("H.264 decoder output backlog exceeded the per-access-unit frame limit")
             }
-            Self::OutputMemoryBudgetExceeded => {
-                f.write_str("H.264 decoded output exceeded the 256 MiB per-access-unit memory budget")
-            }
+            Self::OutputMemoryBudgetExceeded => f.write_str(
+                "H.264 decoded output exceeded the 256 MiB per-access-unit memory budget",
+            ),
             Self::DecoderRecoveryLimitReached => {
                 f.write_str("H.264 decoder rebuild retry limit reached before a frame was decoded")
             }
