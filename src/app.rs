@@ -244,7 +244,7 @@ impl Render for PhoneControlApp {
                                 mailbox_age_total_ms += mailbox_age_ms;
                                 mailbox_age_max_ms = mailbox_age_max_ms.max(mailbox_age_ms);
                                 mailbox_age_samples = mailbox_age_samples.saturating_add(1);
-                                Some((snapshot.sequence, snapshot.frame, mailbox_age))
+                                Some((snapshot.sequence, snapshot.generation, snapshot.frame, mailbox_age))
                             }
                         }
                         Ok(None) => None,
@@ -295,13 +295,15 @@ impl Render for PhoneControlApp {
                         false
                     };
                     let completed_fallback = completed_fallback.filter(
-                        |(sequence, _, _, _, _)| {
+                        |(sequence, generation, _, _, _, _)| {
                             // A result removed from the worker slot before the
                             // UI update must not resurrect the previous session's
                             // bitmap after this tick observes a mailbox clear.
                             !mailbox_cleared
                                 && !newer_frame_pending
                                 && *sequence >= latest_observed_frame_sequence
+                                && crate::airplay::is_video_frame_generation_current(*generation)
+                                    .unwrap_or(false)
                         },
                     );
 
@@ -409,11 +411,14 @@ impl Render for PhoneControlApp {
                                 changed = true;
                             }
                         }
-                        if let Some((sequence, width, height, result, conversion_elapsed)) =
+                        if let Some((sequence, generation, width, height, result, conversion_elapsed)) =
                             completed_fallback
                         {
                             match result {
-                                Ok(bytes) => {
+                                Ok(bytes)
+                                    if crate::airplay::is_video_frame_generation_current(generation)
+                                        .unwrap_or(false) =>
+                                {
                                     this.preview_image = Some(Arc::new(Image::from_bytes(
                                         ImageFormat::Bmp,
                                         bytes,
@@ -424,12 +429,17 @@ impl Render for PhoneControlApp {
                                     );
                                     tracing::trace!(
                                         sequence,
+                                        generation,
                                         conversion_ms = conversion_elapsed.as_secs_f64() * 1000.0,
                                         "Published completed asynchronous fallback frame"
                                     );
                                     changed = true;
                                 }
-                                Err(error) => {
+                                Ok(_) => {
+                                    tracing::debug!(sequence, generation, "Discarding fallback frame from an inactive stream generation");
+                                }
+                                Err(error) if crate::airplay::is_video_frame_generation_current(generation)
+                                    .unwrap_or(false) => {
                                     tracing::warn!(
                                         %error,
                                         sequence,
@@ -446,7 +456,12 @@ impl Render for PhoneControlApp {
                             }
                         }
 
-                        if let Some((sequence, frame, mailbox_age)) = prepared_frame {
+                        if let Some((sequence, generation, frame, mailbox_age)) = prepared_frame
+                            .filter(|(_, generation, _, _)| {
+                                crate::airplay::is_video_frame_generation_current(*generation)
+                                    .unwrap_or(false)
+                            })
+                        {
                             let (width, height) = match frame.as_ref() {
                                 crate::airplay::DecodedVideoFrame::Bgra(frame) => {
                                     (frame.width, frame.height)
@@ -460,7 +475,10 @@ impl Render for PhoneControlApp {
                             // Entity::update runs on GPUI's foreground executor.
                             // D3D11 immediate-context calls stay on the GPUI
                             // thread that initialized the native renderer.
-                            let native_present = match frame.as_ref() {
+                            let native_present = if crate::airplay::is_video_frame_generation_current(generation)
+                                .unwrap_or(false)
+                            {
+                                match frame.as_ref() {
                                 crate::airplay::DecodedVideoFrame::Bgra(frame) => {
                                     crate::video_renderer::upload_bgra_frame(
                                         width,
@@ -478,11 +496,14 @@ impl Render for PhoneControlApp {
                                         &frame.data,
                                     )
                                 }
+                            } else {
+                                Err(anyhow::anyhow!("frame belongs to an inactive stream generation"))
                             };
                             let upload_elapsed = upload_started.elapsed();
                             let (display_path, used_fallback, conversion_elapsed) =
                                 match native_present {
-                                    Ok(()) => {
+                                    Ok(()) if crate::airplay::is_video_frame_generation_current(generation)
+                                        .unwrap_or(false) => {
                                         crate::airplay::mark_video_rendered(sequence);
                                         // The native child surface owns the visible image.
                                         // Cancel stale CPU conversion work and discard any
@@ -496,6 +517,13 @@ impl Render for PhoneControlApp {
                                         this.preview_image = None;
                                         next_fallback_mode = false;
                                         ("D3D11 原生预览", false, Duration::ZERO)
+                                    }
+                                    Ok(()) | Err(_) if !crate::airplay::is_video_frame_generation_current(generation)
+                                        .unwrap_or(false) => {
+                                        crate::video_renderer::hide_native_video_surface();
+                                        this.preview_image = None;
+                                        next_fallback_mode = false;
+                                        ("等待当前投屏会话的视频帧", false, Duration::ZERO)
                                     }
                                     Err(error) => {
                                         crate::video_renderer::hide_native_video_surface();
@@ -548,6 +576,7 @@ impl Render for PhoneControlApp {
                                                             {
                                                                 *slot = Some((
                                                                     sequence,
+                                                                    generation,
                                                                     width_for_conversion,
                                                                     height_for_conversion,
                                                                     result,
