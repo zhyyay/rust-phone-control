@@ -2151,6 +2151,30 @@ mod tests {
     }
 
     #[test]
+    fn latest_frame_mailbox_invalidates_consumed_snapshots_on_clear() {
+        let mailbox = LatestFrameMailbox::new();
+        let frame = || BgraFrame {
+            width: 1,
+            height: 1,
+            stride: 4,
+            data: vec![1, 2, 3, 4],
+        };
+
+        mailbox.publish(frame()).unwrap();
+        let stale = mailbox.take_latest().unwrap().unwrap();
+        assert!(mailbox.is_generation_current(stale.generation));
+
+        mailbox.clear().unwrap();
+        assert!(!mailbox.is_generation_current(stale.generation));
+
+        mailbox.publish(frame()).unwrap();
+        let fresh = mailbox.take_latest().unwrap().unwrap();
+        assert!(fresh.generation > stale.generation);
+        assert!(mailbox.is_generation_current(fresh.generation));
+        assert!(!mailbox.is_generation_current(stale.generation));
+    }
+
+    #[test]
     fn latest_frame_mailbox_retains_nv12_without_bgra_conversion() {
         let mailbox = LatestFrameMailbox::new();
         let mut data = vec![128u8; 6 * 4 + 6 + 4];
