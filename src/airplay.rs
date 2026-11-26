@@ -85,7 +85,7 @@ pub fn pipeline_status_label() -> &'static str {
         7 => "RTSP SETUP：媒体流监听已建立",
         8 => "RTSP RECORD：媒体接收会话已就绪",
         9 => "媒体 TCP：iPhone 已连接",
-        10 => "媒体数据：首个视频包已接收",
+        10 => "媒体数据：首个媒体包已接收",
         11 => "视频已解码：等待桌面预览呈现",
         12 => "镜像画面已呈现",
         _ => "AirPlay：状态未知",
