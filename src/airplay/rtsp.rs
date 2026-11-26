@@ -42,6 +42,34 @@ const MEDIA_ACCEPT_POLL_INTERVAL: Duration = Duration::from_millis(20);
 // Release a stale mirror TCP client that connects but never sends a packet.
 const MIRROR_CLIENT_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 
+#[cfg(windows)]
+static ACTIVE_RTSP_SESSIONS: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+/// Keeps the global pipeline label in the waiting state after the final
+/// control connection exits, without allowing one client to reset another
+/// client's active protocol stage.
+#[cfg(windows)]
+struct RtspPipelineSessionGuard;
+
+#[cfg(windows)]
+impl RtspPipelineSessionGuard {
+    fn new() -> Self {
+        ACTIVE_RTSP_SESSIONS.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        Self
+    }
+}
+
+#[cfg(windows)]
+impl Drop for RtspPipelineSessionGuard {
+    fn drop(&mut self) {
+        if ACTIVE_RTSP_SESSIONS.fetch_sub(1, std::sync::atomic::Ordering::AcqRel) == 1 {
+            super::set_pipeline_stage(1);
+            tracing::info!("Last AirPlay RTSP control session ended; receiver is waiting for iPhone");
+        }
+    }
+}
+
 /// Per-stream cryptographic context. The shared secret is retained only in
 /// memory and is never formatted into logs or debug output.
 struct MirrorStreamContext {
@@ -697,6 +725,8 @@ pub fn serve_with_fairplay_provider(
     stream.set_write_timeout(Some(Duration::from_secs(5)))?;
 
     let peer_ip = stream.peer_addr()?.ip();
+    #[cfg(windows)]
+    let _pipeline_session = RtspPipelineSessionGuard::new();
     #[cfg(windows)]
     super::set_pipeline_stage(2);
     let mut pending = Vec::with_capacity(READ_CHUNK_BYTES);
