@@ -529,6 +529,12 @@ impl Render for PhoneControlApp {
                                         next_fallback_mode = false;
                                         ("等待当前投屏会话的视频帧", false, Duration::ZERO)
                                     }
+                                    Ok(()) => {
+                                        crate::video_renderer::hide_native_video_surface();
+                                        this.preview_image = None;
+                                        next_fallback_mode = false;
+                                        ("等待当前投屏会话的视频帧", false, Duration::ZERO)
+                                    }
                                     Err(error) => {
                                         crate::video_renderer::hide_native_video_surface();
                                         next_fallback_mode = true;
