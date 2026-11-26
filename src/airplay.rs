@@ -100,6 +100,24 @@ pub(super) fn set_pipeline_stage(stage: u8) {
     PIPELINE_STAGE.store(stage, Ordering::Release);
 }
 
+/// Advance an observed media milestone without regressing when AirPlay
+/// delivers RECORD and media-channel events in a different order.
+#[cfg(windows)]
+pub(super) fn advance_pipeline_stage(stage: u8) {
+    let mut current = PIPELINE_STAGE.load(Ordering::Acquire);
+    while current < stage {
+        match PIPELINE_STAGE.compare_exchange_weak(
+            current,
+            stage,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => break,
+            Err(actual) => current = actual,
+        }
+    }
+}
+
 /// Record the newest decoded frame sequence for this receiver runtime.
 #[cfg(windows)]
 pub(super) fn mark_video_decoded(sequence: u64) {
