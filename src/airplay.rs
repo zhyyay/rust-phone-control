@@ -46,7 +46,7 @@ mod video;
 
 #[cfg(windows)]
 use sha2::Digest;
-use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 #[cfg(windows)]
 use std::sync::{Arc, Mutex, OnceLock};
 
