@@ -52,6 +52,35 @@ static UPLOADED_FRAMES: AtomicU64 = AtomicU64::new(0);
 static DEVICE_RECOVERIES: AtomicU64 = AtomicU64::new(0);
 static RENDER_ERRORS: AtomicU64 = AtomicU64::new(0);
 
+/// Calculate a centered aspect-fit viewport in surface pixel coordinates.
+fn fit_video_viewport(
+    surface_width: u32,
+    surface_height: u32,
+    frame_width: u32,
+    frame_height: u32,
+) -> Option<[f32; 4]> {
+    if surface_width == 0 || surface_height == 0 || frame_width == 0 || frame_height == 0 {
+        return None;
+    }
+
+    let surface_width = surface_width as f32;
+    let surface_height = surface_height as f32;
+    let surface_aspect = surface_width / surface_height;
+    let frame_aspect = frame_width as f32 / frame_height as f32;
+    let (width, height) = if frame_aspect > surface_aspect {
+        (surface_width, surface_width / frame_aspect)
+    } else {
+        (surface_height * frame_aspect, surface_height)
+    };
+
+    Some([
+        (surface_width - width) * 0.5,
+        (surface_height - height) * 0.5,
+        width,
+        height,
+    ])
+}
+
 /// Process-wide D3D11 counters; safe to read from the GPUI diagnostics poll.
 pub(crate) fn preview_metrics() -> (u64, u64, u64, u64) {
     (
@@ -1008,16 +1037,12 @@ float4 PSMain(VertexOutput input) : SV_Target {
         let (frame_width, frame_height) = self
             .nv12_texture_size
             .ok_or_else(|| anyhow!("NV12 texture dimensions are not initialized"))?;
-        let surface_aspect = width as f32 / height as f32;
-        let frame_aspect = frame_width as f32 / frame_height as f32;
-        let (viewport_width, viewport_height) = if frame_aspect > surface_aspect {
-            (width as f32, width as f32 / frame_aspect)
-        } else {
-            (height as f32 * frame_aspect, height as f32)
-        };
+        let [viewport_x, viewport_y, viewport_width, viewport_height] =
+            fit_video_viewport(width, height, frame_width, frame_height)
+                .ok_or_else(|| anyhow!("cannot fit a zero-sized video frame or preview surface"))?;
         let viewport = [D3D11_VIEWPORT {
-            TopLeftX: (width as f32 - viewport_width) * 0.5,
-            TopLeftY: (height as f32 - viewport_height) * 0.5,
+            TopLeftX: viewport_x,
+            TopLeftY: viewport_y,
             Width: viewport_width,
             Height: viewport_height,
             MinDepth: 0.0,
@@ -1083,16 +1108,12 @@ float4 PSMain(VertexOutput input) : SV_Target {
 
         // Fit the source frame inside the preview surface without stretching.
         // The unused area is cleared to black (letterbox or pillarbox).
-        let surface_aspect = width as f32 / height as f32;
-        let frame_aspect = frame_width as f32 / frame_height as f32;
-        let (viewport_width, viewport_height) = if frame_aspect > surface_aspect {
-            (width as f32, width as f32 / frame_aspect)
-        } else {
-            (height as f32 * frame_aspect, height as f32)
-        };
+        let [viewport_x, viewport_y, viewport_width, viewport_height] =
+            fit_video_viewport(width, height, frame_width, frame_height)
+                .ok_or_else(|| anyhow!("cannot fit a zero-sized video frame or preview surface"))?;
         let viewport = [D3D11_VIEWPORT {
-            TopLeftX: (width as f32 - viewport_width) * 0.5,
-            TopLeftY: (height as f32 - viewport_height) * 0.5,
+            TopLeftX: viewport_x,
+            TopLeftY: viewport_y,
             Width: viewport_width,
             Height: viewport_height,
             MinDepth: 0.0,
@@ -1400,5 +1421,44 @@ float4 PSMain(VertexOutput input) : SV_Target {
     pub(crate) fn feature_level(&self) -> D3D_FEATURE_LEVEL {
         // SAFETY: GetFeatureLevel reads immutable device capability metadata.
         unsafe { self.device.GetFeatureLevel() }
+    }
+}
+
+#[cfg(test)]
+mod viewport_tests {
+    use super::fit_video_viewport;
+
+    fn assert_close(actual: f32, expected: f32) {
+        assert!((actual - expected).abs() < 0.01, "{actual} != {expected}");
+    }
+
+    #[test]
+    fn fits_landscape_frame_inside_portrait_preview() {
+        let viewport = fit_video_viewport(1080, 1920, 1920, 1080).unwrap();
+        assert_close(viewport[0], 0.0);
+        assert_close(viewport[1], 656.25);
+        assert_close(viewport[2], 1080.0);
+        assert_close(viewport[3], 607.5);
+    }
+
+    #[test]
+    fn fits_portrait_frame_inside_landscape_preview() {
+        let viewport = fit_video_viewport(1920, 1080, 1080, 1920).unwrap();
+        assert_close(viewport[0], 656.25);
+        assert_close(viewport[1], 0.0);
+        assert_close(viewport[2], 607.5);
+        assert_close(viewport[3], 1080.0);
+    }
+
+    #[test]
+    fn preserves_matching_aspect_ratio() {
+        let viewport = fit_video_viewport(1280, 720, 1920, 1080).unwrap();
+        assert_eq!(viewport, [0.0, 0.0, 1280.0, 720.0]);
+    }
+
+    #[test]
+    fn rejects_zero_dimensions() {
+        assert!(fit_video_viewport(0, 720, 1920, 1080).is_none());
+        assert!(fit_video_viewport(1280, 720, 0, 1080).is_none());
     }
 }
