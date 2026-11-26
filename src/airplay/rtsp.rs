@@ -652,8 +652,8 @@ fn process_media_packets(
                             &packet.payload,
                         ) {
                             Ok(published_frames) => {
-                                decoded_frames_published =
-                                    decoded_frames_published.saturating_add(published_frames as u64);
+                                decoded_frames_published = decoded_frames_published
+                                    .saturating_add(published_frames as u64);
                                 tracing::debug!(
                                 %packet.peer_addr,
                                 timestamp = packet.timestamp,
@@ -704,8 +704,7 @@ fn process_media_packets(
                         }
                     }
                 } else {
-                    packets_waiting_for_fairplay =
-                        packets_waiting_for_fairplay.saturating_add(1);
+                    packets_waiting_for_fairplay = packets_waiting_for_fairplay.saturating_add(1);
                     tracing::debug!(
                         %packet.peer_addr,
                         timestamp = packet.timestamp,
