@@ -424,6 +424,7 @@ pub(crate) fn upload_nv12_frame(
     y_stride: usize,
     uv_stride: usize,
     data: &[u8],
+    color_matrix: crate::airplay::video::AvcColorMatrix,
 ) -> anyhow::Result<()> {
     let initial_result = THREAD_RENDERER.with(|renderer| {
         let mut renderer = renderer.borrow_mut();
@@ -431,7 +432,7 @@ pub(crate) fn upload_nv12_frame(
             .as_mut()
             .ok_or_else(|| anyhow!("D3D11 renderer has not been initialized for a GPUI window"))?;
         let upload_started = Instant::now();
-        device.upload_nv12(width, height, y_stride, uv_stride, data)?;
+        device.upload_nv12(width, height, y_stride, uv_stride, data, color_matrix)?;
         let upload_time = upload_started.elapsed();
         UPLOADED_FRAMES.fetch_add(1, Ordering::Relaxed);
         device
@@ -494,7 +495,7 @@ pub(crate) fn upload_nv12_frame(
                         .as_mut()
                         .ok_or_else(|| anyhow!("replacement D3D11 device is unavailable"))?;
                     let upload_started = Instant::now();
-                    device.upload_nv12(width, height, y_stride, uv_stride, data)?;
+                    device.upload_nv12(width, height, y_stride, uv_stride, data, color_matrix)?;
                     let upload_time = upload_started.elapsed();
                     UPLOADED_FRAMES.fetch_add(1, Ordering::Relaxed);
                     device
@@ -721,6 +722,7 @@ pub(crate) struct D3d11Device {
     pixel_shader: Option<ID3D11PixelShader>,
     nv12_pixel_shader: Option<ID3D11PixelShader>,
     nv12_shader_uses_bt709: Option<bool>,
+    nv12_color_matrix_override: Option<bool>,
     sampler: Option<ID3D11SamplerState>,
     stats_window_started: Instant,
     stats_frames: u64,
@@ -1110,11 +1112,8 @@ float4 PSMain(VertexOutput input) : SV_Target {
 
     /// Compile a limited-range BT.601 NV12 conversion shader.
     fn ensure_nv12_pixel_shader(&mut self, width: u32, height: u32) -> anyhow::Result<()> {
-        // AirPlay H.264 streams commonly use BT.601 for SD and BT.709 for HD.
-        // Media Foundation's NV12 output currently does not carry the source
-        // VUI colorimetry through OwnedNv12Frame, so use the conventional
-        // resolution-based fallback rather than applying BT.601 to all video.
-        let use_bt709 = width >= 1280 || height >= 720;
+        // Prefer SPS VUI colorimetry; retain resolution heuristic only when the stream omits it.
+        let use_bt709 = self.nv12_color_matrix_override.unwrap_or(width >= 1280 || height >= 720);
         if self.nv12_pixel_shader.is_some() && self.nv12_shader_uses_bt709 == Some(use_bt709) {
             return Ok(());
         }
@@ -1344,7 +1343,13 @@ float4 PSMain(VertexOutput input) : SV_Target {{
         height: u32,
         stride: usize,
         data: &[u8],
+        color_matrix: crate::airplay::video::AvcColorMatrix,
     ) -> anyhow::Result<()> {
+        self.nv12_color_matrix_override = match color_matrix {
+            crate::airplay::video::AvcColorMatrix::Bt601 => Some(false),
+            crate::airplay::video::AvcColorMatrix::Bt709 => Some(true),
+            crate::airplay::video::AvcColorMatrix::Unspecified => None,
+        };
         if width == 0 || height == 0 || width > 8192 || height > 8192 {
             bail!("invalid D3D11 video texture dimensions: {width}x{height}");
         }
