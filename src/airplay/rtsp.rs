@@ -704,20 +704,63 @@ fn process_media_packets(
                             }
                             Err(error) => {
                                 decode_errors = decode_errors.saturating_add(1);
-                                // A failed access-unit operation may have advanced
-                                // the stream counter. Disable decryption rather than
-                                // risk using a desynchronized cipher for later packets.
-                                mirror_cipher = None;
-                                frame_pipeline = None;
-                                if let Err(clear_error) = frames.clear() {
-                                    tracing::warn!(%clear_error, "Could not clear preview after media decryption failure");
-                                }
-                                tracing::warn!(
-                                    %packet.peer_addr,
-                                    timestamp = packet.timestamp,
-                                    %error,
-                                    "AirPlay encrypted access unit rejected; stream decryption disabled"
+
+                                // A cryptographic counter failure may have left
+                                // the stream cipher partially advanced. In that
+                                // case fail closed. AVC framing or decoder errors
+                                // happen after successful packet decryption, so
+                                // the next packet can still use the continuous CTR
+                                // position while the MFT is rebuilt.
+                                let cipher_state_lost = matches!(
+                                    error,
+                                    super::decoder::MediaFoundationError::VideoDecryption(
+                                        super::video::EncryptedAccessUnitError::Crypto(_)
+                                    )
                                 );
+                                if cipher_state_lost {
+                                    mirror_cipher = None;
+                                }
+
+                                let recovery = if cipher_state_lost {
+                                    Err(super::decoder::MediaFoundationError::DecoderRecoveryLimitReached)
+                                } else if let Some(configuration) = processor.configuration() {
+                                    match configuration.video_dimensions() {
+                                        Ok(Some(dimensions)) => pipeline.rebuild_decoder(
+                                            dimensions.width,
+                                            dimensions.height,
+                                        ),
+                                        Ok(None) => Err(
+                                            super::decoder::MediaFoundationError::MissingSps,
+                                        ),
+                                        Err(error) => Err(
+                                            super::decoder::MediaFoundationError::InvalidAvcConfiguration(error),
+                                        ),
+                                    }
+                                } else {
+                                    Err(super::decoder::MediaFoundationError::MissingSps)
+                                };
+
+                                match recovery {
+                                    Ok(()) => tracing::warn!(
+                                        %packet.peer_addr,
+                                        timestamp = packet.timestamp,
+                                        %error,
+                                        "AirPlay decoder failed; rebuilt Media Foundation pipeline and retained stream cipher"
+                                    ),
+                                    Err(recovery_error) => {
+                                        if let Err(clear_error) = frames.clear() {
+                                            tracing::warn!(%clear_error, "Could not clear preview after decoder failure");
+                                        }
+                                        tracing::warn!(
+                                            %packet.peer_addr,
+                                            timestamp = packet.timestamp,
+                                            %error,
+                                            %recovery_error,
+                                            cipher_state_lost,
+                                            "AirPlay media access unit failed; decoder recovery unavailable"
+                                        );
+                                    }
+                                }
                             }
                         }
                     } else {
