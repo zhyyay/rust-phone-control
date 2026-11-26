@@ -1,6 +1,7 @@
 //! Windows Direct3D 11 video presenter.
 //!
-//! Device, immediate context, swap chain, shaders, and frame texture stay on the GPUI render thread.
+//! Device, immediate context, swap chain, shaders, and frame textures stay on the GPUI render thread.
+//! Decoded BGRA and NV12 frames are uploaded and presented by the native child surface.
 
 use anyhow::{Context as _, anyhow, bail};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
@@ -132,11 +133,11 @@ pub(crate) fn initialize_for_window(window: &gpui_kit::Window) -> anyhow::Result
     })
 }
 
-/// Create and synchronize a hidden native child surface within the GPUI preview rectangle.
+/// Create and synchronize the native child surface within the GPUI preview rectangle.
 ///
 /// The child uses the built-in STATIC window class, avoiding a custom WndProc or
-/// process-global class registration. It remains hidden so the GPUI image fallback
-/// stays visible until a D3D11 SwapChain presenter is implemented.
+/// process-global class registration. It remains hidden until a valid frame has been
+/// uploaded and presented; successful Present reveals it over the GPUI fallback.
 pub(crate) fn sync_native_video_surface(
     x: i32,
     y: i32,
@@ -224,8 +225,8 @@ pub(crate) fn sync_native_video_surface(
         }
 
         // Bring up the HWND-bound swap chain on the same GPUI thread as the
-        // D3D11 immediate context. It remains hidden until a real decoded frame
-        // is drawn by the shader presenter in the next stage.
+        // D3D11 immediate context. The surface remains hidden until the first
+        // successful decoded-frame upload and Present.
         THREAD_RENDERER.with(|renderer| {
             let mut renderer = renderer.borrow_mut();
             let device = renderer
@@ -344,7 +345,6 @@ pub(crate) fn destroy_native_video_surface() {
 
 /// Upload an NV12 frame to the GPUI thread's D3D11 Y/UV textures.
 /// The caller must run on the thread that initialized the native renderer.
-#[allow(dead_code)]
 pub(crate) fn upload_nv12_frame(
     width: u32,
     height: u32,
