@@ -882,8 +882,11 @@ pub fn serve_with_fairplay_provider(
                 match super::fairplay::parse_message(&request.body) {
                     Ok(message) if message.phase == super::fairplay::MessagePhase::Initial => {
                         // A new M1 starts a new negotiation on this RTSP
-                        // connection. Never let a previous exchange's media
-                        // key survive a renegotiation attempt.
+                        // connection. Stop any media worker that already copied
+                        // the previous key before invalidating the key material;
+                        // otherwise the old stream could keep decoding after
+                        // this connection has begun a fresh FairPlay exchange.
+                        *media_receiver = None;
                         fairplay_ekey = None;
                         fairplay_eiv = None;
                         fairplay_video_key = None;
