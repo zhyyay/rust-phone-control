@@ -14,6 +14,16 @@ use std::{
 };
 
 #[cfg(windows)]
+struct FallbackConversionInFlightGuard(Arc<AtomicBool>);
+
+#[cfg(windows)]
+impl Drop for FallbackConversionInFlightGuard {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
+
+#[cfg(windows)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct PreviewSurfaceBounds {
     /// Preview rectangle origin relative to the GPUI client-area origin, in device pixels.
@@ -433,12 +443,13 @@ impl Render for PhoneControlApp {
                                             let spawn = std::thread::Builder::new()
                                                 .name("airplay-fallback-convert".to_owned())
                                                 .spawn(move || {
+                                                    let _in_flight_guard =
+                                                        FallbackConversionInFlightGuard(in_flight);
                                                     // Avoid starting expensive CPU work if shutdown
                                                     // raced with thread scheduling.
                                                     if cancel.load(Ordering::Acquire)
                                                         || conversion_cancel.load(Ordering::Acquire)
                                                     {
-                                                        in_flight.store(false, Ordering::Release);
                                                         return;
                                                     }
                                                     let started = Instant::now();
@@ -469,7 +480,6 @@ impl Render for PhoneControlApp {
                                                             }
                                                         }
                                                     }
-                                                    in_flight.store(false, Ordering::Release);
                                                 });
                                             if let Err(error) = spawn {
                                                 fallback_conversion_in_flight
