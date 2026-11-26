@@ -2116,6 +2116,29 @@ mod tests {
     }
 
     #[test]
+    fn latest_frame_mailbox_clear_drops_old_frame_without_rewinding_sequence() {
+        let mailbox = LatestFrameMailbox::new();
+        let frame = || BgraFrame {
+            width: 1,
+            height: 1,
+            stride: 4,
+            data: vec![1, 2, 3, 4],
+        };
+
+        assert_eq!(mailbox.publish(frame()).unwrap(), 1);
+        mailbox.clear().unwrap();
+        assert!(mailbox.take_latest().unwrap().is_none());
+        assert_eq!(mailbox.publish(frame()).unwrap(), 2);
+
+        let snapshot = mailbox.take_latest().unwrap().unwrap();
+        assert_eq!(snapshot.sequence, 2);
+        let stats = mailbox.stats().unwrap();
+        assert_eq!(stats.clear_events, 1);
+        assert_eq!(stats.cleared, 1);
+        assert_eq!(stats.published, 2);
+    }
+
+    #[test]
     fn latest_frame_mailbox_retains_nv12_without_bgra_conversion() {
         let mailbox = LatestFrameMailbox::new();
         let mut data = vec![128u8; 6 * 4 + 6 + 4];
