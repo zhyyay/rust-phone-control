@@ -13,9 +13,13 @@ A Windows-first Rust desktop application for iPhone control experiments, BLE HID
 
 BLE HID input and AirPlay video are independent connections. AssistiveTouch pointer control is not native touchscreen injection, and relative mouse movement is not precise absolute-coordinate control.
 
-## AirPlay limitations
+## AirPlay status and limitations
 
-**This repository does not yet provide working iPhone screen mirroring.** FairPlay, encrypted media transport, stream setup, video reception, H.264/HEVC decoding, and GPUI frame rendering remain unimplemented. Pairing protocol code being present does not mean that a complete iPhone pairing or mirroring session has been validated.
+The built-in receiver now has mDNS discovery, RTSP request framing, Pair-Setup / Pair-Verify handling, controller approval, FairPlay message framing and an authorized-provider integration boundary, stream SETUP validation, bounded screen-mirroring TCP reception, H.264 access-unit parsing, a Windows Media Foundation decoder path, and a D3D11/GPUI frame presentation path.
+
+**End-to-end wireless mirroring is not yet working.** The project does not contain an authorized FairPlay SAP provider, so it deliberately rejects FairPlay negotiation instead of fabricating challenges or media keys. Without authenticated FairPlay keys, encrypted iPhone video cannot be decrypted and displayed. A bound media port, RTSP RECORD response, or initialized decoder is not evidence of a visible mirror; acceptance requires real decoded frames reaching the preview.
+
+The receiver status is intended to distinguish protocol milestones: discovery/listening → RTSP client → Pair-Verify → FairPlay M1/M2 → authenticated M3 → stream SETUP → RECORD/media listener → decoded frame → rendered frame. RECORD may arrive before stream-level SETUP and must not be reported as active media reception until the media listener exists.
 
 The SRP implementation currently uses num-bigint modular exponentiation, which is variable-time. It is a development implementation and must not be treated as production-grade cryptography until secret-exponent operations are replaced with a reviewed constant-time implementation and the protocol is independently audited.
 
