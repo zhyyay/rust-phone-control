@@ -567,10 +567,13 @@ impl<'runtime> H264Decoder<'runtime> {
                     return Ok(frames);
                 }
                 Err(MediaFoundationError::ProcessInputFailed(hr))
-                    if hr == MF_E_NOTACCEPTING_HR && attempt + 1 < MAX_INPUT_RETRIES =>
+                    if hr == MF_E_NOTACCEPTING_HR =>
                 {
                     if frames.len() == MAX_FRAMES_PER_DRAIN {
                         return Err(MediaFoundationError::OutputBacklog);
+                    }
+                    if attempt + 1 == MAX_INPUT_RETRIES {
+                        return Err(MediaFoundationError::ProcessInputFailed(hr));
                     }
                     // The transform still has output queued. Drain another
                     // bounded batch before retrying the same not-yet-accepted
