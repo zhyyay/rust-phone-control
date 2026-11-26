@@ -368,6 +368,10 @@ impl AvcConfiguration {
     }
 }
 
+fn parse_h264_sps_dimensions(sps: &[u8]) -> Result<AvcVideoDimensions, AvcConfigError> {
+    parse_h264_sps_info(sps).map(|info| info.dimensions)
+}
+
 fn parse_h264_sps_info(sps: &[u8]) -> Result<AvcSpsInfo, AvcConfigError> {
     if sps.len() < 4 || sps[0] & 0x80 != 0 || sps[0] & 0x1f != 7 {
         return Err(AvcConfigError::InvalidSps);
