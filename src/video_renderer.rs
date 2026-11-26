@@ -365,10 +365,7 @@ pub(crate) fn upload_nv12_frame(
             THREAD_RENDERER.with(|renderer| {
                 *renderer.borrow_mut() = Some(replacement);
             });
-            DEVICE_RECOVERY_RETRY_AFTER.with(|retry_after| retry_after.set(None));
-            DEVICE_RECOVERIES.fetch_add(1, Ordering::Relaxed);
-
-            THREAD_RENDERER
+            let retry_result = THREAD_RENDERER
                 .with(|renderer| {
                     let mut renderer = renderer.borrow_mut();
                     let device = renderer
@@ -378,7 +375,13 @@ pub(crate) fn upload_nv12_frame(
                     UPLOADED_FRAMES.fetch_add(1, Ordering::Relaxed);
                     device.draw_nv12_frame()
                 })
-                .context("D3D11 NV12 preview retry failed after device recreation")?
+                .context("D3D11 NV12 preview retry failed after device recreation")?;
+            // Keep the cooldown active if the first frame on the replacement
+            // device also fails; otherwise a broken driver can trigger rebuilds
+            // on every incoming frame.
+            DEVICE_RECOVERY_RETRY_AFTER.with(|retry_after| retry_after.set(None));
+            DEVICE_RECOVERIES.fetch_add(1, Ordering::Relaxed);
+            retry_result
         }
     };
     PRESENTED_FRAMES.fetch_add(1, Ordering::Relaxed);
@@ -478,10 +481,7 @@ pub(crate) fn upload_bgra_frame(
             THREAD_RENDERER.with(|renderer| {
                 *renderer.borrow_mut() = Some(replacement);
             });
-            DEVICE_RECOVERY_RETRY_AFTER.with(|retry_after| retry_after.set(None));
-            DEVICE_RECOVERIES.fetch_add(1, Ordering::Relaxed);
-
-            THREAD_RENDERER
+            let retry_result = THREAD_RENDERER
                 .with(|renderer| {
                     let mut renderer = renderer.borrow_mut();
                     let device = renderer
@@ -491,7 +491,12 @@ pub(crate) fn upload_bgra_frame(
                     UPLOADED_FRAMES.fetch_add(1, Ordering::Relaxed);
                     device.draw_video_frame()
                 })
-                .context("D3D11 preview retry failed after device recreation")?
+                .context("D3D11 preview retry failed after device recreation")?;
+            // Do not clear the cooldown until the replacement has presented
+            // a frame successfully; a failed retry must not cause rebuild churn.
+            DEVICE_RECOVERY_RETRY_AFTER.with(|retry_after| retry_after.set(None));
+            DEVICE_RECOVERIES.fetch_add(1, Ordering::Relaxed);
+            retry_result
         }
     };
 
