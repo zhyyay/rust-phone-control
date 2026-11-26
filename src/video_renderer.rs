@@ -280,8 +280,7 @@ fn ensure_swap_chain_with_recovery(hwnd: HWND, width: u32, height: u32) -> anyho
         let renderer = renderer.borrow();
         renderer.as_ref().and_then(|device| {
             // GetDeviceRemovedReason returns S_OK while the device is healthy.
-            unsafe { device.device.GetDeviceRemovedReason() }
-                .err()
+            unsafe { device.device.GetDeviceRemovedReason() }.err()
         })
     });
     let Some(reason) = removed_reason else {
