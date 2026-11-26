@@ -906,16 +906,24 @@ pub fn classify_nal(codec: VideoCodec, nal: &[u8]) -> NalUnitKind {
     }
 
     match codec {
-        VideoCodec::H264 => match nal[0] & 0x1f {
-            1..=4 => NalUnitKind::H264Slice,
-            5 => NalUnitKind::H264Idr,
-            7 => NalUnitKind::H264Sps,
-            8 => NalUnitKind::H264Pps,
-            9 => NalUnitKind::H264Aud,
-            _ => NalUnitKind::Other,
-        },
+        VideoCodec::H264 => {
+            // forbidden_zero_bit is required to be zero by the H.264 spec.
+            if nal[0] & 0x80 != 0 {
+                return NalUnitKind::Invalid;
+            }
+            match nal[0] & 0x1f {
+                1..=4 => NalUnitKind::H264Slice,
+                5 => NalUnitKind::H264Idr,
+                7 => NalUnitKind::H264Sps,
+                8 => NalUnitKind::H264Pps,
+                9 => NalUnitKind::H264Aud,
+                _ => NalUnitKind::Other,
+            }
+        }
         VideoCodec::Hevc => {
-            if nal.len() < 2 || nal[1] & 0x07 == 0 {
+            // HEVC has a two-byte NAL header: forbidden_zero_bit must be
+            // clear and temporal_id_plus1 (the low three bits) cannot be zero.
+            if nal.len() < 2 || nal[0] & 0x80 != 0 || nal[1] & 0x07 == 0 {
                 return NalUnitKind::Invalid;
             }
             match (nal[0] >> 1) & 0x3f {
@@ -1427,6 +1435,17 @@ impl<'a> Nv12Frame<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn nal_classifier_rejects_forbidden_header_bits_and_invalid_hevc_temporal_id() {
+        assert_eq!(classify_nal(VideoCodec::H264, &[0xe5]), NalUnitKind::Invalid);
+        assert_eq!(classify_nal(VideoCodec::H264, &[0x65]), NalUnitKind::H264Idr);
+
+        assert_eq!(classify_nal(VideoCodec::Hevc, &[0x80, 0x01]), NalUnitKind::Invalid);
+        assert_eq!(classify_nal(VideoCodec::Hevc, &[0x26, 0x00]), NalUnitKind::Invalid);
+        assert_eq!(classify_nal(VideoCodec::Hevc, &[0x26, 0x01]), NalUnitKind::HevcIdr);
+        assert_eq!(classify_nal(VideoCodec::Hevc, &[0x42]), NalUnitKind::Invalid);
+    }
 
     #[test]
     fn annex_b_split_excludes_trailing_zero_bytes_from_each_nal() {
