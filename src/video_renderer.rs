@@ -1124,6 +1124,15 @@ float4 PSMain(VertexOutput input) : SV_Target {
         }
         let row_pitch = u32::try_from(stride).context("BGRA row pitch exceeds the D3D11 limit")?;
 
+        // The immediate context unbinds the previous frame's SRVs after each
+        // draw. Release the inactive pixel format so format switches do not
+        // retain an entire second set of GPU textures and views.
+        self.nv12_y_texture = None;
+        self.nv12_uv_texture = None;
+        self._nv12_y_view = None;
+        self._nv12_uv_view = None;
+        self.nv12_texture_size = None;
+
         if self.video_texture_size != Some((width, height)) {
             let desc = D3D11_TEXTURE2D_DESC {
                 Width: width,
@@ -1236,6 +1245,12 @@ float4 PSMain(VertexOutput input) : SV_Target {
             u32::try_from(y_stride).context("NV12 Y row pitch exceeds the D3D11 limit")?;
         let uv_row_pitch =
             u32::try_from(uv_stride).context("NV12 UV row pitch exceeds the D3D11 limit")?;
+
+        // Drop the inactive BGRA resources after its SRV was unbound by the
+        // previous successful draw. Keep only the active frame format resident.
+        self.video_texture = None;
+        self._video_shader_view = None;
+        self.video_texture_size = None;
 
         // Most decoder buffers already include final-row padding. Only make a
         // padded scratch plane when the source omits that final padding.
