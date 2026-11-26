@@ -14,6 +14,7 @@ use std::sync::{
 };
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
+use zeroize::Zeroize;
 
 /// A parsed RTP version 2 packet. All byte slices borrow from the input packet.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -316,6 +317,14 @@ pub struct ReceivedMediaPacket {
     pub packet_type: ScreenMirrorPacketType,
     pub timestamp: u64,
     pub payload: Vec<u8>,
+}
+
+impl Drop for ReceivedMediaPacket {
+    fn drop(&mut self) {
+        // The payload may have been decrypted in place by the media worker.
+        // Clear both encrypted and plaintext packet buffers on every exit path.
+        self.payload.zeroize();
+    }
 }
 
 /// Maximum UDP datagram buffer. This is large enough for the maximum IPv4 UDP
