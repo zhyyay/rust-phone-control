@@ -65,7 +65,9 @@ impl Drop for RtspPipelineSessionGuard {
     fn drop(&mut self) {
         if ACTIVE_RTSP_SESSIONS.fetch_sub(1, std::sync::atomic::Ordering::AcqRel) == 1 {
             super::set_pipeline_stage(1);
-            tracing::info!("Last AirPlay RTSP control session ended; receiver is waiting for iPhone");
+            tracing::info!(
+                "Last AirPlay RTSP control session ended; receiver is waiting for iPhone"
+            );
         }
     }
 }
