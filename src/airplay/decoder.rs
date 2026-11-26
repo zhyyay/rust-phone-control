@@ -557,13 +557,24 @@ impl<'runtime> H264Decoder<'runtime> {
         const MAX_INPUT_RETRIES: usize = 4;
 
         let mut frames = Vec::with_capacity(MAX_FRAMES_PER_DRAIN);
+        let mut decoded_bytes = 0usize;
         for attempt in 0..MAX_INPUT_RETRIES {
             let remaining = MAX_FRAMES_PER_DRAIN.saturating_sub(frames.len());
-            frames.extend(self.drain_available_frames(remaining)?);
+            let drained = self.drain_available_frames_with_budget(
+                remaining,
+                MAX_DECODED_BYTES_PER_ACCESS_UNIT.saturating_sub(decoded_bytes),
+            )?;
+            decoded_bytes = decoded_bytes.saturating_add(frame_bytes_total(&drained)?);
+            frames.extend(drained);
             match self.submit_access_unit(access_unit) {
                 Ok(()) => {
                     let remaining = MAX_FRAMES_PER_DRAIN.saturating_sub(frames.len());
-                    frames.extend(self.drain_available_frames(remaining)?);
+                    let drained = self.drain_available_frames_with_budget(
+                        remaining,
+                        MAX_DECODED_BYTES_PER_ACCESS_UNIT.saturating_sub(decoded_bytes),
+                    )?;
+                    decoded_bytes = decoded_bytes.saturating_add(frame_bytes_total(&drained)?);
+                    frames.extend(drained);
                     return Ok(frames);
                 }
                 Err(MediaFoundationError::ProcessInputFailed(hr))
@@ -612,11 +623,29 @@ impl<'runtime> H264Decoder<'runtime> {
         &mut self,
         limit: usize,
     ) -> Result<Vec<DecodedNv12Frame>, MediaFoundationError> {
+        self.drain_available_frames_with_budget(limit, MAX_DECODED_BYTES_PER_ACCESS_UNIT)
+    }
+
+    fn drain_available_frames_with_budget(
+        &mut self,
+        limit: usize,
+        byte_budget: usize,
+    ) -> Result<Vec<DecodedNv12Frame>, MediaFoundationError> {
         let limit = bounded_drain_limit(limit);
         let mut frames = Vec::with_capacity(limit);
+        let mut decoded_bytes = 0usize;
         for _ in 0..limit {
             match self.try_get_frame()? {
-                Some(frame) => frames.push(frame),
+                Some(frame) => {
+                    let next_bytes = decoded_bytes
+                        .checked_add(frame.data.len())
+                        .ok_or(MediaFoundationError::FrameSizeOverflow)?;
+                    if next_bytes > byte_budget {
+                        return Err(MediaFoundationError::OutputMemoryBudgetExceeded);
+                    }
+                    decoded_bytes = next_bytes;
+                    frames.push(frame);
+                }
                 None => break,
             }
         }
@@ -808,6 +837,18 @@ const MAX_DECODE_ACCESS_UNIT_BYTES: usize = 64 * 1024 * 1024;
 /// Maximum NV12 output buffer accepted from a Media Foundation transform.
 #[cfg(windows)]
 const MAX_DECODED_NV12_BYTES: usize = 128 * 1024 * 1024;
+
+/// Maximum decoded NV12 memory retained for one submitted access unit.
+const MAX_DECODED_BYTES_PER_ACCESS_UNIT: usize = 256 * 1024 * 1024;
+
+/// Sum frame payload sizes with overflow checking.
+fn frame_bytes_total(frames: &[DecodedNv12Frame]) -> Result<usize, MediaFoundationError> {
+    frames.iter().try_fold(0usize, |total, frame| {
+        total
+            .checked_add(frame.data.len())
+            .ok_or(MediaFoundationError::FrameSizeOverflow)
+    })
+}
 
 /// Limits consecutive decoder rebuilds until a real frame is decoded.
 ///
@@ -1020,6 +1061,7 @@ pub enum MediaFoundationError {
     ProcessOutputFailed(i32),
     RepeatedOutputStreamChange,
     OutputBacklog,
+    OutputMemoryBudgetExceeded,
     DecoderRecoveryLimitReached,
 }
 
@@ -1129,6 +1171,9 @@ impl fmt::Display for MediaFoundationError {
             Self::OutputBacklog => {
                 f.write_str("H.264 decoder output backlog exceeded the per-access-unit frame limit")
             }
+            Self::OutputMemoryBudgetExceeded => {
+                f.write_str("H.264 decoded output exceeded the 256 MiB per-access-unit memory budget")
+            }
             Self::DecoderRecoveryLimitReached => {
                 f.write_str("H.264 decoder rebuild retry limit reached before a frame was decoded")
             }
@@ -1172,6 +1217,23 @@ mod tests {
         policy.record_decoded_frame();
         assert_eq!(policy.attempts_without_frame(), 0);
         assert!(policy.begin_rebuild());
+    }
+
+    #[test]
+    fn decoded_frame_payload_total_checks_overflow() {
+        let frames = vec![
+            DecodedNv12Frame { width: 2, height: 2, stride: 2, data: vec![0; 6] },
+            DecodedNv12Frame { width: 2, height: 2, stride: 2, data: vec![0; 10] },
+        ];
+        assert_eq!(frame_bytes_total(&frames).unwrap(), 16);
+    }
+
+    #[test]
+    fn decoder_output_memory_budget_error_is_actionable() {
+        assert_eq!(
+            MediaFoundationError::OutputMemoryBudgetExceeded.to_string(),
+            "H.264 decoded output exceeded the 256 MiB per-access-unit memory budget"
+        );
     }
 
     #[test]
