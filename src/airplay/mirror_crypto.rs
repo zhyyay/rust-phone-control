@@ -351,8 +351,12 @@ mod tests {
         let mut actual = [0u8; AES_BLOCK_BYTES];
         let mut expected = [0u8; AES_BLOCK_BYTES];
         let mut fresh = MirrorStreamCipher::new(&material);
-        cipher.decrypt_packet(&mut actual).expect("decrypt after empty payload");
-        fresh.decrypt_packet(&mut expected).expect("decrypt first block");
+        cipher
+            .decrypt_packet(&mut actual)
+            .expect("decrypt after empty payload");
+        fresh
+            .decrypt_packet(&mut expected)
+            .expect("decrypt first block");
         assert_eq!(actual, expected);
     }
 }
