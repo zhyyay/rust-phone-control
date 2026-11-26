@@ -448,6 +448,10 @@ fn process_media_packets(
     let mut video_packets = 0u64;
     let mut packets_waiting_for_fairplay = 0u64;
     let mut decode_errors = 0u64;
+    let mut decoder_initialization_successes = 0u64;
+    let mut decoder_initialization_failures = 0u64;
+    let mut decrypted_access_units_submitted = 0u64;
+    let mut decrypted_access_units_discarded = 0u64;
     let mut decoded_frames_published = 0u64;
     let mut heartbeat_packets = 0u64;
     let pair_verify_shared_secret = stream_context.pair_verify_shared_secret;
@@ -596,12 +600,16 @@ fn process_media_packets(
                                 Arc::clone(&frames),
                             ) {
                                 Ok(pipeline) => {
+                                    decoder_initialization_successes =
+                                        decoder_initialization_successes.saturating_add(1);
                                     frame_pipeline = Some(pipeline);
                                     tracing::info!(
                                         "Windows H.264 decoder pipeline initialized from stream SPS"
                                     );
                                 }
                                 Err(error) => {
+                                    decoder_initialization_failures =
+                                        decoder_initialization_failures.saturating_add(1);
                                     tracing::warn!(
                                         %error,
                                         attempts = decoder_init_policy.attempts(),
@@ -652,6 +660,8 @@ fn process_media_packets(
                             &packet.payload,
                         ) {
                             Ok(published_frames) => {
+                                decrypted_access_units_submitted =
+                                    decrypted_access_units_submitted.saturating_add(1);
                                 decoded_frames_published = decoded_frames_published
                                     .saturating_add(published_frames as u64);
                                 tracing::debug!(
@@ -693,6 +703,8 @@ fn process_media_packets(
                                 "AirPlay mirror cipher failed while advancing an unrendered packet"
                             );
                         } else {
+                            decrypted_access_units_discarded =
+                                decrypted_access_units_discarded.saturating_add(1);
                             tracing::trace!(
                                 %packet.peer_addr,
                                 timestamp = packet.timestamp,
@@ -745,6 +757,10 @@ fn process_media_packets(
         invalid_codec_configurations,
         packets_waiting_for_fairplay,
         decode_errors,
+        decoder_initialization_successes,
+        decoder_initialization_failures,
+        decrypted_access_units_submitted,
+        decrypted_access_units_discarded,
         decoded_frames_published,
         heartbeat_packets,
         mailbox_published = mailbox_stats.map(|stats| stats.published),
