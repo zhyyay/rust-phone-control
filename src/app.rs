@@ -189,11 +189,19 @@ impl Render for PhoneControlApp {
                     // converting every frame into a GPUI bitmap: the bitmap is
                     // created only if native D3D11 presentation actually fails.
                     let prepared_frame = match crate::airplay::take_latest_video_frame() {
-                        Ok(Some(snapshot)) => Some((
-                            snapshot.sequence,
-                            snapshot.frame,
-                            snapshot.enqueued_at.elapsed(),
-                        )),
+                        Ok(Some(snapshot)) => {
+                            let mailbox_age = snapshot.enqueued_at.elapsed();
+                            if mailbox_age > Duration::from_millis(250) {
+                                tracing::warn!(
+                                    sequence = snapshot.sequence,
+                                    mailbox_age_ms = mailbox_age.as_millis() as u64,
+                                    "Dropping stale AirPlay preview frame instead of presenting delayed video"
+                                );
+                                None
+                            } else {
+                                Some((snapshot.sequence, snapshot.frame, mailbox_age))
+                            }
+                        }
                         Ok(None) => None,
                         Err(error) => {
                             tracing::warn!(%error, "Could not read decoded AirPlay frame");
