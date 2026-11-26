@@ -2292,6 +2292,15 @@ mod latest_frame_diagnostics_tests {
         let stats = mailbox.stats().unwrap();
         assert_eq!(stats.published, 1);
         assert_eq!(stats.cleared, 1);
+        assert_eq!(stats.clear_events, 1);
+        assert!(!stats.pending);
+
+        // A teardown must still be observable when the last frame was already
+        // consumed and the mailbox is empty.
+        mailbox.clear().unwrap();
+        let stats = mailbox.stats().unwrap();
+        assert_eq!(stats.cleared, 1);
+        assert_eq!(stats.clear_events, 2);
         assert!(!stats.pending);
     }
 }
