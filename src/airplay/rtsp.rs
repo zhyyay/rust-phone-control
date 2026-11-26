@@ -651,6 +651,14 @@ fn process_media_packets(
                 // configuration. Never keep decoding with stale dimensions or
                 // parameter sets if the new stream configuration is unusable.
                 frame_pipeline = None;
+                // A new avcC configuration invalidates the decoder's reference
+                // pictures. Even when the replacement decoder initializes
+                // successfully below, the next usable picture must be an IDR;
+                // otherwise a delta frame would be submitted against an empty
+                // reference state and the preview could remain blank.
+                awaiting_idr = true;
+                idr_wait_started_at = Some(Instant::now());
+                last_idr_wait_warning = None;
                 if let Err(error) = frames.clear() {
                     tracing::warn!(%error, "Could not clear stale AirPlay preview frame");
                 }
@@ -719,6 +727,13 @@ fn process_media_packets(
                 // represented the active sender stream.
                 frame_pipeline = None;
                 decoder_init_policy.reset();
+                // An invalid replacement configuration also ends the previous
+                // decoder reference state. If a valid avcC record arrives later,
+                // require a fresh IDR instead of feeding a delta picture into
+                // the newly initialized decoder.
+                awaiting_idr = true;
+                idr_wait_started_at = Some(Instant::now());
+                last_idr_wait_warning = None;
                 if let Err(clear_error) = frames.clear() {
                     tracing::warn!(
                         %clear_error,
