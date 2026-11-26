@@ -2,7 +2,7 @@
 //!
 //! This module handles codec configuration, encrypted access-unit conversion,
 //! bounded assembly, frame conversion, and the decoded-frame mailbox. FairPlay
-//! key unwrapping remains a separate, intentionally unimplemented stage.
+//! key recovery is deliberately delegated to the authorized SAP provider boundary.
 
 use std::collections::VecDeque;
 use std::sync::{
