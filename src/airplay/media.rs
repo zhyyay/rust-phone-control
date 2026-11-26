@@ -248,6 +248,7 @@ pub enum ScreenMirrorParseError {
     TruncatedHeader,
     UnsupportedPacketType(u16),
     InvalidPayloadLength,
+    TrailingData,
 }
 
 impl fmt::Display for ScreenMirrorParseError {
@@ -259,6 +260,9 @@ impl fmt::Display for ScreenMirrorParseError {
             }
             Self::InvalidPayloadLength => {
                 f.write_str("screen-mirroring payload length exceeds datagram size")
+            }
+            Self::TrailingData => {
+                f.write_str("screen-mirroring packet contains bytes beyond its declared payload")
             }
         }
     }
@@ -287,6 +291,9 @@ pub fn parse_screen_mirror_packet(
         .ok_or(ScreenMirrorParseError::InvalidPayloadLength)?;
     if payload_end > packet.len() {
         return Err(ScreenMirrorParseError::InvalidPayloadLength);
+    }
+    if payload_end != packet.len() {
+        return Err(ScreenMirrorParseError::TrailingData);
     }
 
     let timestamp = u64::from_le_bytes([
@@ -509,6 +516,21 @@ mod receiver_tests {
             parse_screen_mirror_packet(&oversized),
             Err(ScreenMirrorParseError::InvalidPayloadLength)
         );
+    }
+
+    #[test]
+    fn rejects_screen_mirror_packet_with_trailing_bytes() {
+        let mut packet = vec![0u8; SCREEN_MIRROR_HEADER_SIZE + 2];
+        packet[0..4].copy_from_slice(&1u32.to_le_bytes());
+        packet[4..6].copy_from_slice(&0u16.to_le_bytes());
+        packet[SCREEN_MIRROR_HEADER_SIZE] = 0xAA;
+        assert_eq!(
+            parse_screen_mirror_packet(&packet),
+            Err(ScreenMirrorParseError::TrailingData)
+        );
+
+        packet[0..4].copy_from_slice(&2u32.to_le_bytes());
+        assert!(parse_screen_mirror_packet(&packet).is_ok());
     }
 
     #[test]
