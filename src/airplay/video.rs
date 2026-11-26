@@ -1449,9 +1449,7 @@ mod tests {
 
     #[test]
     fn annex_b_split_excludes_trailing_zero_bytes_from_each_nal() {
-        let data = [
-            0, 0, 0, 1, 0x67, 0x64, 0, 0, 0, 1, 0x68, 0xee, 0, 0,
-        ];
+        let data = [0, 0, 0, 1, 0x67, 0x64, 0, 0, 0, 1, 0x68, 0xee, 0, 0];
         let units = split_annex_b(&data);
         assert_eq!(units.len(), 2);
         assert_eq!(units[0].bytes, &[0x67, 0x64]);
