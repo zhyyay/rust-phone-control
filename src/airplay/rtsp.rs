@@ -1169,7 +1169,9 @@ pub fn serve_with_fairplay_provider(
                 );
                 if media_receiver.is_some() {
                     tracing::info!(
-                        "AirPlay RECORD request accepted; media listener is active, but media decryption/decoding is not active"
+                        media_listener_active = true,
+                        media_worker_active = media_receiver.is_some(),
+                        "AirPlay RECORD request accepted; media reception state recorded"
                     );
                 } else {
                     // Apple senders may issue RECORD before the stream-level
