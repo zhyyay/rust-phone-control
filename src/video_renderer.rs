@@ -1384,10 +1384,10 @@ float4 PSMain(VertexOutput input) : SV_Target {
                     .CreateShaderResourceView(&uv_texture, None, Some(&mut uv_view))
                     .context("could not create the D3D11 NV12 UV shader view")?;
             }
-            let y_view = y_view
-                .ok_or_else(|| anyhow!("D3D11 returned no NV12 Y shader-resource view"))?;
-            let uv_view = uv_view
-                .ok_or_else(|| anyhow!("D3D11 returned no NV12 UV shader-resource view"))?;
+            let y_view =
+                y_view.ok_or_else(|| anyhow!("D3D11 returned no NV12 Y shader-resource view"))?;
+            let uv_view =
+                uv_view.ok_or_else(|| anyhow!("D3D11 returned no NV12 UV shader-resource view"))?;
             self.nv12_y_texture = Some(y_texture);
             self.nv12_uv_texture = Some(uv_texture);
             self._nv12_y_view = Some(y_view);
