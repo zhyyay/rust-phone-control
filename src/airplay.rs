@@ -46,7 +46,7 @@ mod video;
 
 #[cfg(windows)]
 use sha2::Digest;
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 #[cfg(windows)]
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -68,6 +68,8 @@ struct ReceiverRuntime {
 static RECEIVER: OnceLock<Mutex<Option<ReceiverRuntime>>> = OnceLock::new();
 #[cfg(windows)]
 static PIPELINE_STAGE: AtomicU8 = AtomicU8::new(0);
+#[cfg(windows)]
+static PIPELINE_FRAME_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 /// Current observed RTSP pipeline stage; this reports protocol events, not inferred readiness.
 #[cfg(windows)]
@@ -95,10 +97,20 @@ pub(super) fn set_pipeline_stage(stage: u8) {
     PIPELINE_STAGE.store(stage, Ordering::Release);
 }
 
-/// Mark the first frame as visibly presented by the desktop renderer.
-/// A late UI callback must never move a disconnected/new session backwards.
+/// Record the newest decoded frame sequence for this receiver runtime.
 #[cfg(windows)]
-pub fn mark_video_rendered() {
+pub(super) fn mark_video_decoded(sequence: u64) {
+    PIPELINE_FRAME_SEQUENCE.store(sequence, Ordering::Release);
+    let _ = PIPELINE_STAGE.compare_exchange(10, 11, Ordering::AcqRel, Ordering::Acquire);
+}
+
+/// Mark a frame as presented only if it is still the newest decoded frame.
+/// This prevents a delayed UI callback from an old stream advancing a new session.
+#[cfg(windows)]
+pub fn mark_video_rendered(sequence: u64) {
+    if PIPELINE_FRAME_SEQUENCE.load(Ordering::Acquire) != sequence {
+        return;
+    }
     let _ = PIPELINE_STAGE.compare_exchange(11, 12, Ordering::AcqRel, Ordering::Acquire);
 }
 
