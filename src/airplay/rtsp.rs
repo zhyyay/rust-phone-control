@@ -439,6 +439,13 @@ fn process_media_packets(
         "AirPlay media worker initialized with negotiated stream context"
     );
     let mut received = 0u64;
+    let mut codec_configurations = 0u64;
+    let mut invalid_codec_configurations = 0u64;
+    let mut video_packets = 0u64;
+    let mut packets_waiting_for_fairplay = 0u64;
+    let mut decode_errors = 0u64;
+    let mut decoded_frames_published = 0u64;
+    let mut heartbeat_packets = 0u64;
     let pair_verify_shared_secret = stream_context.pair_verify_shared_secret;
     let fairplay_video_key = stream_context.fairplay_video_key;
     let media_foundation = stream_context.media_foundation;
@@ -539,6 +546,7 @@ fn process_media_packets(
                 sps_count,
                 pps_count,
             } => {
+                codec_configurations = codec_configurations.saturating_add(1);
                 // A newly accepted avcC record supersedes the previous decoder
                 // configuration. Never keep decoding with stale dimensions or
                 // parameter sets if the new stream configuration is unusable.
@@ -601,6 +609,7 @@ fn process_media_packets(
                 }
             }
             super::video::MirrorPacketOutcome::InvalidCodecConfiguration(error) => {
+                invalid_codec_configurations = invalid_codec_configurations.saturating_add(1);
                 // An invalid replacement configuration must not leave the
                 // previous decoder or its last frame visible as if it still
                 // represented the active sender stream.
@@ -623,6 +632,7 @@ fn process_media_packets(
                 payload_bytes,
                 has_configuration,
             } => {
+                video_packets = video_packets.saturating_add(1);
                 if let Some(cipher) = mirror_cipher.as_mut() {
                     if let Some(pipeline) = frame_pipeline.as_mut() {
                         match pipeline.submit_encrypted_access_unit(
@@ -630,15 +640,20 @@ fn process_media_packets(
                             cipher,
                             &packet.payload,
                         ) {
-                            Ok(published_frames) => tracing::debug!(
+                            Ok(published_frames) => {
+                                decoded_frames_published =
+                                    decoded_frames_published.saturating_add(published_frames as u64);
+                                tracing::debug!(
                                 %packet.peer_addr,
                                 timestamp = packet.timestamp,
                                 payload_bytes,
                                 published_frames,
                                 received,
                                 "Decrypted and submitted AirPlay H.264 access unit"
-                            ),
+                                )
+                            }
                             Err(error) => {
+                                decode_errors = decode_errors.saturating_add(1);
                                 // A failed access-unit operation may have advanced
                                 // the stream counter. Disable decryption rather than
                                 // risk using a desynchronized cipher for later packets.
@@ -678,6 +693,8 @@ fn process_media_packets(
                         }
                     }
                 } else {
+                    packets_waiting_for_fairplay =
+                        packets_waiting_for_fairplay.saturating_add(1);
                     tracing::debug!(
                         %packet.peer_addr,
                         timestamp = packet.timestamp,
@@ -690,6 +707,7 @@ fn process_media_packets(
                 }
             }
             super::video::MirrorPacketOutcome::Heartbeat => {
+                heartbeat_packets = heartbeat_packets.saturating_add(1);
                 tracing::trace!(%packet.peer_addr, "AirPlay mirror heartbeat received");
             }
         }
@@ -704,10 +722,21 @@ fn process_media_packets(
     drop(frame_pipeline);
     drop(media_foundation);
 
+    let mailbox_stats = frames.stats().ok();
     tracing::info!(
         stream_connection_id = ?stream_connection_id,
         received,
-        "AirPlay media processing worker stopped"
+        codec_configurations,
+        invalid_codec_configurations,
+        video_packets,
+        packets_waiting_for_fairplay,
+        decode_errors,
+        decoded_frames_published,
+        heartbeat_packets,
+        mailbox_published = mailbox_stats.map(|stats| stats.published),
+        mailbox_consumed = mailbox_stats.map(|stats| stats.consumed),
+        mailbox_replaced = mailbox_stats.map(|stats| stats.replaced_before_consumption),
+        "AirPlay media processing worker stopped with pipeline summary"
     );
 }
 
