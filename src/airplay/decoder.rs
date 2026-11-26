@@ -388,6 +388,13 @@ impl<'runtime> H264Decoder<'runtime> {
         // candidate: transforms may adjust attributes while accepting it.
         let current_type = unsafe { self.transform.GetOutputCurrentType(self.output_stream) }
             .map_err(|error| MediaFoundationError::OutputInfoFailed(error.code().0))?;
+        let major_type = unsafe { current_type.GetGUID(&MF_MT_MAJOR_TYPE) }
+            .map_err(|error| MediaFoundationError::OutputInfoFailed(error.code().0))?;
+        let subtype = unsafe { current_type.GetGUID(&MF_MT_SUBTYPE) }
+            .map_err(|error| MediaFoundationError::OutputInfoFailed(error.code().0))?;
+        if major_type != MFMediaType_Video || subtype != MFVideoFormat_NV12 {
+            return Err(MediaFoundationError::Nv12OutputUnavailable);
+        }
         let frame_size = unsafe { current_type.GetUINT64(&MF_MT_FRAME_SIZE) }
             .map_err(|error| MediaFoundationError::OutputInfoFailed(error.code().0))?;
         let width = (frame_size >> 32) as u32;
@@ -589,8 +596,15 @@ impl<'runtime> H264Decoder<'runtime> {
             let output_type = unsafe { self.transform.GetOutputCurrentType(self.output_stream) }
                 .map_err(|error| MediaFoundationError::OutputInfoFailed(error.code().0))?;
             // The current sample's negotiated media type is authoritative.
-            // Keep frame metadata synchronized even if a transform changes
-            // dimensions without a separate stream-change notification.
+            // Reject unexpected formats instead of interpreting their memory
+            // layout as NV12 planes.
+            let major_type = unsafe { output_type.GetGUID(&MF_MT_MAJOR_TYPE) }
+                .map_err(|error| MediaFoundationError::OutputInfoFailed(error.code().0))?;
+            let subtype = unsafe { output_type.GetGUID(&MF_MT_SUBTYPE) }
+                .map_err(|error| MediaFoundationError::OutputInfoFailed(error.code().0))?;
+            if major_type != MFMediaType_Video || subtype != MFVideoFormat_NV12 {
+                return Err(MediaFoundationError::Nv12OutputUnavailable);
+            }
             let frame_size = unsafe { output_type.GetUINT64(&MF_MT_FRAME_SIZE) }
                 .map_err(|error| MediaFoundationError::OutputInfoFailed(error.code().0))?;
             let width = (frame_size >> 32) as u32;
@@ -603,17 +617,6 @@ impl<'runtime> H264Decoder<'runtime> {
                 || height > crate::airplay::video::MAX_FRAME_DIMENSION
             {
                 return Err(MediaFoundationError::InvalidDimensions);
-            }
-            if (width, height) != (self.width, self.height) {
-                tracing::info!(
-                    old_width = self.width,
-                    old_height = self.height,
-                    width,
-                    height,
-                    "Media Foundation decoder output resolution changed"
-                );
-                self.width = width;
-                self.height = height;
             }
             let signed_stride = unsafe { output_type.GetUINT32(&MF_MT_DEFAULT_STRIDE) }
                 .map(|value| value as i32)
@@ -665,6 +668,18 @@ impl<'runtime> H264Decoder<'runtime> {
             if signed_stride < 0 {
                 crate::airplay::video::normalize_nv12_bottom_up(&mut data, width, height, stride)
                     .map_err(MediaFoundationError::FrameConversion)?;
+            }
+
+            if (width, height) != (self.width, self.height) {
+                tracing::info!(
+                    old_width = self.width,
+                    old_height = self.height,
+                    width,
+                    height,
+                    "Media Foundation decoder output resolution changed"
+                );
+                self.width = width;
+                self.height = height;
             }
 
             return Ok(Some(DecodedNv12Frame {
