@@ -955,7 +955,8 @@ pub fn serve_with_fairplay_provider(
                             );
                             // A late or unsolicited M3 cannot inherit any
                             // wrapped key material from an earlier exchange.
-                            fairplay_ekey = None;
+                            media_receiver = None;
+fairplay_ekey = None;
                             fairplay_eiv = None;
                             fairplay_video_key = None;
                             fairplay_initial = None;
@@ -971,7 +972,8 @@ pub fn serve_with_fairplay_provider(
                             tracing::warn!(%error, "FairPlay M3 state validation failed");
                             // A rejected M3 invalidates every piece of material
                             // from this exchange, including the wrapped key and IV.
-                            fairplay_ekey = None;
+                            media_receiver = None;
+fairplay_ekey = None;
                             fairplay_eiv = None;
                             fairplay_video_key = None;
                             fairplay_initial = None;
@@ -998,7 +1000,8 @@ pub fn serve_with_fairplay_provider(
                             Err(error) => {
                                 // Authentication failure invalidates the entire
                                 // exchange, not just its derived media key.
-                                fairplay_ekey = None;
+                                media_receiver = None;
+fairplay_ekey = None;
                                 fairplay_eiv = None;
                                 fairplay_video_key = None;
                                 fairplay_initial = None;
@@ -1023,7 +1026,8 @@ pub fn serve_with_fairplay_provider(
                         // An out-of-order record invalidates the in-flight
                         // negotiation. Do not leave previously derived keys
                         // available after a protocol violation.
-                        fairplay_ekey = None;
+                        media_receiver = None;
+fairplay_ekey = None;
                         fairplay_eiv = None;
                         fairplay_video_key = None;
                         fairplay_initial = None;
@@ -1036,7 +1040,8 @@ pub fn serve_with_fairplay_provider(
                         tracing::warn!(%error, "AirPlay FairPlay setup framing rejected");
                         // Malformed FairPlay input is a hard boundary: discard
                         // every key and negotiation object from this exchange.
-                        fairplay_ekey = None;
+                        media_receiver = None;
+fairplay_ekey = None;
                         fairplay_eiv = None;
                         fairplay_video_key = None;
                         fairplay_initial = None;
