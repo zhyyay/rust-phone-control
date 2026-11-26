@@ -82,6 +82,8 @@ pub fn pipeline_status_label() -> &'static str {
         6 => "RTSP SETUP：媒体流监听已建立",
         7 => "RTSP RECORD：等待媒体数据到达",
         8 => "FairPlay：M3 已认证，等待媒体 SETUP",
+        9 => "视频已解码：等待桌面预览呈现",
+        10 => "镜像画面已呈现",
         _ => "AirPlay：状态未知",
     }
 }
@@ -89,6 +91,13 @@ pub fn pipeline_status_label() -> &'static str {
 #[cfg(windows)]
 pub(super) fn set_pipeline_stage(stage: u8) {
     PIPELINE_STAGE.store(stage, Ordering::Release);
+}
+
+/// Mark the first frame as visibly presented by the desktop renderer.
+/// A late UI callback must never move a disconnected/new session backwards.
+#[cfg(windows)]
+pub fn mark_video_rendered() {
+    let _ = PIPELINE_STAGE.compare_exchange(9, 10, Ordering::AcqRel, Ordering::Acquire);
 }
 
 // Serialize start/stop transitions without holding the receiver data lock
