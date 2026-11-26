@@ -684,8 +684,7 @@ fn process_media_packets(
                                 if published_frames > 0
                                     && decoded_frames_published == published_frames as u64
                                 {
-                                    let sequence =
-                                        frames.stats().ok().map(|stats| stats.published);
+                                    let sequence = frames.stats().ok().map(|stats| stats.published);
                                     #[cfg(windows)]
                                     if let Some(sequence) = sequence {
                                         super::mark_video_decoded(sequence);
