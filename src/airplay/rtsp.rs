@@ -248,7 +248,7 @@ fn accept_mirror_connections(
                 }
                 let accepted = accepted_clients.fetch_add(1, Ordering::Relaxed) + 1;
                 #[cfg(windows)]
-                super::set_pipeline_stage(9);
+                super::advance_pipeline_stage(9);
                 tracing::info!(%peer_addr, accepted, "AirPlay mirror TCP client connected");
                 read_mirror_stream(stream, peer_addr, &sender, &running);
                 // The listener remains available for reconnects, but a closed
@@ -344,7 +344,7 @@ fn read_mirror_stream(
         }
         if received == 0 {
             #[cfg(windows)]
-            super::set_pipeline_stage(10);
+            super::advance_pipeline_stage(10);
             tracing::info!(
                 %peer_addr,
                 packet_type = ?parsed.packet_type,
@@ -1298,7 +1298,7 @@ pub fn serve_with_fairplay_provider(
                         // stream-level SETUP has actually created its listener.
                         if media_receiver.is_some() {
                             #[cfg(windows)]
-                            super::set_pipeline_stage(if record_received { 8 } else { 7 });
+                            super::advance_pipeline_stage(if record_received { 8 } else { 7 });
                         } else {
                             // A successful session-level SETUP replaces the
                             // previous RTSP media session. RECORD from that
@@ -1342,7 +1342,7 @@ pub fn serve_with_fairplay_provider(
                         "AirPlay RECORD accepted; negotiated media listener is ready"
                     );
                     #[cfg(windows)]
-                    super::set_pipeline_stage(8);
+                    super::advance_pipeline_stage(8);
                 } else {
                     // Some senders issue RECORD before stream-level SETUP.
                     // A successful RECORD response alone is not proof that a
