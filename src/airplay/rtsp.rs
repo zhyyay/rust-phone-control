@@ -711,12 +711,7 @@ fn process_media_packets(
                                 // happen after successful packet decryption, so
                                 // the next packet can still use the continuous CTR
                                 // position while the MFT is rebuilt.
-                                let cipher_state_lost = matches!(
-                                    error,
-                                    super::decoder::MediaFoundationError::VideoDecryption(
-                                        super::video::EncryptedAccessUnitError::Crypto(_)
-                                    )
-                                );
+                                let cipher_state_lost = error.invalidates_mirror_cipher();
                                 if cipher_state_lost {
                                     mirror_cipher = None;
                                 }
