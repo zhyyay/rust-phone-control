@@ -2044,10 +2044,7 @@ mod tests {
     fn detects_idr_access_units_without_matching_idr_payload_bytes() {
         let idr = [0, 0, 0, 1, 0x65, 0x88, 0x84];
         let delta = [0, 0, 0, 1, 0x41, 0x65, 0x88];
-        let mixed = [
-            0, 0, 1, 0x67, 0x42, 0, 0x1e,
-            0, 0, 1, 0x65, 0x88, 0x84,
-        ];
+        let mixed = [0, 0, 1, 0x67, 0x42, 0, 0x1e, 0, 0, 1, 0x65, 0x88, 0x84];
         assert!(access_unit_contains_h264_idr(&idr));
         assert!(!access_unit_contains_h264_idr(&delta));
         assert!(access_unit_contains_h264_idr(&mixed));
