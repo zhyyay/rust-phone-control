@@ -77,6 +77,12 @@ impl Drop for RtspPipelineSessionGuard {
 
 /// Per-stream cryptographic context. The shared secret is retained only in
 /// memory and is never formatted into logs or debug output.
+enum MediaWorkerMessage {
+    Packet(ReceivedMediaPacket),
+    /// FIFO marker after the final packet from one mirror TCP peer.
+    StreamDisconnected,
+}
+
 struct MirrorStreamContext {
     connection_id: Option<u64>,
     pair_verify_shared_secret: Option<Zeroizing<[u8; 32]>>,
@@ -230,7 +236,7 @@ fn accept_mirror_connections(
     listener: TcpListener,
     running: std::sync::Arc<std::sync::atomic::AtomicBool>,
     expected_peer_ip: std::net::IpAddr,
-    sender: mpsc::SyncSender<ReceivedMediaPacket>,
+    sender: mpsc::SyncSender<MediaWorkerMessage>,
     accepted_clients: Arc<std::sync::atomic::AtomicU64>,
     disconnected_clients: Arc<std::sync::atomic::AtomicU64>,
 ) {
@@ -252,6 +258,12 @@ fn accept_mirror_connections(
                 super::advance_pipeline_stage(9);
                 tracing::info!(%peer_addr, accepted, "AirPlay mirror TCP client connected");
                 read_mirror_stream(stream, peer_addr, &sender, &running);
+                // FIFO ordering ensures all packets from this peer are processed
+                // before the worker clears its preview at the disconnect boundary.
+                if sender.send(MediaWorkerMessage::StreamDisconnected).is_err() {
+                    tracing::debug!(%peer_addr, "AirPlay media worker stopped before disconnect marker");
+                    break;
+                }
                 // The listener remains available for reconnects, but a closed
                 // media TCP peer is no longer an active sender connection.
                 #[cfg(windows)]
@@ -273,7 +285,7 @@ fn accept_mirror_connections(
 fn read_mirror_stream(
     mut stream: TcpStream,
     peer_addr: std::net::SocketAddr,
-    sender: &mpsc::SyncSender<ReceivedMediaPacket>,
+    sender: &mpsc::SyncSender<MediaWorkerMessage>,
     running: &std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) {
     use std::sync::atomic::Ordering;
@@ -340,7 +352,7 @@ fn read_mirror_stream(
         // without advancing the receiver's cipher, corrupting every later
         // packet. A bounded blocking send applies backpressure instead.
         let packet_bytes_received = packet_bytes.len() as u64;
-        if !send_packet_while_running(sender, owned, running) {
+        if !send_packet_while_running(sender, MediaWorkerMessage::Packet(owned), running) {
             break;
         }
         if received == 0 {
@@ -447,7 +459,7 @@ fn read_exact_while_running<R: Read>(
 }
 
 fn process_media_packets(
-    packets: Receiver<ReceivedMediaPacket>,
+    packets: Receiver<MediaWorkerMessage>,
     stream_context: MirrorStreamContext,
 ) {
     let stream_connection_id = stream_context.connection_id;
@@ -519,7 +531,48 @@ fn process_media_packets(
     let mut last_idr_wait_warning: Option<Instant> = None;
     let mut decoder_init_policy = super::video::DecoderInitializationPolicy::default();
     let mut processor = super::video::MirrorStreamProcessor::new();
-    while let Ok(mut packet) = packets.recv() {
+    while let Ok(message) = packets.recv() {
+        let mut packet = match message {
+            MediaWorkerMessage::Packet(packet) => packet,
+            MediaWorkerMessage::StreamDisconnected => {
+                // Keep the negotiated cipher/configuration continuous across a
+                // TCP reconnect, but never leave the previous peer's frame on
+                // screen. Rebuild decoder references and wait for a fresh IDR.
+                if let Err(error) = frames.clear() {
+                    tracing::warn!(%error, "Could not clear preview after mirror TCP disconnect");
+                }
+                if let (Some(pipeline), Some(configuration)) =
+                    (frame_pipeline.as_mut(), processor.configuration())
+                {
+                    match configuration.video_dimensions() {
+                        Ok(Some(dimensions)) => {
+                            if let Err(error) = pipeline.rebuild_decoder(dimensions.width, dimensions.height) {
+                                tracing::warn!(%error, "Could not rebuild decoder after mirror TCP reconnect");
+                                frame_pipeline = None;
+                            } else {
+                                awaiting_idr = true;
+                                idr_wait_started_at = Some(Instant::now());
+                                last_idr_wait_warning = None;
+                            }
+                        }
+                        Ok(None) => {
+                            frame_pipeline = None;
+                            tracing::warn!("Cannot resume mirror preview after reconnect without SPS dimensions");
+                        }
+                        Err(error) => {
+                            frame_pipeline = None;
+                            tracing::warn!(%error, "Cannot resume mirror preview after reconnect with invalid SPS");
+                        }
+                    }
+                } else {
+                    awaiting_idr = true;
+                    idr_wait_started_at = Some(Instant::now());
+                    last_idr_wait_warning = None;
+                }
+                tracing::info!("AirPlay mirror TCP connection ended; preview cleared and decoder awaiting a fresh IDR");
+                continue;
+            }
+        };
         received = received.saturating_add(1);
         let packet_payload_bytes = packet.payload.len() as u64;
         received_payload_bytes = received_payload_bytes.saturating_add(packet_payload_bytes);
