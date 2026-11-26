@@ -1174,6 +1174,18 @@ pub enum MediaFoundationError {
     DecoderRecoveryLimitReached,
 }
 
+impl MediaFoundationError {
+    /// Whether this error may have left the continuous media CTR state
+    /// unusable. Decoder and AVCC errors occur after a complete packet has
+    /// been decrypted; a cryptographic error can interrupt counter use.
+    pub fn invalidates_mirror_cipher(&self) -> bool {
+        matches!(
+            self,
+            Self::VideoDecryption(crate::airplay::video::EncryptedAccessUnitError::Crypto(_))
+        )
+    }
+}
+
 impl fmt::Display for MediaFoundationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -1331,6 +1343,30 @@ mod tests {
             MAX_FRAMES_PER_DRAIN
         );
         assert_eq!(bounded_drain_limit(usize::MAX), MAX_FRAMES_PER_DRAIN);
+    }
+
+    #[test]
+    fn only_crypto_failures_invalidate_the_mirror_cipher() {
+        assert!(
+            MediaFoundationError::VideoDecryption(
+                crate::airplay::video::EncryptedAccessUnitError::Crypto(
+                    crate::airplay::mirror_crypto::MirrorCryptoError::CounterExhausted
+                )
+            )
+            .invalidates_mirror_cipher()
+        );
+        assert!(
+            !MediaFoundationError::VideoDecryption(
+                crate::airplay::video::EncryptedAccessUnitError::Avc(
+                    crate::airplay::video::AvcConfigError::TooShort
+                )
+            )
+            .invalidates_mirror_cipher()
+        );
+        assert!(
+            !MediaFoundationError::ProcessInputFailed(0x80004005u32 as i32)
+                .invalidates_mirror_cipher()
+        );
     }
 
     #[test]
