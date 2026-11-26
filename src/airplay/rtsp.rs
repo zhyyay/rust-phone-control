@@ -2894,7 +2894,10 @@ mod tests {
             super::MediaWorkerMessage::Packet(ref packet)
                 if packet.packet_type == crate::airplay::media::ScreenMirrorPacketType::Heartbeat
         ));
-        assert!(matches!(second_packet, super::MediaWorkerMessage::StreamDisconnected));
+        assert!(matches!(
+            second_packet,
+            super::MediaWorkerMessage::StreamDisconnected
+        ));
         assert!(matches!(
             third_message,
             super::MediaWorkerMessage::Packet(ref packet)
@@ -3968,7 +3971,7 @@ mod tests {
             super::send_packet_while_running(
                 &worker_sender,
                 super::MediaWorkerMessage::Packet(packet()),
-                &worker_running
+                &worker_running,
             )
         });
 
