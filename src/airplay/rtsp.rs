@@ -251,6 +251,10 @@ fn accept_mirror_connections(
                 super::set_pipeline_stage(9);
                 tracing::info!(%peer_addr, accepted, "AirPlay mirror TCP client connected");
                 read_mirror_stream(stream, peer_addr, &sender, &running);
+                // The listener remains available for reconnects, but a closed
+                // media TCP peer is no longer an active sender connection.
+                #[cfg(windows)]
+                super::set_pipeline_stage(7);
                 let disconnected = disconnected_clients.fetch_add(1, Ordering::Relaxed) + 1;
                 tracing::info!(%peer_addr, disconnected, "AirPlay mirror TCP client disconnected");
             }
