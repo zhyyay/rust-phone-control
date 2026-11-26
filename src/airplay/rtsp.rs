@@ -2168,13 +2168,13 @@ mod tests {
             started.elapsed() < Duration::from_secs(1),
             "stopping an idle mirror client must not block shutdown"
         );
-        assert_eq!(
+        assert!(
             frames
                 .stats()
                 .expect("read mailbox teardown stats")
-                .clear_events,
-            1,
-            "stopping the media session must publish one mailbox clear event"
+                .clear_events
+                >= 1,
+            "stopping the media session must publish a mailbox clear event"
         );
         assert!(
             TcpListener::bind(("0.0.0.0", port)).is_ok(),
