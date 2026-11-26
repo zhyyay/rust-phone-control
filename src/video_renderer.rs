@@ -228,32 +228,105 @@ pub(crate) fn sync_native_video_surface(
         // Bring up the HWND-bound swap chain on the same GPUI thread as the
         // D3D11 immediate context. The surface remains hidden until the first
         // successful decoded-frame upload and Present.
-        THREAD_RENDERER.with(|renderer| {
-            let mut renderer = renderer.borrow_mut();
+        let surface_changed = THREAD_RENDERER.with(|renderer| {
+            let renderer = renderer.borrow();
             let device = renderer
-                .as_mut()
+                .as_ref()
                 .ok_or_else(|| anyhow!("D3D11 renderer is not initialized"))?;
-            let surface_changed = device.swap_chain.is_none()
-                || device.swap_chain_hwnd != child_raw
-                || device.swap_chain_size != Some((width as u32, height as u32))
-                || device.render_target_view.is_none();
-
-            if surface_changed {
-                // Hide only while the HWND-bound back buffer is being created
-                // or resized. sync_native_video_surface runs during layout;
-                // hiding unconditionally here can blank a freshly presented
-                // frame on the next GPUI prepaint and cause visible flicker.
-                // SAFETY: child_hwnd is the owned native preview child.
-                unsafe {
-                    ShowWindow(child_hwnd, SW_HIDE);
-                }
-            }
-
-            device.ensure_swap_chain(child_hwnd, width as u32, height as u32)
+            Ok::<_, anyhow::Error>(
+                device.swap_chain.is_none()
+                    || device.swap_chain_hwnd != child_raw
+                    || device.swap_chain_size != Some((width as u32, height as u32))
+                    || device.render_target_view.is_none(),
+            )
         })?;
+
+        if surface_changed {
+            // Hide only while the HWND-bound back buffer is being created
+            // or resized. sync_native_video_surface runs during layout;
+            // hiding unconditionally here can blank a freshly presented
+            // frame on the next GPUI prepaint and cause visible flicker.
+            // SAFETY: child_hwnd is the owned native preview child.
+            unsafe {
+                ShowWindow(child_hwnd, SW_HIDE);
+            }
+        }
+
+        ensure_swap_chain_with_recovery(child_hwnd, width as u32, height as u32)?;
 
         Ok(())
     })
+}
+
+/// Ensure the native surface's swap chain exists, rebuilding the device if
+/// DXGI reports that it was removed while creating or resizing the chain.
+///
+/// Frame-upload recovery alone is insufficient: a device can be removed while
+/// the window is being resized, before another frame reaches the upload path.
+fn ensure_swap_chain_with_recovery(hwnd: HWND, width: u32, height: u32) -> anyhow::Result<()> {
+    let initial_result = THREAD_RENDERER.with(|renderer| {
+        let mut renderer = renderer.borrow_mut();
+        let device = renderer
+            .as_mut()
+            .ok_or_else(|| anyhow!("D3D11 renderer is not initialized"))?;
+        device.ensure_swap_chain(hwnd, width, height)
+    });
+
+    let Err(original_error) = initial_result else {
+        return Ok(());
+    };
+
+    let removed_reason = THREAD_RENDERER.with(|renderer| {
+        let renderer = renderer.borrow();
+        renderer.as_ref().and_then(|device| {
+            // GetDeviceRemovedReason returns S_OK while the device is healthy.
+            unsafe { device.device.GetDeviceRemovedReason() }
+                .err()
+        })
+    });
+    let Some(reason) = removed_reason else {
+        return Err(original_error);
+    };
+
+    let now = Instant::now();
+    let cooling_down = DEVICE_RECOVERY_RETRY_AFTER
+        .with(|retry_after| retry_after.get().is_some_and(|deadline| now < deadline));
+    if cooling_down {
+        return Err(original_error);
+    }
+    DEVICE_RECOVERY_RETRY_AFTER.with(|retry_after| {
+        retry_after.set(Some(now + Duration::from_secs(2)));
+    });
+
+    // Do not leave an old image visible while its device is being replaced.
+    // SAFETY: hwnd is the owned native child surface on the GPUI thread.
+    unsafe {
+        ShowWindow(hwnd, SW_HIDE);
+    }
+    tracing::warn!(
+        error = %reason,
+        width,
+        height,
+        "D3D11 device was removed while ensuring the swap chain; rebuilding device"
+    );
+
+    let mut replacement = D3d11Device::create_hardware()
+        .context("could not recreate D3D11 device after swap-chain device removal")?;
+    replacement
+        .ensure_swap_chain(hwnd, width, height)
+        .context("could not recreate the native video swap chain after device removal")?;
+
+    THREAD_RENDERER.with(|renderer| {
+        *renderer.borrow_mut() = Some(replacement);
+    });
+    DEVICE_RECOVERY_RETRY_AFTER.with(|retry_after| retry_after.set(None));
+    DEVICE_RECOVERIES.fetch_add(1, Ordering::Relaxed);
+    tracing::info!(
+        width,
+        height,
+        "D3D11 device and swap chain recovered during surface synchronization"
+    );
+    Ok(())
 }
 
 /// Suspend the preview while its GPUI layout has no drawable area.
