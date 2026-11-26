@@ -418,7 +418,7 @@ impl Render for PhoneControlApp {
                                         ImageFormat::Bmp,
                                         bytes,
                                     )));
-                                    crate::airplay::mark_video_rendered();
+                                    crate::airplay::mark_video_rendered(sequence);
                                     this.preview_status = format!(
                                         "GPUI 图像回退（D3D11 不可用） · {width} × {height} · sequence {sequence}"
                                     );
@@ -483,7 +483,7 @@ impl Render for PhoneControlApp {
                             let (display_path, used_fallback, conversion_elapsed) =
                                 match native_present {
                                     Ok(()) => {
-                                        crate::airplay::mark_video_rendered();
+                                        crate::airplay::mark_video_rendered(sequence);
                                         // The native child surface owns the visible image.
                                         // Cancel stale CPU conversion work and discard any
                                         // completed bitmap that raced with native recovery.
