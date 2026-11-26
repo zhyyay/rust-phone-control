@@ -1438,13 +1438,31 @@ mod tests {
 
     #[test]
     fn nal_classifier_rejects_forbidden_header_bits_and_invalid_hevc_temporal_id() {
-        assert_eq!(classify_nal(VideoCodec::H264, &[0xe5]), NalUnitKind::Invalid);
-        assert_eq!(classify_nal(VideoCodec::H264, &[0x65]), NalUnitKind::H264Idr);
+        assert_eq!(
+            classify_nal(VideoCodec::H264, &[0xe5]),
+            NalUnitKind::Invalid
+        );
+        assert_eq!(
+            classify_nal(VideoCodec::H264, &[0x65]),
+            NalUnitKind::H264Idr
+        );
 
-        assert_eq!(classify_nal(VideoCodec::Hevc, &[0x80, 0x01]), NalUnitKind::Invalid);
-        assert_eq!(classify_nal(VideoCodec::Hevc, &[0x26, 0x00]), NalUnitKind::Invalid);
-        assert_eq!(classify_nal(VideoCodec::Hevc, &[0x26, 0x01]), NalUnitKind::HevcIdr);
-        assert_eq!(classify_nal(VideoCodec::Hevc, &[0x42]), NalUnitKind::Invalid);
+        assert_eq!(
+            classify_nal(VideoCodec::Hevc, &[0x80, 0x01]),
+            NalUnitKind::Invalid
+        );
+        assert_eq!(
+            classify_nal(VideoCodec::Hevc, &[0x26, 0x00]),
+            NalUnitKind::Invalid
+        );
+        assert_eq!(
+            classify_nal(VideoCodec::Hevc, &[0x26, 0x01]),
+            NalUnitKind::HevcIdr
+        );
+        assert_eq!(
+            classify_nal(VideoCodec::Hevc, &[0x42]),
+            NalUnitKind::Invalid
+        );
     }
 
     #[test]
