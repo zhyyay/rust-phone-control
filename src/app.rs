@@ -14,12 +14,21 @@ use std::{
 };
 
 #[cfg(windows)]
-struct FallbackConversionInFlightGuard(Arc<AtomicBool>);
+struct FallbackConversionInFlightGuard(Option<Arc<AtomicBool>>);
+
+#[cfg(windows)]
+impl FallbackConversionInFlightGuard {
+    fn disarm(mut self) {
+        self.0.take();
+    }
+}
 
 #[cfg(windows)]
 impl Drop for FallbackConversionInFlightGuard {
     fn drop(&mut self) {
-        self.0.store(false, Ordering::Release);
+        if let Some(in_flight) = self.0.as_ref() {
+            in_flight.store(false, Ordering::Release);
+        }
     }
 }
 
@@ -600,7 +609,7 @@ impl Render for PhoneControlApp {
                                                 .name("airplay-fallback-convert".to_owned())
                                                 .spawn(move || {
                                                     let _in_flight_guard =
-                                                        FallbackConversionInFlightGuard(in_flight.clone());
+                                                        FallbackConversionInFlightGuard(Some(in_flight.clone()));
                                                     let mut current = Some(pending_frame);
                                                     while let Some((sequence, generation, width, height, frame)) = current.take() {
                                                         if cancel.load(Ordering::Acquire)
@@ -634,16 +643,19 @@ impl Render for PhoneControlApp {
                                                         // in-flight flag. A producer either replaces the
                                                         // pending frame before this check, or observes
                                                         // false afterwards and starts a fresh worker.
-                                                        if let Some(next) = pending_slot.take() {
-                                                            current = Some(next);
-                                                            continue;
+                                                        match pending_slot.take_or_release(&in_flight) {
+                                                            Ok(Some(next)) => {
+                                                                current = Some(next);
+                                                            }
+                                                            Ok(None) => {
+                                                                // take_or_release clears the flag while
+                                                                // holding the slot lock. Disarm this guard
+                                                                // so it cannot clear a newly spawned worker.
+                                                                _in_flight_guard.disarm();
+                                                                return;
+                                                            }
+                                                            Err(()) => break,
                                                         }
-                                                        // Release worker ownership while no pending
-                                                        // item exists; submit() uses the same slot
-                                                        // lock, so a producer either wins before this
-                                                        // check or starts a new worker afterwards.
-                                                        drop(_in_flight_guard);
-                                                        return;
                                                     }
                                                 });
                                             if let Err(error) = spawn {
