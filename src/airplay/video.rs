@@ -2288,7 +2288,7 @@ mod tests {
         assert!(recovery.is_waiting());
         assert!(!recovery.should_submit(false));
         assert!(recovery.should_submit(true));
-        recovery.record_idr_accepted();
+        recovery.record_idr_submitted();
         assert!(!recovery.is_waiting());
     }
 
@@ -2351,7 +2351,7 @@ mod tests {
         assert!(recovery.is_waiting());
         assert!(!recovery.should_submit(false));
         assert!(recovery.should_submit(true));
-        recovery.record_idr_accepted();
+        recovery.record_idr_submitted();
         assert!(!recovery.is_waiting());
     }
 
