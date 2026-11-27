@@ -479,7 +479,12 @@ pub(crate) fn upload_nv12_frame(
             // a live preview; a later successful Present reveals the child again.
             unsafe { ShowWindow(HWND(child_raw as *mut c_void), SW_HIDE) };
 
-            recreate_device_after_removal(\n                HWND(child_raw as *mut c_void),\n                surface_width,\n                surface_height,\n                &reason,\n            )?;
+            recreate_device_after_removal(
+                HWND(child_raw as *mut c_void),
+                surface_width,
+                surface_height,
+                &reason,
+            )?;
             let retry_result = THREAD_RENDERER
                 .with(|renderer| {
                     let mut renderer = renderer.borrow_mut();
@@ -608,7 +613,12 @@ pub(crate) fn upload_bgra_frame(
             // a live preview; a later successful Present reveals the child again.
             unsafe { ShowWindow(HWND(child_raw as *mut c_void), SW_HIDE) };
 
-            recreate_device_after_removal(\n                HWND(child_raw as *mut c_void),\n                surface_width,\n                surface_height,\n                &reason,\n            )?;
+            recreate_device_after_removal(
+                HWND(child_raw as *mut c_void),
+                surface_width,
+                surface_height,
+                &reason,
+            )?;
             let retry_result = THREAD_RENDERER
                 .with(|renderer| {
                     let mut renderer = renderer.borrow_mut();
