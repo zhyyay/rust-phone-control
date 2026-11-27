@@ -3155,7 +3155,11 @@ mod latest_frame_diagnostics_tests {
         // The final clear is the shutdown join boundary: even if publication
         // won the lock just before the stop flag changed, no frame may remain.
         mailbox.clear().expect("final shutdown clear");
-        assert!(!mailbox.has_pending_frame().expect("mailbox remains healthy"));
+        assert!(
+            !mailbox
+                .has_pending_frame()
+                .expect("mailbox remains healthy")
+        );
     }
 
     #[test]
