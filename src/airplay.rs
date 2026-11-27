@@ -122,7 +122,9 @@ pub(super) fn advance_pipeline_stage(stage: u8) {
 /// Record the newest decoded frame sequence for this receiver runtime.
 #[cfg(windows)]
 pub(super) fn mark_video_decoded(sequence: u64) {
-    PIPELINE_FRAME_SEQUENCE.store(sequence, Ordering::Release);
+    // Decoder and presentation work may complete on different workers. Never
+    // let a delayed older completion replace the sequence of a newer frame.
+    PIPELINE_FRAME_SEQUENCE.fetch_max(sequence, Ordering::AcqRel);
     // A decoded frame proves that media transport reached the decoder even if
     // the RTSP/media-worker status callback was observed slightly later.
     // Advance monotonically instead of requiring the exact previous stage.
