@@ -163,6 +163,10 @@ impl Render for PhoneControlApp {
                 // The render loop never awaits it; completed results are
                 // consumed on a later tick and stale sequences are discarded.
                 let fallback_conversion_in_flight = Arc::new(AtomicBool::new(false));
+                // A single replaceable slot keeps only the newest frame that arrived
+                // while the fallback worker was busy; it never builds an unbounded queue.
+                let fallback_pending_frame: Arc<Mutex<Option<(u64, u64, u32, u32, Arc<crate::airplay::DecodedVideoFrame>)>>> =
+                    Arc::new(Mutex::new(None));
                 let worker_cancel = fallback_worker_cancel;
                 let fallback_conversion_result: Arc<
                     Mutex<Option<(u64, u64, u32, u32, Result<Vec<u8>, &'static str>, Duration)>>,
@@ -562,66 +566,85 @@ impl Render for PhoneControlApp {
                                             sequence,
                                             "D3D11 frame upload unavailable; scheduling bounded asynchronous GPUI fallback conversion"
                                         );
-                                        if !fallback_conversion_in_flight
-                                            .swap(true, Ordering::AcqRel)
-                                        {
-                                            let frame_for_conversion = frame.clone();
+                                        let pending_frame = (
+                                            sequence,
+                                            generation,
+                                            width,
+                                            height,
+                                            frame.clone(),
+                                        );
+                                        let pending_slot = fallback_pending_frame.clone();
+                                        let should_spawn = if let Ok(mut pending) = pending_slot.lock() {
+                                            if fallback_conversion_in_flight.swap(true, Ordering::AcqRel) {
+                                                // Replace, rather than queue, so conversion catches up
+                                                // to the newest decoded frame after the current one.
+                                                *pending = Some(pending_frame);
+                                                false
+                                            } else {
+                                                true
+                                            }
+                                        } else {
+                                            false
+                                        };
+                                        if should_spawn {
                                             let result_slot = fallback_conversion_result.clone();
                                             let in_flight = fallback_conversion_in_flight.clone();
+                                            let pending_slot = fallback_pending_frame.clone();
                                             let cancel = worker_cancel.clone();
                                             let conversion_cancel = Arc::new(AtomicBool::new(false));
                                             fallback_conversion_cancel = Some(conversion_cancel.clone());
-                                            let width_for_conversion = width;
-                                            let height_for_conversion = height;
                                             let spawn = std::thread::Builder::new()
                                                 .name("airplay-fallback-convert".to_owned())
                                                 .spawn(move || {
                                                     let _in_flight_guard =
-                                                        FallbackConversionInFlightGuard(in_flight);
-                                                    // Avoid starting expensive CPU work if shutdown
-                                                    // raced with thread scheduling.
-                                                    if cancel.load(Ordering::Acquire)
-                                                        || conversion_cancel.load(Ordering::Acquire)
-                                                    {
-                                                        return;
-                                                    }
-                                                    let started = Instant::now();
-                                                    let result = decoded_frame_to_bmp(
-                                                        frame_for_conversion.as_ref(),
-                                                        || {
-                                                            cancel.load(Ordering::Acquire)
-                                                                || conversion_cancel.load(Ordering::Acquire)
-                                                        },
-                                                    );
-                                                    let elapsed = started.elapsed();
-                                                    // Publish only if neither shutdown nor native
-                                                    // renderer recovery invalidated this fallback.
-                                                    if !cancel.load(Ordering::Acquire)
-                                                        && !conversion_cancel.load(Ordering::Acquire)
-                                                        && crate::airplay::is_video_frame_generation_current(generation)
-                                                            .unwrap_or(false)
-                                                    {
-                                                        if let Ok(mut slot) = result_slot.lock() {
-                                                            if !cancel.load(Ordering::Acquire)
-                                                                && !conversion_cancel.load(Ordering::Acquire)
-                                                                && crate::airplay::is_video_frame_generation_current(generation)
-                                                                    .unwrap_or(false)
-                                                            {
-                                                                *slot = Some((
-                                                                    sequence,
-                                                                    generation,
-                                                                    width_for_conversion,
-                                                                    height_for_conversion,
-                                                                    result,
-                                                                    elapsed,
-                                                                ));
+                                                        FallbackConversionInFlightGuard(in_flight.clone());
+                                                    let mut current = Some(pending_frame);
+                                                    while let Some((sequence, generation, width, height, frame)) = current.take() {
+                                                        if cancel.load(Ordering::Acquire)
+                                                            || conversion_cancel.load(Ordering::Acquire)
+                                                        {
+                                                            break;
+                                                        }
+                                                        let started = Instant::now();
+                                                        let result = decoded_frame_to_bmp(
+                                                            frame.as_ref(),
+                                                            || cancel.load(Ordering::Acquire)
+                                                                || conversion_cancel.load(Ordering::Acquire),
+                                                        );
+                                                        let elapsed = started.elapsed();
+                                                        if !cancel.load(Ordering::Acquire)
+                                                            && !conversion_cancel.load(Ordering::Acquire)
+                                                            && crate::airplay::is_video_frame_generation_current(generation).unwrap_or(false)
+                                                        {
+                                                            if let Ok(mut slot) = result_slot.lock() {
+                                                                if !cancel.load(Ordering::Acquire)
+                                                                    && !conversion_cancel.load(Ordering::Acquire)
+                                                                    && crate::airplay::is_video_frame_generation_current(generation).unwrap_or(false)
+                                                                {
+                                                                    *slot = Some((sequence, generation, width, height, result, elapsed));
+                                                                }
                                                             }
                                                         }
+
+                                                        // Hold the pending-slot lock while clearing the
+                                                        // in-flight flag. A producer either replaces the
+                                                        // pending frame before this check, or observes
+                                                        // false afterwards and starts a fresh worker.
+                                                        let Ok(mut pending) = pending_slot.lock() else {
+                                                            break;
+                                                        };
+                                                        if let Some(next) = pending.take() {
+                                                            current = Some(next);
+                                                            drop(pending);
+                                                            continue;
+                                                        }
+                                                        drop(_in_flight_guard);
+                                                        drop(pending);
+                                                        return;
                                                     }
                                                 });
                                             if let Err(error) = spawn {
-                                                fallback_conversion_in_flight
-                                                    .store(false, Ordering::Release);
+                                                fallback_conversion_in_flight.store(false, Ordering::Release);
                                                 tracing::warn!(
                                                     %error,
                                                     sequence,
