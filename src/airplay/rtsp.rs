@@ -333,12 +333,14 @@ fn read_mirror_stream(
     let mut received = 0u64;
     let mut received_bytes = 0u64;
     while running.load(Ordering::Acquire) {
+        let packet_started_at = Instant::now();
         let mut header = [0u8; SCREEN_MIRROR_HEADER_SIZE];
-        match read_exact_while_running(
+        match read_exact_while_running_since(
             &mut stream,
             &mut header,
             running,
             MIRROR_CLIENT_IDLE_TIMEOUT,
+            packet_started_at,
         ) {
             Ok(true) => {}
             Ok(false) => break,
@@ -362,11 +364,12 @@ fn read_mirror_stream(
         packet_bytes.resize(SCREEN_MIRROR_HEADER_SIZE + payload_size, 0);
         if payload_size > 0
             && !matches!(
-                read_exact_while_running(
+                read_exact_while_running_since(
                     &mut stream,
                     &mut packet_bytes[SCREEN_MIRROR_HEADER_SIZE..],
                     running,
                     MIRROR_CLIENT_IDLE_TIMEOUT,
+                    packet_started_at,
                 ),
                 Ok(true)
             )
@@ -459,11 +462,20 @@ fn read_exact_while_running<R: Read>(
     running: &std::sync::Arc<std::sync::atomic::AtomicBool>,
     idle_timeout: Duration,
 ) -> io::Result<bool> {
+    read_exact_while_running_since(reader, buffer, running, idle_timeout, Instant::now())
+}
+
+fn read_exact_while_running_since<R: Read>(
+    reader: &mut R,
+    buffer: &mut [u8],
+    running: &std::sync::Arc<std::sync::atomic::AtomicBool>,
+    idle_timeout: Duration,
+    packet_started_at: Instant,
+) -> io::Result<bool> {
     use std::sync::atomic::Ordering;
 
     let mut offset = 0;
-    let packet_started_at = Instant::now();
-    let mut last_progress = packet_started_at;
+    let mut last_progress = Instant::now();
     while offset < buffer.len() && running.load(Ordering::Acquire) {
         let now = Instant::now();
         if mirror_packet_read_timed_out(packet_started_at, last_progress, now, idle_timeout) {
