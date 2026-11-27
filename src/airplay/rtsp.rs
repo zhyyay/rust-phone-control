@@ -690,6 +690,7 @@ fn process_media_packets(
                                 Ok(pipeline) => {
                                     decoder_initialization_successes =
                                         decoder_initialization_successes.saturating_add(1);
+                                    decoder_init_policy.record_success();
                                     frame_pipeline = Some(pipeline);
                                     tracing::info!(
                                         "Windows H.264 decoder pipeline initialized from stream SPS"
