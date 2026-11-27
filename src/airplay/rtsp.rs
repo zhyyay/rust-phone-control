@@ -2597,6 +2597,31 @@ mod tests {
             );
         }
 
+        fn wait_for_clear_events(
+            frames: &LatestFrameMailbox,
+            expected: u64,
+            description: &str,
+        ) {
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while frames
+                .stats()
+                .expect("read mailbox stats")
+                .clear_events
+                < expected
+                && Instant::now() < deadline
+            {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            assert!(
+                frames
+                    .stats()
+                    .expect("read mailbox stats")
+                    .clear_events
+                    >= expected,
+                "timed out waiting for {description}"
+            );
+        }
+
         let peer_ip = "127.0.0.1".parse().expect("loopback IP");
         let frames = Arc::new(LatestFrameMailbox::new());
         let mut media = super::MediaSession::start_with_context(
@@ -2620,6 +2645,7 @@ mod tests {
             .shutdown(Shutdown::Both)
             .expect("close first mirror client");
         wait_for_counter(&media.disconnected_clients, 1, "first client disconnection");
+        wait_for_clear_events(&frames, 1, "first disconnect boundary processing");
         drop(first);
 
         let mut second = TcpStream::connect(("127.0.0.1", port))
@@ -2636,6 +2662,7 @@ mod tests {
             2,
             "second client disconnection",
         );
+        wait_for_clear_events(&frames, 2, "second disconnect boundary processing");
         media.stop();
     }
 
