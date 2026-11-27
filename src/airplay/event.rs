@@ -8,7 +8,7 @@ use std::io::Read;
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::sync::{
     Arc,
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicU64, Ordering},
 };
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -18,6 +18,7 @@ const POLL_INTERVAL: Duration = Duration::from_millis(100);
 pub(super) struct EventChannel {
     local_addr: SocketAddr,
     running: Arc<AtomicBool>,
+    accepted_connections: Arc<AtomicU64>,
     worker: Option<JoinHandle<()>>,
 }
 
@@ -28,14 +29,24 @@ impl EventChannel {
         let local_addr = listener.local_addr()?;
         let running = Arc::new(AtomicBool::new(true));
         let worker_running = Arc::clone(&running);
+        let accepted_connections = Arc::new(AtomicU64::new(0));
+        let worker_accepted_connections = Arc::clone(&accepted_connections);
         let worker = thread::Builder::new()
             .name("airplay-event-channel".to_owned())
-            .spawn(move || accept_events(listener, worker_running, expected_peer_ip))?;
+            .spawn(move || {
+                accept_events(
+                    listener,
+                    worker_running,
+                    expected_peer_ip,
+                    worker_accepted_connections,
+                )
+            })?;
 
         tracing::info!(%local_addr, "AirPlay event channel listening");
         Ok(Self {
             local_addr,
             running,
+            accepted_connections,
             worker: Some(worker),
         })
     }
@@ -53,7 +64,11 @@ impl Drop for EventChannel {
                 tracing::warn!("AirPlay event channel worker panicked");
             }
         }
-        tracing::debug!(%self.local_addr, "AirPlay event channel stopped");
+        tracing::debug!(
+            %self.local_addr,
+            accepted_connections = self.accepted_connections.load(Ordering::Relaxed),
+            "AirPlay event channel stopped"
+        );
     }
 }
 
@@ -61,6 +76,7 @@ fn accept_events(
     listener: TcpListener,
     running: Arc<AtomicBool>,
     expected_peer_ip: std::net::IpAddr,
+    accepted_connections: Arc<AtomicU64>,
 ) {
     while running.load(Ordering::Acquire) {
         match listener.accept() {
@@ -73,7 +89,8 @@ fn accept_events(
                     );
                     continue;
                 }
-                tracing::info!(%peer, "AirPlay reverse event connection accepted");
+                let accepted = accepted_connections.fetch_add(1, Ordering::Relaxed) + 1;
+                tracing::info!(%peer, accepted, "AirPlay reverse event connection accepted");
                 handle_event_stream(stream, &running, peer);
             }
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
@@ -124,6 +141,43 @@ fn handle_event_stream(mut stream: TcpStream, running: &AtomicBool, peer: Socket
 mod tests {
     use super::EventChannel;
     use std::net::{TcpListener, TcpStream};
+
+    #[test]
+    fn event_channel_accepts_a_new_peer_after_previous_peer_disconnects() {
+        use std::time::{Duration, Instant};
+
+        let peer_ip = "127.0.0.1".parse().expect("loopback IP");
+        let channel = EventChannel::bind(peer_ip).expect("bind event channel");
+        let port = channel.port();
+
+        let first = TcpStream::connect((peer_ip, port)).expect("connect first event peer");
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while channel.accepted_connections.load(super::Ordering::Acquire) < 1
+            && Instant::now() < deadline
+        {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(
+            channel.accepted_connections.load(super::Ordering::Acquire),
+            1,
+            "first event peer should be accepted"
+        );
+        drop(first);
+
+        let second = TcpStream::connect((peer_ip, port)).expect("connect replacement event peer");
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while channel.accepted_connections.load(super::Ordering::Acquire) < 2
+            && Instant::now() < deadline
+        {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(
+            channel.accepted_connections.load(super::Ordering::Acquire),
+            2,
+            "event listener should accept a replacement peer after disconnect"
+        );
+        drop(second);
+    }
 
     #[test]
     fn dropping_event_channel_releases_listener_with_connected_peer() {
