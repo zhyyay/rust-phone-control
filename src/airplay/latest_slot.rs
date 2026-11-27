@@ -76,7 +76,6 @@ mod tests {
         assert_eq!(slot.take_or_release(&in_flight).unwrap(), Some(30));
         assert_eq!(slot.take_or_release(&in_flight).unwrap(), None);
         assert!(!in_flight.load(Ordering::Acquire));
-        assert!(in_flight.load(Ordering::Acquire));
     }
 
     #[test]
