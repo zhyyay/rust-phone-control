@@ -197,6 +197,14 @@ impl MediaSession {
         self.running.store(false, Ordering::Release);
         tracing::info!(%self.local_addr, "Stopping AirPlay media session");
 
+        // Invalidate snapshots immediately so UI work already holding a frame
+        // cannot present it while the workers are being joined. Clear again
+        // after joining because a worker may have been finishing a publish
+        // concurrently with this first invalidation.
+        if let Err(error) = self.frames.clear() {
+            tracing::warn!(%self.local_addr, %error, "Could not invalidate decoded frames at media session shutdown");
+        }
+
         if let Some(worker) = self.accept_worker.take() {
             if worker.join().is_err() {
                 tracing::warn!("AirPlay mirror TCP accept worker panicked");
