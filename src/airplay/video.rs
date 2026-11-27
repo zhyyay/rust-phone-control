@@ -2191,6 +2191,66 @@ mod tests {
     }
 
     #[test]
+    fn decoder_retry_budget_resets_only_for_a_new_valid_configuration() {
+        use super::super::media::ScreenMirrorPacketType;
+
+        let first_avcc = [
+            0x01, 0x64, 0xc0, 0x28, 0xff, 0xe1, 0x00, 0x04, 0x67, 0x64, 0xc0, 0x28, 0x01, 0x00,
+            0x02, 0x68, 0xee,
+        ];
+        let mut second_avcc = first_avcc;
+        second_avcc[3] = 0x29;
+
+        let mut processor = MirrorStreamProcessor::new();
+        let mut initialization = DecoderInitializationPolicy::default();
+        let mut recovery = IdrRecoveryGate::default();
+
+        assert!(matches!(
+            processor.process_packet(ScreenMirrorPacketType::CodecConfiguration, &first_avcc),
+            MirrorPacketOutcome::CodecConfigurationUpdated { .. }
+        ));
+        assert!(initialization.begin_attempt());
+        recovery.begin_wait();
+
+        // Repeated identical avcC packets are bounded retries for the same
+        // failed decoder configuration, not fresh initialization budgets.
+        for expected_attempts in [2, 2] {
+            let previous = processor.configuration().cloned();
+            assert!(matches!(
+                processor.process_packet(ScreenMirrorPacketType::CodecConfiguration, &first_avcc),
+                MirrorPacketOutcome::CodecConfigurationUpdated { .. }
+            ));
+            assert_eq!(previous.as_ref(), processor.configuration());
+            if initialization.begin_attempt() {
+                assert_eq!(initialization.attempts(), expected_attempts);
+            } else {
+                assert_eq!(initialization.attempts(), expected_attempts);
+            }
+        }
+        assert_eq!(initialization.attempts(), 2);
+        assert!(!initialization.begin_attempt());
+        assert!(recovery.is_waiting());
+        assert!(!recovery.should_submit(false));
+
+        // A genuinely changed, valid configuration gets a fresh bounded
+        // initialization budget, while the IDR gate remains closed.
+        let previous = processor.configuration().cloned();
+        assert!(matches!(
+            processor.process_packet(ScreenMirrorPacketType::CodecConfiguration, &second_avcc),
+            MirrorPacketOutcome::CodecConfigurationUpdated { .. }
+        ));
+        assert_ne!(previous.as_ref(), processor.configuration());
+        initialization.reset();
+        assert!(initialization.begin_attempt());
+        assert_eq!(initialization.attempts(), 1);
+        assert!(recovery.is_waiting());
+        assert!(!recovery.should_submit(false));
+        assert!(recovery.should_submit(true));
+        recovery.record_idr_accepted();
+        assert!(!recovery.is_waiting());
+    }
+
+    #[test]
     fn invalid_replacement_configuration_discards_previous_configuration() {
         use super::super::media::ScreenMirrorPacketType;
 
