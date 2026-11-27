@@ -281,6 +281,46 @@ mod tests {
     }
 
     #[test]
+    fn discarded_video_packet_keeps_ctr_synchronized_for_following_idr() {
+        let material = MirrorStreamKeyMaterial {
+            key: [0x37; AES_BLOCK_BYTES],
+            iv: [0x91; AES_BLOCK_BYTES],
+        };
+        let discarded_delta_packet = [0xA5; 19];
+        let idr_packet = [0x5A; 24];
+
+        // The RTSP recovery gate decrypts delta pictures but does not submit
+        // them to the decoder. The next IDR must use the advanced CTR state.
+        let mut stream = MirrorStreamCipher::new(&material);
+        let mut discarded = discarded_delta_packet;
+        stream
+            .decrypt_packet(&mut discarded)
+            .expect("decrypt discarded delta packet");
+        let mut recovered_idr = idr_packet;
+        stream
+            .decrypt_packet(&mut recovered_idr)
+            .expect("decrypt following IDR");
+
+        let mut reference = MirrorStreamCipher::new(&material);
+        let mut reference_delta = discarded_delta_packet;
+        reference
+            .decrypt_packet(&mut reference_delta)
+            .expect("advance reference over delta packet");
+        let mut expected_idr = idr_packet;
+        reference
+            .decrypt_packet(&mut expected_idr)
+            .expect("decrypt reference IDR");
+        assert_eq!(recovered_idr, expected_idr);
+
+        let mut unsynchronized = MirrorStreamCipher::new(&material);
+        let mut incorrectly_decrypted_idr = idr_packet;
+        unsynchronized
+            .decrypt_packet(&mut incorrectly_decrypted_idr)
+            .expect("decrypt IDR from fresh cipher");
+        assert_ne!(recovered_idr, incorrectly_decrypted_idr);
+    }
+
+    #[test]
     fn derives_distinct_keys_for_stream_ids() {
         let fairplay_key = [0x5a; FAIRPLAY_KEY_BYTES];
         let first = derive_mirror_stream_keys(&fairplay_key, None, 7).unwrap();
