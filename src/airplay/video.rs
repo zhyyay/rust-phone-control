@@ -556,7 +556,9 @@ fn parse_h264_sps_info(sps: &[u8]) -> Result<AvcSpsInfo, AvcConfigError> {
     })
 }
 
-fn parse_h264_vui_color_matrix(bits: &mut H264BitReader<'_>) -> Result<AvcColorMatrix, AvcConfigError> {
+fn parse_h264_vui_color_matrix(
+    bits: &mut H264BitReader<'_>,
+) -> Result<AvcColorMatrix, AvcConfigError> {
     if bits.read_bit()? {
         let aspect_ratio_idc = bits.read_bits(8)?;
         if aspect_ratio_idc == 255 {
