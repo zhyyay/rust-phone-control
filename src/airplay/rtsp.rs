@@ -2588,7 +2588,7 @@ mod tests {
         ));
         assert!(super::mirror_packet_read_timed_out(
             started,
-            started + Duration::from_secs(10),
+            started,
             started + Duration::from_secs(30),
             idle,
         ));
