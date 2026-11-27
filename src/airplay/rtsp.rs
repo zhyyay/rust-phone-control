@@ -2686,8 +2686,8 @@ mod tests {
                 .stats()
                 .expect("read mailbox teardown stats")
                 .clear_events
-                >= 1,
-            "stopping the media session must publish a mailbox clear event"
+                >= 2,
+            "shutdown must invalidate frames immediately and clear again after workers join"
         );
         assert!(
             !frames.is_generation_current(stale_snapshot.generation),
