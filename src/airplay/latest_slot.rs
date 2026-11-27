@@ -35,9 +35,19 @@ impl<T> LatestPendingSlot<T> {
         }
     }
 
-    /// Takes the newest pending item, if any.
-    pub(crate) fn take(&self) -> Option<T> {
-        self.0.lock().ok().and_then(|mut pending| pending.take())
+    /// Takes the newest pending item, or releases worker ownership while
+    /// still holding the slot lock when the slot is empty.
+    pub(crate) fn take_or_release(
+        &self,
+        in_flight: &AtomicBool,
+    ) -> Result<Option<T>, ()> {
+        let mut pending = self.0.lock().map_err(|_| ())?;
+        if let Some(value) = pending.take() {
+            Ok(Some(value))
+        } else {
+            in_flight.store(false, Ordering::Release);
+            Ok(None)
+        }
     }
 
     /// Discards any item waiting behind the active worker.
@@ -63,8 +73,9 @@ mod tests {
         assert!(!slot.submit(20, &in_flight));
         assert!(!slot.submit(30, &in_flight));
 
-        assert_eq!(slot.take(), Some(30));
-        assert_eq!(slot.take(), None);
+        assert_eq!(slot.take_or_release(&in_flight).unwrap(), Some(30));
+        assert_eq!(slot.take_or_release(&in_flight).unwrap(), None);
+        assert!(!in_flight.load(Ordering::Acquire));
         assert!(in_flight.load(Ordering::Acquire));
     }
 
@@ -77,8 +88,8 @@ mod tests {
         assert!(!slot.submit(2, &in_flight));
         slot.clear();
 
-        assert_eq!(slot.take(), None);
-        assert!(in_flight.load(Ordering::Acquire));
+        assert_eq!(slot.take_or_release(&in_flight).unwrap(), None);
+        assert!(!in_flight.load(Ordering::Acquire));
     }
 
     #[test]
@@ -88,11 +99,12 @@ mod tests {
 
         assert!(slot.submit(1, &in_flight));
         assert!(!slot.submit(2, &in_flight));
-        assert_eq!(slot.take(), Some(2));
-        in_flight.store(false, Ordering::Release);
+        assert_eq!(slot.take_or_release(&in_flight).unwrap(), Some(2));
+        assert!(in_flight.load(Ordering::Acquire));
+        assert_eq!(slot.take_or_release(&in_flight).unwrap(), None);
 
         assert!(slot.submit(3, &in_flight));
-        assert_eq!(slot.take(), None);
-        assert!(in_flight.load(Ordering::Acquire));
+        assert_eq!(slot.take_or_release(&in_flight).unwrap(), None);
+        assert!(!in_flight.load(Ordering::Acquire));
     }
 }
