@@ -1155,6 +1155,25 @@ impl<'runtime> H264FramePipeline<'runtime> {
         if !self.recovery.begin_rebuild() {
             return Err(MediaFoundationError::DecoderRecoveryLimitReached);
         }
+        self.rebuild_decoder_transform(width, height)
+    }
+
+    /// Rebuild after a mirror TCP reconnect without consuming the decoder
+    /// fault-recovery budget. A transport interruption is not evidence that
+    /// the Media Foundation transform itself is faulty.
+    pub fn rebuild_decoder_after_reconnect(
+        &mut self,
+        width: u32,
+        height: u32,
+    ) -> Result<(), MediaFoundationError> {
+        self.rebuild_decoder_transform(width, height)
+    }
+
+    fn rebuild_decoder_transform(
+        &mut self,
+        width: u32,
+        height: u32,
+    ) -> Result<(), MediaFoundationError> {
         let mut replacement = H264Decoder::new(self.decoder._runtime, width, height)?;
         if !self.parameter_sets.is_empty() {
             let _ = replacement.submit_access_unit_and_drain(&self.parameter_sets)?;
