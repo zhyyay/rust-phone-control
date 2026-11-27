@@ -556,9 +556,10 @@ fn process_media_packets(
                 {
                     match configuration.video_dimensions() {
                         Ok(Some(dimensions)) => {
-                            if let Err(error) =
-                                pipeline.rebuild_decoder_after_reconnect(dimensions.width, dimensions.height)
-                            {
+                            if let Err(error) = pipeline.rebuild_decoder_after_reconnect(
+                                dimensions.width,
+                                dimensions.height,
+                            ) {
                                 tracing::warn!(%error, "Could not rebuild decoder after mirror TCP reconnect");
                                 frame_pipeline = None;
                             }
