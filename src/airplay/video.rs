@@ -2500,6 +2500,38 @@ mod tests {
     }
 
     #[test]
+    fn normalizes_bottom_up_nv12_with_padded_rows_and_preserves_padding() {
+        let mut data = vec![
+            1, 2, 90, 91, 3, 4, 92, 93, 5, 6, 94, 95, 7, 8, 96, 97,
+            10, 11, 98, 99, 12, 13, 100, 101,
+        ];
+
+        normalize_nv12_bottom_up(&mut data, 2, 4, 4)
+            .expect("padded bottom-up NV12 is valid");
+
+        assert_eq!(
+            data,
+            vec![
+                7, 8, 96, 97, 5, 6, 94, 95, 3, 4, 92, 93, 1, 2, 90, 91,
+                12, 13, 100, 101, 10, 11, 98, 99,
+            ]
+        );
+    }
+
+    #[test]
+    fn bottom_up_nv12_rejects_invalid_stride_and_odd_dimensions() {
+        assert_eq!(
+            normalize_nv12_bottom_up(&mut [0; 12], 2, 4, 1),
+            Err(FrameConversionError::InvalidStride)
+        );
+        assert_eq!(
+            normalize_nv12_bottom_up(&mut [0; 12], 2, 3, 2),
+            Err(FrameConversionError::OddNv12Dimension)
+        );
+    }
+
+
+    #[test]
     fn converts_neutral_nv12_black_and_white_to_bgra() {
         let data = [
             16, 16, 16, 16, // Y plane
