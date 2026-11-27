@@ -1346,7 +1346,10 @@ mod tests {
 
     #[test]
     fn nv12_required_length_accepts_compact_final_uv_row_for_positive_stride() {
-        assert_eq!(required_nv12_buffer_length(4, 4, 8, false), Ok(8 * 4 + 8 + 4));
+        assert_eq!(
+            required_nv12_buffer_length(4, 4, 8, false),
+            Ok(8 * 4 + 8 + 4)
+        );
         assert_eq!(required_nv12_buffer_length(4, 4, 8, true), Ok(8 * 6));
     }
 
