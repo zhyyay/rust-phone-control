@@ -4055,11 +4055,7 @@ mod tests {
 
     #[test]
     fn disconnect_marker_waits_for_queue_capacity_and_preserves_fifo_boundary() {
-        use std::sync::{
-            Arc,
-            atomic::AtomicBool,
-            mpsc,
-        };
+        use std::sync::{Arc, atomic::AtomicBool, mpsc};
         use std::thread;
         use std::time::Duration;
 
