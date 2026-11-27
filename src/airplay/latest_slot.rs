@@ -47,8 +47,19 @@ impl<T> LatestPendingSlot<T> {
         }
     }
 
-    /// Discards pending work and releases worker ownership under the same
-    /// lock, so a concurrent producer cannot strand a new item.
+    /// Discards queued work without releasing an active worker's ownership.
+    ///
+    /// The worker may still be converting its current item. Keeping ownership
+    /// claimed prevents a producer from starting a second worker before the
+    /// current one observes the empty slot and exits.
+    pub(crate) fn clear_pending(&self) -> Result<(), ()> {
+        let mut pending = self.0.lock().map_err(|_| ())?;
+        *pending = None;
+        Ok(())
+    }
+
+    /// Discards pending work and releases worker ownership when the worker is
+    /// terminating (for example, after global cancellation).
     pub(crate) fn clear_and_release(&self, in_flight: &AtomicBool) -> Result<(), ()> {
         let mut pending = self.0.lock().map_err(|_| ())?;
         *pending = None;
@@ -89,6 +100,22 @@ mod tests {
         assert_eq!(slot.take_or_release(&in_flight).unwrap(), None);
         assert!(!in_flight.load(Ordering::Acquire));
         assert!(slot.submit(3, &in_flight));
+    }
+
+    #[test]
+    fn clearing_pending_work_does_not_allow_a_second_worker_to_start() {
+        let slot = LatestPendingSlot::default();
+        let in_flight = AtomicBool::new(false);
+
+        assert!(slot.submit(1, &in_flight));
+        assert!(!slot.submit(2, &in_flight));
+        slot.clear_pending().unwrap();
+
+        assert!(in_flight.load(Ordering::Acquire));
+        assert!(!slot.submit(3, &in_flight));
+        assert_eq!(slot.take_or_release(&in_flight).unwrap(), Some(3));
+        assert_eq!(slot.take_or_release(&in_flight).unwrap(), None);
+        assert!(!in_flight.load(Ordering::Acquire));
     }
 
     #[test]
