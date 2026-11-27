@@ -499,7 +499,7 @@ fn recover_stalled_decoder(
 
     let recovery = match (frame_pipeline.as_mut(), processor.configuration()) {
         (Some(pipeline), Some(configuration)) => match configuration.video_dimensions() {
-            Ok(Some(dimensions)) => pipeline.rebuild_decoder(dimensions.width, dimensions.height)
+            Ok(Some(dimensions)) => pipeline.rebuild_decoder(dimensions.width, dimensions.height),
             Ok(None) => Err(super::decoder::MediaFoundationError::MissingSps),
             Err(error) => Err(super::decoder::MediaFoundationError::InvalidAvcConfiguration(error)),
         },
