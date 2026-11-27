@@ -19,7 +19,7 @@ struct FallbackConversionInFlightGuard(Option<Arc<AtomicBool>>);
 #[cfg(windows)]
 impl FallbackConversionInFlightGuard {
     fn disarm(mut self) {
-        self.0.take();
+        let _ = self.0.take();
     }
 }
 
