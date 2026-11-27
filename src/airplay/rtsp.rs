@@ -2631,7 +2631,7 @@ mod tests {
                 pair_verify_shared_secret: None,
                 fairplay_video_key: None,
                 media_foundation: None,
-                frames,
+                frames: Arc::clone(&frames),
             },
         )
         .expect("start media session");
