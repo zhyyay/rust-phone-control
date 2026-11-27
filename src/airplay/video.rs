@@ -1679,9 +1679,7 @@ mod tests {
         let delta_only = [0, 0, 0, 1, 0x41, 0x9a, 0x22];
         assert!(!access_unit_contains_h264_idr(&delta_only));
 
-        let mixed_access_unit = [
-            0, 0, 1, 0x41, 0x9a, 0x22, 0, 0, 0, 1, 0x65, 0x88,
-        ];
+        let mixed_access_unit = [0, 0, 1, 0x41, 0x9a, 0x22, 0, 0, 0, 1, 0x65, 0x88];
         assert!(access_unit_contains_h264_idr(&mixed_access_unit));
 
         // A typical recovery access unit may carry SPS/PPS before its IDR.
