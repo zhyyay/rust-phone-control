@@ -775,14 +775,14 @@ fn process_media_packets(
                                         // submission would let following delta frames through
                                         // when this first keyframe is rejected by the MFT.
                                         let published = pipeline.submit_access_unit(&access_unit)?;
-                                        idr_recovery_gate.record_idr_accepted();
+                                        idr_recovery_gate.record_idr_submitted();
                                         idr_wait_started_at = None;
                                         last_idr_wait_warning = None;
                                         tracing::info!(
                                             %packet.peer_addr,
                                             timestamp = packet.timestamp,
                                             published_frames = published,
-                                            "H.264 IDR accepted; resuming decode after decoder recovery"
+                                            "H.264 IDR submitted; waiting for first decoded frame after recovery"
                                         );
                                         Ok(Some(published))
                                     } else {
@@ -807,6 +807,15 @@ fn process_media_packets(
                                 );
                             }
                             Ok(Some(published_frames)) => {
+                                if published_frames > 0 && idr_recovery_gate.is_awaiting_first_frame() {
+                                    idr_recovery_gate.record_frame_published();
+                                    tracing::info!(
+                                        %packet.peer_addr,
+                                        timestamp = packet.timestamp,
+                                        published_frames,
+                                        "First decoded frame published after H.264 recovery"
+                                    );
+                                }
                                 decrypted_access_units_submitted =
                                     decrypted_access_units_submitted.saturating_add(1);
                                 decoded_frames_published = decoded_frames_published
