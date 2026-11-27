@@ -44,6 +44,9 @@ const MIRROR_CLIENT_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 // Report a stalled post-recovery keyframe wait without dropping encrypted
 // packets or abandoning the synchronized stream cipher.
 const IDR_WAIT_WARNING_INTERVAL: Duration = Duration::from_secs(10);
+// A decoder that accepted an IDR but emitted no frame is considered stalled
+// after this interval; recovery remains bounded by DecoderRecoveryPolicy.
+const IDR_FIRST_FRAME_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[cfg(windows)]
 static ACTIVE_RTSP_SESSIONS: std::sync::atomic::AtomicUsize =
@@ -532,6 +535,7 @@ fn process_media_packets(
     // CTR synchronized, but do not submit delta pictures until an IDR arrives.
     let mut idr_recovery_gate = super::video::IdrRecoveryGate::default();
     let mut idr_wait_started_at: Option<Instant> = None;
+    let mut first_frame_wait_started_at: Option<Instant> = None;
     let mut last_idr_wait_warning: Option<Instant> = None;
     let mut decoder_init_policy = super::video::DecoderInitializationPolicy::default();
     let mut processor = super::video::MirrorStreamProcessor::new();
@@ -550,6 +554,7 @@ fn process_media_packets(
                 // Keep the IDR gate active while recovery is attempted.
                 idr_recovery_gate.begin_wait();
                 idr_wait_started_at = Some(Instant::now());
+                first_frame_wait_started_at = None;
                 last_idr_wait_warning = None;
                 if let (Some(pipeline), Some(configuration)) =
                     (frame_pipeline.as_mut(), processor.configuration())
@@ -578,6 +583,7 @@ fn process_media_packets(
                 } else {
                     idr_recovery_gate.begin_wait();
                     idr_wait_started_at = Some(Instant::now());
+                    first_frame_wait_started_at = None;
                     last_idr_wait_warning = None;
                 }
                 tracing::info!(
@@ -652,6 +658,7 @@ fn process_media_packets(
                 // reference state and the preview could remain blank.
                 idr_recovery_gate.begin_wait();
                 idr_wait_started_at = Some(Instant::now());
+                first_frame_wait_started_at = None;
                 last_idr_wait_warning = None;
                 if let Err(error) = frames.clear() {
                     tracing::warn!(%error, "Could not clear stale AirPlay preview frame");
@@ -728,6 +735,7 @@ fn process_media_packets(
                 // the newly initialized decoder.
                 idr_recovery_gate.begin_wait();
                 idr_wait_started_at = Some(Instant::now());
+                first_frame_wait_started_at = None;
                 last_idr_wait_warning = None;
                 if let Err(clear_error) = frames.clear() {
                     tracing::warn!(
@@ -749,6 +757,56 @@ fn process_media_packets(
                 video_packets = video_packets.saturating_add(1);
                 video_payload_bytes = video_payload_bytes.saturating_add(packet_payload_bytes);
                 if let Some(cipher) = mirror_cipher.as_mut() {
+                    let first_frame_timed_out = idr_recovery_gate.is_awaiting_first_frame()
+                        && first_frame_wait_started_at
+                            .map(|started_at| started_at.elapsed() >= IDR_FIRST_FRAME_TIMEOUT)
+                            .unwrap_or(false);
+                    if first_frame_timed_out {
+                        // The decoder accepted an IDR but failed to publish any output.
+                        // Rebuild with the existing bounded retry budget, then require a
+                        // fresh IDR while continuing to decrypt every packet in CTR order.
+                        idr_recovery_gate.begin_wait();
+                        idr_wait_started_at = Some(Instant::now());
+                        first_frame_wait_started_at = None;
+                        last_idr_wait_warning = None;
+
+                        let recovery = match (frame_pipeline.as_mut(), processor.configuration()) {
+                            (Some(pipeline), Some(configuration)) => {
+                                match configuration.video_dimensions() {
+                                    Ok(Some(dimensions)) => pipeline.rebuild_decoder(
+                                        dimensions.width,
+                                        dimensions.height,
+                                    ),
+                                    Ok(None) => Err(
+                                        super::decoder::MediaFoundationError::MissingSps,
+                                    ),
+                                    Err(error) => Err(
+                                        super::decoder::MediaFoundationError::InvalidAvcConfiguration(error),
+                                    ),
+                                }
+                            }
+                            _ => Err(super::decoder::MediaFoundationError::MissingSps),
+                        };
+
+                        match recovery {
+                            Ok(()) => tracing::warn!(
+                                %packet.peer_addr,
+                                timeout_ms = IDR_FIRST_FRAME_TIMEOUT.as_millis() as u64,
+                                "AirPlay decoder produced no frame after IDR; rebuilt pipeline and waiting for another IDR"
+                            ),
+                            Err(recovery_error) => {
+                                frame_pipeline = None;
+                                if let Err(clear_error) = frames.clear() {
+                                    tracing::warn!(%clear_error, "Could not clear preview after stalled decoder recovery");
+                                }
+                                tracing::warn!(
+                                    %packet.peer_addr,
+                                    %recovery_error,
+                                    "AirPlay decoder first-frame recovery exhausted; waiting for a new codec configuration"
+                                );
+                            }
+                        }
+                    }
                     if let Some(pipeline) = frame_pipeline.as_mut() {
                         let submit_result = if idr_recovery_gate.is_waiting() {
                             if let Some(started_at) = idr_wait_started_at {
@@ -777,6 +835,7 @@ fn process_media_packets(
                                         let published = pipeline.submit_access_unit(&access_unit)?;
                                         idr_recovery_gate.record_idr_submitted();
                                         idr_wait_started_at = None;
+                                        first_frame_wait_started_at = Some(Instant::now());
                                         last_idr_wait_warning = None;
                                         tracing::info!(
                                             %packet.peer_addr,
@@ -811,6 +870,7 @@ fn process_media_packets(
                                     && idr_recovery_gate.is_awaiting_first_frame()
                                 {
                                     idr_recovery_gate.record_frame_published();
+                                    first_frame_wait_started_at = None;
                                     tracing::info!(
                                         %packet.peer_addr,
                                         timestamp = packet.timestamp,
