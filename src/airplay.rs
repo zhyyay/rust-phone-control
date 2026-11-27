@@ -43,6 +43,7 @@ mod timing;
 mod tlv8;
 #[allow(dead_code)]
 mod video;
+pub use video::AvcColorMatrix;
 
 #[cfg(windows)]
 use sha2::Digest;
