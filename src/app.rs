@@ -584,7 +584,7 @@ impl Render for PhoneControlApp {
                                             if fallback_conversion_in_flight.swap(true, Ordering::AcqRel) {
                                                 // Replace, rather than queue, so conversion catches up
                                                 // to the newest decoded frame after the current one.
-                                                *pending = Some(pending_frame);
+                                                *pending = Some(pending_frame.clone());
                                                 false
                                             } else {
                                                 // A worker may have exited after cancellation with
