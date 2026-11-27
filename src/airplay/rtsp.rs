@@ -465,6 +465,18 @@ fn read_exact_while_running<R: Read>(
     let packet_started_at = Instant::now();
     let mut last_progress = packet_started_at;
     while offset < buffer.len() && running.load(Ordering::Acquire) {
+        let now = Instant::now();
+        if mirror_packet_read_timed_out(packet_started_at, last_progress, now, idle_timeout) {
+            let message = if now
+                .checked_duration_since(last_progress)
+                .is_some_and(|elapsed| elapsed >= idle_timeout)
+            {
+                "mirror peer exceeded its packet idle timeout"
+            } else {
+                "mirror peer exceeded the total packet read timeout"
+            };
+            return Err(io::Error::new(io::ErrorKind::TimedOut, message));
+        }
         match reader.read(&mut buffer[offset..]) {
             Ok(0) => {
                 return Err(io::Error::new(
@@ -483,19 +495,6 @@ fn read_exact_while_running<R: Read>(
                     io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
                 ) =>
             {
-                if mirror_packet_read_timed_out(
-                    packet_started_at,
-                    last_progress,
-                    Instant::now(),
-                    idle_timeout,
-                ) {
-                    let message = if last_progress.elapsed() >= idle_timeout {
-                        "mirror peer exceeded its packet idle timeout"
-                    } else {
-                        "mirror peer exceeded the total packet read timeout"
-                    };
-                    return Err(io::Error::new(io::ErrorKind::TimedOut, message));
-                }
                 // A peer may stall halfway through a packet. Avoid spinning
                 // one CPU core while preserving prompt cancellation.
                 thread::sleep(Duration::from_millis(1));
