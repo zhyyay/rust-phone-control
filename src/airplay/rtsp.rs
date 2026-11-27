@@ -879,6 +879,12 @@ fn process_media_packets(
                                         )
                                     }
                                     Err(recovery_error) => {
+                                        // A replacement decoder has no reference pictures.
+                                        // If it is initialized again after this failure, require
+                                        // a fresh IDR before submitting any delta access units.
+                                        awaiting_idr = true;
+                                        idr_wait_started_at = Some(Instant::now());
+                                        last_idr_wait_warning = None;
                                         // Do not keep submitting packets to a decoder whose
                                         // recovery failed. Dropping it lets a later duplicate
                                         // avcC configuration consume the one bounded retry.
