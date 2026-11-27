@@ -1093,6 +1093,33 @@ pub fn classify_nal(codec: VideoCodec, nal: &[u8]) -> NalUnitKind {
     }
 }
 
+/// Recovery gate for a decoder that has lost its reference pictures.
+///
+/// While waiting for a fresh IDR, callers must continue decrypting packets to
+/// preserve the stream cipher position, but must not submit delta pictures.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct IdrRecoveryGate {
+    waiting: bool,
+}
+
+impl IdrRecoveryGate {
+    pub fn begin_wait(&mut self) {
+        self.waiting = true;
+    }
+
+    pub fn is_waiting(&self) -> bool {
+        self.waiting
+    }
+
+    pub fn should_submit(&self, contains_idr: bool) -> bool {
+        !self.waiting || contains_idr
+    }
+
+    pub fn record_idr_accepted(&mut self) {
+        self.waiting = false;
+    }
+}
+
 /// Return whether an Annex-B H.264 access unit contains an IDR NAL unit.
 ///
 /// This is used after decoder recovery: non-IDR pictures depend on reference
