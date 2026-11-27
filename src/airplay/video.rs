@@ -1218,7 +1218,12 @@ pub struct LatestFrameMailboxStats {
     pub pending: bool,
 }
 
-#[derive(Debug, Default)]
+// Reserve a distinct high-bit range for each mailbox lifetime. The low
+// 32 bits are available for per-mailbox clears, so a snapshot from a stopped
+// receiver can never match a newly-created receiver's generation.
+static NEXT_MAILBOX_GENERATION: AtomicU64 = AtomicU64::new(1);
+
+#[derive(Debug)]
 pub struct LatestFrameMailbox {
     sequence: AtomicU64,
     published: AtomicU64,
@@ -1239,6 +1244,23 @@ pub struct FrameSnapshot {
     pub frame: Arc<DecodedVideoFrame>,
     /// Monotonic instant at which this frame entered the latest-frame mailbox.
     pub enqueued_at: Instant,
+}
+
+impl Default for LatestFrameMailbox {
+    fn default() -> Self {
+        Self {
+            sequence: AtomicU64::new(0),
+            published: AtomicU64::new(0),
+            replaced_before_consumption: AtomicU64::new(0),
+            consumed: AtomicU64::new(0),
+            cleared: AtomicU64::new(0),
+            clear_events: AtomicU64::new(0),
+            generation: AtomicU64::new(
+                NEXT_MAILBOX_GENERATION.fetch_add(1u64 << 32, Ordering::Relaxed),
+            ),
+            frame: Mutex::new(None),
+        }
+    }
 }
 
 impl LatestFrameMailbox {
@@ -2420,6 +2442,24 @@ mod tests {
             Err(FrameMailboxError::BufferTooSmall)
         );
         assert!(!mailbox.has_pending_frame().unwrap());
+    }
+
+    #[test]
+    fn latest_frame_mailbox_generation_is_unique_across_receiver_restarts() {
+        let previous_receiver = LatestFrameMailbox::new();
+        previous_receiver
+            .publish(BgraFrame {
+                width: 1,
+                height: 1,
+                stride: 4,
+                data: vec![0; 4],
+            })
+            .unwrap();
+        let stale = previous_receiver.take_latest().unwrap().unwrap();
+
+        let restarted_receiver = LatestFrameMailbox::new();
+        assert_ne!(stale.generation, restarted_receiver.generation.load(Ordering::Acquire));
+        assert!(!restarted_receiver.is_generation_current(stale.generation));
     }
 
     #[test]
