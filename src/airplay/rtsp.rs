@@ -2509,6 +2509,18 @@ mod tests {
             },
         )
         .expect("start media session");
+        frames
+            .publish(super::super::video::BgraFrame {
+                width: 1,
+                height: 1,
+                stride: 4,
+                data: vec![7; 4],
+            })
+            .expect("publish frame before session teardown");
+        let stale_snapshot = frames
+            .take_latest()
+            .expect("take frame before session teardown")
+            .expect("frame snapshot");
         let port = media.port();
         let mut client =
             TcpStream::connect(("127.0.0.1", port)).expect("connect mirror TCP client");
@@ -2532,6 +2544,27 @@ mod tests {
                 >= 1,
             "stopping the media session must publish a mailbox clear event"
         );
+        assert!(
+            !frames.is_generation_current(stale_snapshot.generation),
+            "stopping a media session must invalidate already-consumed frame snapshots"
+        );
+        frames
+            .publish(super::super::video::BgraFrame {
+                width: 1,
+                height: 1,
+                stride: 4,
+                data: vec![9; 4],
+            })
+            .expect("publish frame in replacement session generation");
+        let replacement_snapshot = frames
+            .take_latest()
+            .expect("take replacement session frame")
+            .expect("replacement frame snapshot");
+        assert_ne!(
+            replacement_snapshot.generation, stale_snapshot.generation,
+            "replacement session frames must not reuse the stopped session generation"
+        );
+        assert!(frames.is_generation_current(replacement_snapshot.generation));
         assert!(
             TcpListener::bind(("0.0.0.0", port)).is_ok(),
             "media listener port must be released after stopping an active client"
