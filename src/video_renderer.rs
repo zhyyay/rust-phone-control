@@ -1675,4 +1675,38 @@ mod viewport_tests {
         assert!(fit_video_viewport(0, 720, 1920, 1080).is_none());
         assert!(fit_video_viewport(1280, 720, 0, 1080).is_none());
     }
+
+    #[test]
+    fn centers_square_frame_inside_wide_preview() {
+        let viewport = fit_video_viewport(1920, 1080, 800, 800).unwrap();
+        assert_close(viewport[0], 420.0);
+        assert_close(viewport[1], 0.0);
+        assert_close(viewport[2], 1080.0);
+        assert_close(viewport[3], 1080.0);
+    }
+
+    #[test]
+    fn viewport_never_exceeds_surface_bounds_for_extreme_aspect_ratios() {
+        for (surface_width, surface_height, frame_width, frame_height) in [
+            (1920, 1080, 4096, 512),
+            (1080, 1920, 512, 4096),
+            (1280, 720, 1, u32::MAX),
+            (720, 1280, u32::MAX, 1),
+        ] {
+            let viewport =
+                fit_video_viewport(surface_width, surface_height, frame_width, frame_height)
+                    .unwrap();
+            assert!(viewport.iter().all(|value| value.is_finite() && *value >= 0.0));
+            assert!(viewport[0] + viewport[2] <= surface_width as f32 + 0.01);
+            assert!(viewport[1] + viewport[3] <= surface_height as f32 + 0.01);
+            assert_close(
+                viewport[0] * 2.0 + viewport[2],
+                surface_width as f32,
+            );
+            assert_close(
+                viewport[1] * 2.0 + viewport[3],
+                surface_height as f32,
+            );
+        }
+    }
 }
