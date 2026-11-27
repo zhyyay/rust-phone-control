@@ -54,6 +54,11 @@ static UPLOADED_FRAMES: AtomicU64 = AtomicU64::new(0);
 static DEVICE_RECOVERIES: AtomicU64 = AtomicU64::new(0);
 static RENDER_ERRORS: AtomicU64 = AtomicU64::new(0);
 
+/// Return whether a device recreation deadline is still in the future.
+fn recovery_cooldown_active(now: Instant, retry_after: Option<Instant>) -> bool {
+    retry_after.is_some_and(|deadline| now < deadline)
+}
+
 /// Calculate a centered aspect-fit viewport in surface pixel coordinates.
 fn fit_video_viewport(
     surface_width: u32,
@@ -458,7 +463,7 @@ pub(crate) fn upload_nv12_frame(
             };
             let now = Instant::now();
             let cooling_down = DEVICE_RECOVERY_RETRY_AFTER
-                .with(|retry_after| retry_after.get().is_some_and(|deadline| now < deadline));
+                .with(|retry_after| recovery_cooldown_active(now, retry_after.get()));
             if cooling_down {
                 return Err(original_error);
             }
@@ -1644,6 +1649,20 @@ mod viewport_tests {
 
     fn assert_close(actual: f32, expected: f32) {
         assert!((actual - expected).abs() < 0.01, "{actual} != {expected}");
+    }
+
+    #[test]
+    fn recovery_cooldown_is_active_only_before_deadline() {
+        let now = std::time::Instant::now();
+        let deadline = now + std::time::Duration::from_secs(2);
+
+        assert!(super::recovery_cooldown_active(now, Some(deadline)));
+        assert!(!super::recovery_cooldown_active(deadline, Some(deadline)));
+        assert!(!super::recovery_cooldown_active(
+            deadline + std::time::Duration::from_nanos(1),
+            Some(deadline),
+        ));
+        assert!(!super::recovery_cooldown_active(now, None));
     }
 
     #[test]
