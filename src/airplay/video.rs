@@ -809,6 +809,14 @@ impl DecoderInitializationPolicy {
         self.begin_attempt()
     }
 
+    /// Clear the retry budget after the decoder has initialized successfully.
+    ///
+    /// A later reconnect can still fail while rebuilding that decoder; it must
+    /// be allowed a fresh bounded recovery attempt for the same avcC record.
+    pub fn record_success(&mut self) {
+        self.attempts = 0;
+    }
+
     /// Number of attempts made for the current codec configuration.
     pub fn attempts(&self) -> u8 {
         self.attempts
@@ -1798,6 +1806,30 @@ mod tests {
         // Video and heartbeat packets never initialize a decoder.
         assert!(!policy.should_initialize(false, false, false));
         assert_eq!(policy.attempts(), 1);
+    }
+
+    #[test]
+    fn successful_decoder_initialization_rearms_reconnect_recovery_budget() {
+        let mut policy = DecoderInitializationPolicy::default();
+
+        assert!(policy.should_initialize(true, false, false));
+        assert_eq!(policy.attempts(), 1);
+
+        // The initial construction succeeds, so a later reconnect failure
+        // must not inherit the old construction-attempt count.
+        policy.record_success();
+        assert_eq!(policy.attempts(), 0);
+
+        // After reconnect drops the pipeline, a duplicate avcC can initialize
+        // a replacement decoder using a fresh bounded budget.
+        assert!(policy.should_initialize(true, true, false));
+        assert_eq!(policy.attempts(), 1);
+
+        // Success on the replacement also rearms the next recovery cycle.
+        policy.record_success();
+        assert_eq!(policy.attempts(), 0);
+        assert!(!policy.should_initialize(true, true, true));
+        assert_eq!(policy.attempts(), 0);
     }
 
     #[test]
