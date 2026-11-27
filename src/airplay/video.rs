@@ -1696,6 +1696,25 @@ mod tests {
     }
 
     #[test]
+    fn idr_recovery_gate_stays_closed_until_an_idr_is_accepted() {
+        let mut gate = IdrRecoveryGate::default();
+        assert!(!gate.is_waiting());
+        assert!(gate.should_submit(false));
+
+        gate.begin_wait();
+        assert!(gate.is_waiting());
+        assert!(!gate.should_submit(false));
+        assert!(gate.should_submit(true));
+
+        // Merely seeing an IDR is not enough; production records acceptance
+        // only after the decoder accepts the IDR access unit.
+        assert!(gate.is_waiting());
+        gate.record_idr_accepted();
+        assert!(!gate.is_waiting());
+        assert!(gate.should_submit(false));
+    }
+
+    #[test]
     fn h264_idr_gate_detects_idr_across_annex_b_prefixes_and_mixed_access_units() {
         let idr_with_four_byte_prefix = [0, 0, 0, 1, 0x65, 0x88];
         assert!(access_unit_contains_h264_idr(&idr_with_four_byte_prefix));
