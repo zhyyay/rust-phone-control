@@ -37,10 +37,7 @@ impl<T> LatestPendingSlot<T> {
 
     /// Takes the newest pending item, or releases worker ownership while
     /// still holding the slot lock when the slot is empty.
-    pub(crate) fn take_or_release(
-        &self,
-        in_flight: &AtomicBool,
-    ) -> Result<Option<T>, ()> {
+    pub(crate) fn take_or_release(&self, in_flight: &AtomicBool) -> Result<Option<T>, ()> {
         let mut pending = self.0.lock().map_err(|_| ())?;
         if let Some(value) = pending.take() {
             Ok(Some(value))
