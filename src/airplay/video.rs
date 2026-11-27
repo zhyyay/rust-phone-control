@@ -2484,12 +2484,14 @@ mod tests {
     #[test]
     fn clear_invalidates_consumed_snapshot_and_next_frame_uses_new_generation() {
         let mailbox = LatestFrameMailbox::new();
-        let first_sequence = mailbox.publish(BgraFrame {
-            width: 1,
-            height: 1,
-            stride: 4,
-            data: vec![1; 4],
-        }).unwrap();
+        let first_sequence = mailbox
+            .publish(BgraFrame {
+                width: 1,
+                height: 1,
+                stride: 4,
+                data: vec![1; 4],
+            })
+            .unwrap();
         let stale_snapshot = mailbox.take_latest().unwrap().unwrap();
         assert_eq!(stale_snapshot.sequence, first_sequence);
         assert!(mailbox.is_generation_current(stale_snapshot.generation));
@@ -2497,12 +2499,14 @@ mod tests {
         mailbox.clear().unwrap();
 
         assert!(!mailbox.is_generation_current(stale_snapshot.generation));
-        let next_sequence = mailbox.publish(BgraFrame {
-            width: 1,
-            height: 1,
-            stride: 4,
-            data: vec![2; 4],
-        }).unwrap();
+        let next_sequence = mailbox
+            .publish(BgraFrame {
+                width: 1,
+                height: 1,
+                stride: 4,
+                data: vec![2; 4],
+            })
+            .unwrap();
         let current_snapshot = mailbox.take_latest().unwrap().unwrap();
 
         assert!(next_sequence > first_sequence);
