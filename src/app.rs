@@ -165,7 +165,6 @@ impl Render for PhoneControlApp {
                 // Once native presentation fails, prepare subsequent bitmap
                 // fallback frames on the background executor rather than
                 // converting NV12/BGRA while the GPUI thread is blocked.
-                let mut fallback_mode = false;
                 // A native-present success invalidates any in-flight bitmap fallback.
                 let mut fallback_conversion_cancel: Option<Arc<AtomicBool>> = None;
                 // At most one CPU fallback conversion may run at a time.
@@ -389,7 +388,6 @@ impl Render for PhoneControlApp {
 
                     let updated = this.update(cx, |this, cx| {
                         let mut changed = false;
-                        let mut next_fallback_mode = fallback_mode;
                         if mailbox_cleared {
                             crate::video_renderer::hide_native_video_surface();
                             if let Some(cancel) = fallback_conversion_cancel.take() {
@@ -402,7 +400,6 @@ impl Render for PhoneControlApp {
                             this.preview_image = None;
                             fallback_displayed_dimensions = None;
                             this.preview_status = "镜像已断开，等待 iPhone 重新投屏".to_owned();
-                            next_fallback_mode = false;
                             tracing::debug!("Cleared native and bitmap preview after mirror session teardown");
                             changed = true;
                         }
@@ -551,20 +548,17 @@ impl Render for PhoneControlApp {
                                         }
                                         this.preview_image = None;
                                         fallback_displayed_dimensions = None;
-                                        next_fallback_mode = false;
                                         ("D3D11 原生预览", false, Duration::ZERO)
                                     }
                                     Ok(()) | Err(_) if !crate::airplay::is_video_frame_generation_current(generation)
                                         .unwrap_or(false) => {
                                         crate::video_renderer::hide_native_video_surface();
                                         this.preview_image = None;
-                                        next_fallback_mode = false;
                                         ("等待当前投屏会话的视频帧", false, Duration::ZERO)
                                     }
                                     Ok(()) => {
                                         crate::video_renderer::hide_native_video_surface();
                                         this.preview_image = None;
-                                        next_fallback_mode = false;
                                         ("等待当前投屏会话的视频帧", false, Duration::ZERO)
                                     }
                                     Err(error) => {
@@ -579,7 +573,6 @@ impl Render for PhoneControlApp {
                                             this.preview_image = None;
                                             fallback_displayed_dimensions = None;
                                         }
-                                        next_fallback_mode = true;
                                         tracing::debug!(
                                             %error,
                                             sequence,
@@ -711,10 +704,10 @@ impl Render for PhoneControlApp {
                         if changed {
                             cx.notify();
                         }
-                        next_fallback_mode
+                        ()
                     });
                     match updated {
-                        Ok(next) => fallback_mode = next,
+                        Ok(()) => {}
                         Err(_) => {
                             tracing::debug!("Stopping GPUI AirPlay poll task because its app entity is no longer available");
                             break;
