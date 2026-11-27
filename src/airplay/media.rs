@@ -525,6 +525,14 @@ mod receiver_tests {
             parse_screen_mirror_packet(&oversized),
             Err(ScreenMirrorParseError::InvalidPayloadLength)
         );
+
+        // An attacker-controlled maximum length must be rejected using the
+        // declared size alone, without allocating or slicing that payload.
+        oversized[0..4].copy_from_slice(&u32::MAX.to_le_bytes());
+        assert_eq!(
+            parse_screen_mirror_packet(&oversized),
+            Err(ScreenMirrorParseError::InvalidPayloadLength)
+        );
     }
 
     #[test]
