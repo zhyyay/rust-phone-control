@@ -1130,23 +1130,39 @@ pub fn classify_nal(codec: VideoCodec, nal: &[u8]) -> NalUnitKind {
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct IdrRecoveryGate {
     waiting: bool,
+    awaiting_first_frame: bool,
 }
 
 impl IdrRecoveryGate {
     pub fn begin_wait(&mut self) {
         self.waiting = true;
+        self.awaiting_first_frame = false;
     }
 
     pub fn is_waiting(&self) -> bool {
         self.waiting
     }
 
+    /// True after an IDR was submitted but before the decoder publishes output.
+    pub fn is_awaiting_first_frame(&self) -> bool {
+        self.awaiting_first_frame
+    }
+
     pub fn should_submit(&self, contains_idr: bool) -> bool {
         !self.waiting || contains_idr
     }
 
-    pub fn record_idr_accepted(&mut self) {
+    /// Record that the decoder accepted an IDR access unit. This permits
+    /// subsequent reference pictures to be submitted, but does not claim that
+    /// a frame is already visible.
+    pub fn record_idr_submitted(&mut self) {
         self.waiting = false;
+        self.awaiting_first_frame = true;
+    }
+
+    /// Complete recovery only after a decoded frame is actually published.
+    pub fn record_frame_published(&mut self) {
+        self.awaiting_first_frame = false;
     }
 }
 
@@ -1739,9 +1755,14 @@ mod tests {
         // Merely seeing an IDR is not enough; production records acceptance
         // only after the decoder accepts the IDR access unit.
         assert!(gate.is_waiting());
-        gate.record_idr_accepted();
+        gate.record_idr_submitted();
         assert!(!gate.is_waiting());
+        assert!(gate.is_awaiting_first_frame());
         assert!(gate.should_submit(false));
+
+        // Decoder input acceptance is not equivalent to visible output.
+        gate.record_frame_published();
+        assert!(!gate.is_awaiting_first_frame());
     }
 
     #[test]
