@@ -843,15 +843,8 @@ impl<'runtime> H264Decoder<'runtime> {
                     crate::airplay::video::FrameConversionError::InvalidStride,
                 ));
             }
-            let y_bytes = stride
-                .checked_mul(height as usize)
-                .ok_or(MediaFoundationError::FrameSizeOverflow)?;
-            let uv_bytes = stride
-                .checked_mul(height as usize / 2)
-                .ok_or(MediaFoundationError::FrameSizeOverflow)?;
-            let required_length = y_bytes
-                .checked_add(uv_bytes)
-                .ok_or(MediaFoundationError::FrameSizeOverflow)?;
+            let required_length =
+                required_nv12_buffer_length(width, height, stride, signed_stride < 0)?;
             if required_length > MAX_DECODED_NV12_BYTES {
                 return Err(MediaFoundationError::OutputBufferTooLarge);
             }
@@ -908,6 +901,42 @@ impl<'runtime> H264Decoder<'runtime> {
             }));
         }
     }
+}
+
+/// Calculate the minimum valid contiguous NV12 payload length.
+///
+/// Positive-stride NV12 permits the final UV row to end after its visible
+/// width; intermediate rows and all Y rows retain the full pitch. Negative
+/// stride normalization reverses complete rows, so it conservatively requires
+/// the complete padded UV plane before touching the buffer.
+fn required_nv12_buffer_length(
+    width: u32,
+    height: u32,
+    stride: usize,
+    bottom_up: bool,
+) -> Result<usize, MediaFoundationError> {
+    let width = usize::try_from(width).map_err(|_| MediaFoundationError::FrameSizeOverflow)?;
+    let height = usize::try_from(height).map_err(|_| MediaFoundationError::FrameSizeOverflow)?;
+    if width == 0 || height == 0 || height % 2 != 0 || stride < width {
+        return Err(MediaFoundationError::InvalidDimensions);
+    }
+    let y_bytes = stride
+        .checked_mul(height)
+        .ok_or(MediaFoundationError::FrameSizeOverflow)?;
+    let uv_rows = height / 2;
+    let uv_bytes = if bottom_up {
+        stride
+            .checked_mul(uv_rows)
+            .ok_or(MediaFoundationError::FrameSizeOverflow)?
+    } else {
+        stride
+            .checked_mul(uv_rows.saturating_sub(1))
+            .and_then(|bytes| bytes.checked_add(width))
+            .ok_or(MediaFoundationError::FrameSizeOverflow)?
+    };
+    y_bytes
+        .checked_add(uv_bytes)
+        .ok_or(MediaFoundationError::FrameSizeOverflow)
 }
 
 /// Maximum number of decoded frames collected during one drain operation.
@@ -1314,6 +1343,28 @@ impl std::error::Error for MediaFoundationError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn nv12_required_length_accepts_compact_final_uv_row_for_positive_stride() {
+        assert_eq!(required_nv12_buffer_length(4, 4, 8, false), Ok(8 * 4 + 8 + 4));
+        assert_eq!(required_nv12_buffer_length(4, 4, 8, true), Ok(8 * 6));
+    }
+
+    #[test]
+    fn nv12_required_length_rejects_invalid_layout_and_overflow() {
+        assert_eq!(
+            required_nv12_buffer_length(4, 3, 8, false),
+            Err(MediaFoundationError::InvalidDimensions)
+        );
+        assert_eq!(
+            required_nv12_buffer_length(9, 4, 8, false),
+            Err(MediaFoundationError::InvalidDimensions)
+        );
+        assert_eq!(
+            required_nv12_buffer_length(u32::MAX, u32::MAX - 1, usize::MAX, true),
+            Err(MediaFoundationError::FrameSizeOverflow)
+        );
+    }
 
     #[test]
     fn output_allocation_must_fit_remaining_access_unit_budget() {
