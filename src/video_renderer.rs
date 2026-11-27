@@ -421,7 +421,7 @@ pub(crate) fn destroy_native_video_surface() {
     });
 }
 
-/// Upload an NV12 frame to the GPUI thread's D3D11 Y/UV textures.
+/// Recreate the D3D11 device and its HWND-bound swap chain after device removal.\n///\n/// The caller is responsible for cooldown policy and for retrying the current\n/// decoded frame on the replacement device.\nfn recreate_device_after_removal(\n    hwnd: HWND,\n    surface_width: u32,\n    surface_height: u32,\n    reason: &windows_062::core::Error,\n) -> anyhow::Result<()> {\n    tracing::warn!(\n        error = %reason,\n        width = surface_width,\n        height = surface_height,\n        "D3D11 device was removed; rebuilding preview device and resources"\n    );\n\n    let mut replacement = D3d11Device::create_hardware()\n        .context("could not recreate D3D11 device after device removal")?;\n    replacement\n        .ensure_swap_chain(hwnd, surface_width, surface_height)\n        .context("could not recreate the native video swap chain after device removal")?;\n\n    THREAD_RENDERER.with(|renderer| {\n        *renderer.borrow_mut() = Some(replacement);\n    });\n    Ok(())\n}\n\n/// Upload an NV12 frame to the GPUI thread's D3D11 Y/UV textures.
 /// The caller must run on the thread that initialized the native renderer.
 pub(crate) fn upload_nv12_frame(
     width: u32,
@@ -479,20 +479,7 @@ pub(crate) fn upload_nv12_frame(
             // a live preview; a later successful Present reveals the child again.
             unsafe { ShowWindow(HWND(child_raw as *mut c_void), SW_HIDE) };
 
-            tracing::warn!(
-                error = %reason,
-                "D3D11 device was removed during NV12 preview; rebuilding preview resources"
-            );
-            let mut replacement = D3d11Device::create_hardware()
-                .context("could not recreate D3D11 device after NV12 device removal")?;
-            replacement.ensure_swap_chain(
-                HWND(child_raw as *mut c_void),
-                surface_width,
-                surface_height,
-            )?;
-            THREAD_RENDERER.with(|renderer| {
-                *renderer.borrow_mut() = Some(replacement);
-            });
+            recreate_device_after_removal(\n                HWND(child_raw as *mut c_void),\n                surface_width,\n                surface_height,\n                &reason,\n            )?;
             let retry_result = THREAD_RENDERER
                 .with(|renderer| {
                     let mut renderer = renderer.borrow_mut();
@@ -621,20 +608,7 @@ pub(crate) fn upload_bgra_frame(
             // a live preview; a later successful Present reveals the child again.
             unsafe { ShowWindow(HWND(child_raw as *mut c_void), SW_HIDE) };
 
-            tracing::warn!(
-                error = %reason,
-                "D3D11 device was removed; rebuilding preview device and resources"
-            );
-            let mut replacement = D3d11Device::create_hardware()
-                .context("could not recreate D3D11 device after device removal")?;
-            replacement.ensure_swap_chain(
-                HWND(child_raw as *mut c_void),
-                surface_width,
-                surface_height,
-            )?;
-            THREAD_RENDERER.with(|renderer| {
-                *renderer.borrow_mut() = Some(replacement);
-            });
+            recreate_device_after_removal(\n                HWND(child_raw as *mut c_void),\n                surface_width,\n                surface_height,\n                &reason,\n            )?;
             let retry_result = THREAD_RENDERER
                 .with(|renderer| {
                     let mut renderer = renderer.borrow_mut();
