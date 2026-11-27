@@ -2146,6 +2146,51 @@ mod tests {
     }
 
     #[test]
+    fn valid_configuration_after_invalid_replacement_restarts_decoder_recovery() {
+        use super::super::media::ScreenMirrorPacketType;
+
+        let valid_avcc = [
+            0x01, 0x64, 0xc0, 0x28, 0xff, 0xe1, 0x00, 0x04, 0x67, 0x64, 0xc0, 0x28, 0x01, 0x00,
+            0x02, 0x68, 0xee,
+        ];
+        let mut processor = MirrorStreamProcessor::new();
+        let mut initialization = DecoderInitializationPolicy::default();
+        let mut recovery = IdrRecoveryGate::default();
+
+        assert!(matches!(
+            processor.process_packet(ScreenMirrorPacketType::CodecConfiguration, &valid_avcc),
+            MirrorPacketOutcome::CodecConfigurationUpdated { .. }
+        ));
+        assert!(initialization.begin_attempt());
+        recovery.begin_wait();
+
+        assert!(matches!(
+            processor.process_packet(ScreenMirrorPacketType::CodecConfiguration, &[1, 2, 3]),
+            MirrorPacketOutcome::InvalidCodecConfiguration(_)
+        ));
+        initialization.reset();
+        recovery.begin_wait();
+        assert!(processor.configuration().is_none());
+        assert!(recovery.is_waiting());
+
+        // A later valid avcC is a new configuration, not a duplicate of the
+        // invalidated one: it receives a fresh bounded decoder-init attempt.
+        assert!(matches!(
+            processor.process_packet(ScreenMirrorPacketType::CodecConfiguration, &valid_avcc),
+            MirrorPacketOutcome::CodecConfigurationUpdated { .. }
+        ));
+        initialization.reset();
+        assert!(initialization.begin_attempt());
+        assert_eq!(initialization.attempts(), 1);
+        assert!(processor.configuration().is_some());
+        assert!(recovery.is_waiting());
+        assert!(!recovery.should_submit(false));
+        assert!(recovery.should_submit(true));
+        recovery.record_idr_accepted();
+        assert!(!recovery.is_waiting());
+    }
+
+    #[test]
     fn invalid_replacement_configuration_discards_previous_configuration() {
         use super::super::media::ScreenMirrorPacketType;
 
