@@ -280,20 +280,21 @@ fn accept_mirror_connections(
                 read_mirror_stream(stream, peer_addr, &sender, &running);
                 // FIFO ordering ensures all packets from this peer are processed
                 // before the worker clears its preview at the disconnect boundary.
-                if !send_packet_while_running(
+                let marker_sent = send_packet_while_running(
                     &sender,
                     MediaWorkerMessage::StreamDisconnected,
                     &running,
-                ) {
+                );
+                // Count the peer lifecycle independently from whether the
+                // processing worker was still available to consume its marker.
+                let disconnected = disconnected_clients.fetch_add(1, Ordering::Relaxed) + 1;
+                #[cfg(windows)]
+                super::set_pipeline_stage(7);
+                tracing::info!(%peer_addr, disconnected, marker_sent, "AirPlay mirror TCP client disconnected");
+                if !marker_sent {
                     tracing::debug!(%peer_addr, "AirPlay media worker stopped before disconnect marker");
                     break;
                 }
-                // The listener remains available for reconnects, but a closed
-                // media TCP peer is no longer an active sender connection.
-                #[cfg(windows)]
-                super::set_pipeline_stage(7);
-                let disconnected = disconnected_clients.fetch_add(1, Ordering::Relaxed) + 1;
-                tracing::info!(%peer_addr, disconnected, "AirPlay mirror TCP client disconnected");
             }
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
                 thread::sleep(MEDIA_ACCEPT_POLL_INTERVAL);
