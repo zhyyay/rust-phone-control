@@ -4054,6 +4054,57 @@ mod tests {
     }
 
     #[test]
+    fn disconnect_marker_waits_for_queue_capacity_and_preserves_fifo_boundary() {
+        use std::sync::{
+            Arc,
+            atomic::AtomicBool,
+            mpsc,
+        };
+        use std::thread;
+        use std::time::Duration;
+
+        let (sender, receiver) = mpsc::sync_channel(1);
+        let packet = super::ReceivedMediaPacket {
+            peer_addr: "127.0.0.1:1234".parse().expect("peer address"),
+            packet_type: crate::airplay::media::ScreenMirrorPacketType::Heartbeat,
+            timestamp: 77,
+            payload: Vec::new(),
+        };
+        sender
+            .try_send(super::MediaWorkerMessage::Packet(packet))
+            .expect("fill queue with final packet from disconnected peer");
+
+        let running = Arc::new(AtomicBool::new(true));
+        let worker_running = Arc::clone(&running);
+        let worker_sender = sender.clone();
+        let worker = thread::spawn(move || {
+            super::send_packet_while_running(
+                &worker_sender,
+                super::MediaWorkerMessage::StreamDisconnected,
+                &worker_running,
+            )
+        });
+
+        thread::sleep(Duration::from_millis(20));
+        let final_packet = receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("drain final packet to make room for disconnect marker");
+        let super::MediaWorkerMessage::Packet(final_packet) = final_packet else {
+            panic!("final packet must precede disconnect marker");
+        };
+        assert_eq!(final_packet.timestamp, 77);
+
+        assert!(worker.join().expect("disconnect marker sender exits"));
+        let marker = receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("disconnect marker is queued after the final packet");
+        assert!(matches!(
+            marker,
+            super::MediaWorkerMessage::StreamDisconnected
+        ));
+    }
+
+    #[test]
     fn mirror_tcp_reader_preserves_packet_boundaries_across_fragmented_and_coalesced_writes() {
         use std::io::Write;
         use std::net::{Shutdown, TcpListener};
