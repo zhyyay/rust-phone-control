@@ -333,7 +333,7 @@ impl Render for PhoneControlApp {
                     );
 
                     let metrics = if refresh_pairing {
-                        let (presented, uploaded, recoveries, render_errors) =
+                        let (presented, uploaded, recoveries, recovery_failures, render_errors) =
                             crate::video_renderer::preview_metrics();
                         let elapsed = last_metrics_at.elapsed().as_secs_f64().max(0.001);
                         let fps = presented.saturating_sub(last_presented_frames) as f64 / elapsed;
@@ -380,8 +380,8 @@ impl Render for PhoneControlApp {
                         last_presented_frames = presented;
                         last_metrics_at = Instant::now();
                         Some(format!(
-                            "D3D11 · {:.1} FPS · 解码 {:.1}/s · 消费 {:.1}/s · 覆盖 {:.1}/s · 清空 {:.1}/s · 等帧 {:.1}/{:.1}ms · 过期丢弃 {:.1}/s · Present {} · 上传 {} · 重建 {} · 错误 {}",
-                            fps, decoded_fps, consumed_fps, replaced_fps, cleared_fps, mailbox_age_avg_ms, mailbox_age_peak_ms, stale_drops_per_sec, presented, uploaded, recoveries, render_errors
+                            "D3D11 · {:.1} FPS · 解码 {:.1}/s · 消费 {:.1}/s · 覆盖 {:.1}/s · 清空 {:.1}/s · 等帧 {:.1}/{:.1}ms · 过期丢弃 {:.1}/s · Present {} · 上传 {} · 重建 {} · 重建失败 {} · 错误 {}",
+                            fps, decoded_fps, consumed_fps, replaced_fps, cleared_fps, mailbox_age_avg_ms, mailbox_age_peak_ms, stale_drops_per_sec, presented, uploaded, recoveries, recovery_failures, render_errors
                         ))
                     } else {
                         None
