@@ -1078,7 +1078,13 @@ impl<'runtime> H264FramePipeline<'runtime> {
             .video_dimensions()
             .map_err(MediaFoundationError::InvalidAvcConfiguration)?
             .ok_or(MediaFoundationError::MissingSps)?;
-        let mut pipeline = Self::new(runtime, dimensions.width, dimensions.height, frames, running)?;
+        let mut pipeline = Self::new(
+            runtime,
+            dimensions.width,
+            dimensions.height,
+            frames,
+            running,
+        )?;
         pipeline.color_matrix = configuration
             .video_color_matrix()
             .map_err(MediaFoundationError::InvalidAvcConfiguration)?
