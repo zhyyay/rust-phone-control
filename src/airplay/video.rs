@@ -1379,6 +1379,26 @@ impl LatestFrameMailbox {
 
     /// Publish an owned NV12 frame without converting it to BGRA on the decoder worker.
     pub fn publish_nv12(&self, frame: OwnedNv12Frame) -> Result<u64, FrameMailboxError> {
+        self.publish_nv12_inner(frame, None)
+    }
+
+    /// Publish only while the owning media session is still active.
+    ///
+    /// The running flag is checked while holding the mailbox lock, making
+    /// shutdown's false-store followed by clear atomic with respect to publish.
+    pub(crate) fn publish_nv12_if_running(
+        &self,
+        frame: OwnedNv12Frame,
+        running: &std::sync::atomic::AtomicBool,
+    ) -> Result<u64, FrameMailboxError> {
+        self.publish_nv12_inner(frame, Some(running))
+    }
+
+    fn publish_nv12_inner(
+        &self,
+        frame: OwnedNv12Frame,
+        running: Option<&std::sync::atomic::AtomicBool>,
+    ) -> Result<u64, FrameMailboxError> {
         if frame.width == 0 || frame.height == 0 {
             return Err(FrameMailboxError::ZeroDimension);
         }
@@ -1411,11 +1431,24 @@ impl LatestFrameMailbox {
         if frame.data.len() < required {
             return Err(FrameMailboxError::BufferTooSmall);
         }
-        self.publish_frame(DecodedVideoFrame::Nv12(frame))
+        self.publish_frame_if_running(DecodedVideoFrame::Nv12(frame), running)
     }
 
     fn publish_frame(&self, frame: DecodedVideoFrame) -> Result<u64, FrameMailboxError> {
+        self.publish_frame_if_running(frame, None)
+    }
+
+    fn publish_frame_if_running(
+        &self,
+        frame: DecodedVideoFrame,
+        running: Option<&std::sync::atomic::AtomicBool>,
+    ) -> Result<u64, FrameMailboxError> {
         let mut slot = self.frame.lock().map_err(|_| FrameMailboxError::Poisoned)?;
+        if let Some(running) = running {
+            if !running.load(Ordering::Acquire) {
+                return Err(FrameMailboxError::SessionStopped);
+            }
+        }
         let sequence = self.sequence.fetch_add(1, Ordering::AcqRel).wrapping_add(1);
         let generation = self.generation.load(Ordering::Acquire);
         if slot.is_some() {
@@ -1492,6 +1525,7 @@ pub enum FrameMailboxError {
     InvalidDimensions,
     BufferTooSmall,
     FrameTooLarge,
+    SessionStopped,
 }
 
 impl std::fmt::Display for FrameMailboxError {
@@ -1508,6 +1542,7 @@ impl std::fmt::Display for FrameMailboxError {
             Self::FrameTooLarge => {
                 f.write_str("decoded frame exceeds the maximum retained frame size")
             }
+            Self::SessionStopped => f.write_str("media session stopped before frame publication"),
         }
     }
 }
@@ -3051,6 +3086,30 @@ mod latest_frame_diagnostics_tests {
         let stats = mailbox.stats().unwrap();
         assert_eq!(stats.consumed, 1);
         assert!(!stats.pending);
+    }
+
+    #[test]
+    fn nv12_publication_is_rejected_after_media_session_stops() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let mailbox = LatestFrameMailbox::new();
+        let running = AtomicBool::new(true);
+        running.store(false, Ordering::Release);
+
+        let result = mailbox.publish_nv12_if_running(
+            OwnedNv12Frame {
+                width: 2,
+                height: 2,
+                y_stride: 2,
+                uv_stride: 2,
+                color_matrix: AvcColorMatrix::Unspecified,
+                data: vec![16, 16, 16, 16, 128, 128],
+            },
+            &running,
+        );
+
+        assert_eq!(result, Err(FrameMailboxError::SessionStopped));
+        assert!(!mailbox.has_pending_frame().unwrap());
     }
 
     #[test]
