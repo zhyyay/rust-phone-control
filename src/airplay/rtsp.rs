@@ -530,7 +530,7 @@ fn process_media_packets(
     let mut frame_pipeline: Option<super::decoder::H264FramePipeline<'_>> = None;
     // A rebuilt MFT has no reference pictures; decrypt every packet to keep
     // CTR synchronized, but do not submit delta pictures until an IDR arrives.
-    let mut awaiting_idr = false;
+    let mut idr_recovery_gate = super::video::IdrRecoveryGate::default();
     let mut idr_wait_started_at: Option<Instant> = None;
     let mut last_idr_wait_warning: Option<Instant> = None;
     let mut decoder_init_policy = super::video::DecoderInitializationPolicy::default();
@@ -548,7 +548,7 @@ fn process_media_packets(
                 // A TCP reconnect invalidates the decoder's reference-picture
                 // state regardless of whether rebuilding the existing MFT succeeds.
                 // Keep the IDR gate active while recovery is attempted.
-                awaiting_idr = true;
+                idr_recovery_gate.begin_wait();
                 idr_wait_started_at = Some(Instant::now());
                 last_idr_wait_warning = None;
                 if let (Some(pipeline), Some(configuration)) =
@@ -758,7 +758,7 @@ fn process_media_packets(
                 video_payload_bytes = video_payload_bytes.saturating_add(packet_payload_bytes);
                 if let Some(cipher) = mirror_cipher.as_mut() {
                     if let Some(pipeline) = frame_pipeline.as_mut() {
-                        let submit_result = if awaiting_idr {
+                        let submit_result = if idr_recovery_gate.is_waiting() {
                             if let Some(started_at) = idr_wait_started_at {
                                 let elapsed = started_at.elapsed();
                                 let should_warn = last_idr_wait_warning
@@ -777,13 +777,13 @@ fn process_media_packets(
                                 .decrypt_video_packet(cipher, &packet.payload)
                                 .map_err(super::decoder::MediaFoundationError::VideoDecryption)
                                 .and_then(|access_unit| {
-                                    if super::video::access_unit_contains_h264_idr(&access_unit) {
+                                    if idr_recovery_gate.should_submit(super::video::access_unit_contains_h264_idr(&access_unit)) {
                                         // Keep the recovery gate closed until the replacement
                                         // decoder actually accepts the IDR. Clearing it before
                                         // submission would let following delta frames through
                                         // when this first keyframe is rejected by the MFT.
                                         let published = pipeline.submit_access_unit(&access_unit)?;
-                                        awaiting_idr = false;
+                                        idr_recovery_gate.record_idr_accepted();
                                         idr_wait_started_at = None;
                                         last_idr_wait_warning = None;
                                         tracing::info!(
