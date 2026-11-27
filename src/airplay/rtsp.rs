@@ -41,6 +41,8 @@ const MAX_MIRROR_PAYLOAD_BYTES: usize = 16 * 1024 * 1024;
 const MEDIA_ACCEPT_POLL_INTERVAL: Duration = Duration::from_millis(20);
 // Release a stale mirror TCP client that connects but never sends a packet.
 const MIRROR_CLIENT_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
+// Bound total time spent assembling one packet even if a peer trickles bytes.
+const MIRROR_PACKET_READ_TIMEOUT: Duration = Duration::from_secs(120);
 // Report a stalled post-recovery keyframe wait without dropping encrypted
 // packets or abandoning the synchronized stream cipher.
 const IDR_WAIT_WARNING_INTERVAL: Duration = Duration::from_secs(10);
@@ -447,7 +449,8 @@ fn read_exact_while_running<R: Read>(
     use std::sync::atomic::Ordering;
 
     let mut offset = 0;
-    let mut last_progress = Instant::now();
+    let packet_started_at = Instant::now();
+    let mut last_progress = packet_started_at;
     while offset < buffer.len() && running.load(Ordering::Acquire) {
         match reader.read(&mut buffer[offset..]) {
             Ok(0) => {
@@ -471,6 +474,12 @@ fn read_exact_while_running<R: Read>(
                     return Err(io::Error::new(
                         io::ErrorKind::TimedOut,
                         "mirror peer exceeded its packet idle timeout",
+                    ));
+                }
+                if packet_started_at.elapsed() >= MIRROR_PACKET_READ_TIMEOUT {
+                    return Err(io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        "mirror peer exceeded the total packet read timeout",
                     ));
                 }
                 // A peer may stall halfway through a packet. Avoid spinning
