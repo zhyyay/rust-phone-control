@@ -1684,8 +1684,7 @@ mod tests {
 
         // A typical recovery access unit may carry SPS/PPS before its IDR.
         let parameter_sets_and_idr = [
-            0, 0, 0, 1, 0x67, 0x64, 0, 0x1f, 0, 0, 1, 0x68, 0xee, 0x3c,
-            0, 0, 0, 1, 0x65, 0x88,
+            0, 0, 0, 1, 0x67, 0x64, 0, 0x1f, 0, 0, 1, 0x68, 0xee, 0x3c, 0, 0, 0, 1, 0x65, 0x88,
         ];
         assert!(access_unit_contains_h264_idr(&parameter_sets_and_idr));
 
