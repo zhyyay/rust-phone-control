@@ -294,7 +294,7 @@ fn ensure_swap_chain_with_recovery(hwnd: HWND, width: u32, height: u32) -> anyho
 
     let now = Instant::now();
     let cooling_down = DEVICE_RECOVERY_RETRY_AFTER
-        .with(|retry_after| retry_after.get().is_some_and(|deadline| now < deadline));
+        .with(|retry_after| recovery_cooldown_active(now, retry_after.get()));
     if cooling_down {
         return Err(original_error);
     }
@@ -605,7 +605,7 @@ pub(crate) fn upload_bgra_frame(
             };
             let now = Instant::now();
             let cooling_down = DEVICE_RECOVERY_RETRY_AFTER
-                .with(|retry_after| retry_after.get().is_some_and(|deadline| now < deadline));
+                .with(|retry_after| recovery_cooldown_active(now, retry_after.get()));
             if cooling_down {
                 return Err(original_error);
             }
