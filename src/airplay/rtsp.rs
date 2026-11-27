@@ -576,7 +576,7 @@ fn process_media_packets(
                         }
                     }
                 } else {
-                    awaiting_idr = true;
+                    idr_recovery_gate.begin_wait();
                     idr_wait_started_at = Some(Instant::now());
                     last_idr_wait_warning = None;
                 }
@@ -659,7 +659,7 @@ fn process_media_packets(
                 // successfully below, the next usable picture must be an IDR;
                 // otherwise a delta frame would be submitted against an empty
                 // reference state and the preview could remain blank.
-                awaiting_idr = true;
+                idr_recovery_gate.begin_wait();
                 idr_wait_started_at = Some(Instant::now());
                 last_idr_wait_warning = None;
                 if let Err(error) = frames.clear() {
@@ -734,7 +734,7 @@ fn process_media_packets(
                 // decoder reference state. If a valid avcC record arrives later,
                 // require a fresh IDR instead of feeding a delta picture into
                 // the newly initialized decoder.
-                awaiting_idr = true;
+                idr_recovery_gate.begin_wait();
                 idr_wait_started_at = Some(Instant::now());
                 last_idr_wait_warning = None;
                 if let Err(clear_error) = frames.clear() {
@@ -877,7 +877,7 @@ fn process_media_packets(
 
                                 match recovery {
                                     Ok(()) => {
-                                        awaiting_idr = true;
+                                        idr_recovery_gate.begin_wait();
                                         idr_wait_started_at = Some(Instant::now());
                                         last_idr_wait_warning = None;
                                         tracing::warn!(
@@ -891,7 +891,7 @@ fn process_media_packets(
                                         // A replacement decoder has no reference pictures.
                                         // If it is initialized again after this failure, require
                                         // a fresh IDR before submitting any delta access units.
-                                        awaiting_idr = true;
+                                        idr_recovery_gate.begin_wait();
                                         idr_wait_started_at = Some(Instant::now());
                                         last_idr_wait_warning = None;
                                         // Do not keep submitting packets to a decoder whose
