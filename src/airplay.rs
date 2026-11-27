@@ -123,7 +123,10 @@ pub(super) fn advance_pipeline_stage(stage: u8) {
 #[cfg(windows)]
 pub(super) fn mark_video_decoded(sequence: u64) {
     PIPELINE_FRAME_SEQUENCE.store(sequence, Ordering::Release);
-    let _ = PIPELINE_STAGE.compare_exchange(10, 11, Ordering::AcqRel, Ordering::Acquire);
+    // A decoded frame proves that media transport reached the decoder even if
+    // the RTSP/media-worker status callback was observed slightly later.
+    // Advance monotonically instead of requiring the exact previous stage.
+    advance_pipeline_stage(11);
 }
 
 /// Mark a frame as presented only if it is still the newest decoded frame.
@@ -133,7 +136,9 @@ pub fn mark_video_rendered(sequence: u64) {
     if PIPELINE_FRAME_SEQUENCE.load(Ordering::Acquire) != sequence {
         return;
     }
-    let _ = PIPELINE_STAGE.compare_exchange(11, 12, Ordering::AcqRel, Ordering::Acquire);
+    // Successful presentation is stronger evidence than the intermediate
+    // "decoded" milestone, so tolerate out-of-order status notifications.
+    advance_pipeline_stage(12);
 }
 
 // Serialize start/stop transitions without holding the receiver data lock
