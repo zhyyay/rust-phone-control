@@ -21,11 +21,11 @@ pub use fairplay::{
     FairPlayChallenge, FairPlayKeys, FairPlayMessage, FairPlayParseError, FairPlayProviderError,
     FairPlaySapProvider, MessagePhase, parse_message as parse_fairplay_message,
 };
+mod latest_slot;
 #[allow(dead_code)]
 mod media;
 #[allow(dead_code)]
 mod mirror_crypto;
-mod latest_slot;
 mod pair_setup;
 mod pair_verify;
 mod pairing;
