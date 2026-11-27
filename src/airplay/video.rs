@@ -3113,6 +3113,52 @@ mod latest_frame_diagnostics_tests {
     }
 
     #[test]
+    fn concurrent_shutdown_cannot_leave_a_late_nv12_frame_pending() {
+        use std::sync::{
+            Arc, Barrier,
+            atomic::{AtomicBool, Ordering},
+        };
+        use std::thread;
+
+        let mailbox = Arc::new(LatestFrameMailbox::new());
+        let running = Arc::new(AtomicBool::new(true));
+        let barrier = Arc::new(Barrier::new(2));
+
+        let worker_mailbox = Arc::clone(&mailbox);
+        let worker_running = Arc::clone(&running);
+        let worker_barrier = Arc::clone(&barrier);
+        let publisher = thread::spawn(move || {
+            worker_barrier.wait();
+            worker_mailbox.publish_nv12_if_running(
+                OwnedNv12Frame {
+                    width: 2,
+                    height: 2,
+                    y_stride: 2,
+                    uv_stride: 2,
+                    color_matrix: AvcColorMatrix::Unspecified,
+                    data: vec![16, 16, 16, 16, 128, 128],
+                },
+                &worker_running,
+            )
+        });
+
+        barrier.wait();
+        running.store(false, Ordering::Release);
+        mailbox.clear().expect("invalidate frames during shutdown");
+
+        let result = publisher.join().expect("publisher thread joins");
+        assert!(matches!(
+            result,
+            Ok(_) | Err(FrameMailboxError::SessionStopped)
+        ));
+
+        // The final clear is the shutdown join boundary: even if publication
+        // won the lock just before the stop flag changed, no frame may remain.
+        mailbox.clear().expect("final shutdown clear");
+        assert!(!mailbox.has_pending_frame().expect("mailbox remains healthy"));
+    }
+
+    #[test]
     fn latest_frame_mailbox_counts_explicit_clear() {
         let mailbox = LatestFrameMailbox::new();
         mailbox.publish(frame(7)).unwrap();
