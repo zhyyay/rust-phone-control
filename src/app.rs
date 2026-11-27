@@ -587,6 +587,10 @@ impl Render for PhoneControlApp {
                                                 *pending = Some(pending_frame);
                                                 false
                                             } else {
+                                                // A worker may have exited after cancellation with
+                                                // a queued frame left behind. Never let that older
+                                                // frame run after this newly submitted frame.
+                                                *pending = None;
                                                 true
                                             }
                                         } else {
@@ -609,6 +613,9 @@ impl Render for PhoneControlApp {
                                                         if cancel.load(Ordering::Acquire)
                                                             || conversion_cancel.load(Ordering::Acquire)
                                                         {
+                                                            if let Ok(mut pending) = pending_slot.lock() {
+                                                                *pending = None;
+                                                            }
                                                             break;
                                                         }
                                                         let started = Instant::now();
