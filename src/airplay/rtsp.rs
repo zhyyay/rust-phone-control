@@ -807,7 +807,9 @@ fn process_media_packets(
                                 );
                             }
                             Ok(Some(published_frames)) => {
-                                if published_frames > 0 && idr_recovery_gate.is_awaiting_first_frame() {
+                                if published_frames > 0
+                                    && idr_recovery_gate.is_awaiting_first_frame()
+                                {
                                     idr_recovery_gate.record_frame_published();
                                     tracing::info!(
                                         %packet.peer_addr,
