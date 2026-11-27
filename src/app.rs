@@ -181,6 +181,7 @@ impl Render for PhoneControlApp {
                         u32,
                         u32,
                         Arc<crate::airplay::DecodedVideoFrame>,
+                        Arc<AtomicBool>,
                     )>,
                 > = Arc::new(crate::airplay::LatestPendingSlot::default());
                 let worker_cancel = fallback_worker_cancel;
@@ -584,12 +585,21 @@ impl Render for PhoneControlApp {
                                             sequence,
                                             "D3D11 frame upload unavailable; scheduling bounded asynchronous GPUI fallback conversion"
                                         );
+                                        let conversion_cancel = Arc::new(AtomicBool::new(false));
+                                        if let Some(previous) =
+                                            fallback_conversion_cancel.replace(conversion_cancel.clone())
+                                        {
+                                            // Stop converting an obsolete frame immediately; the
+                                            // worker will continue with the newest pending request.
+                                            previous.store(true, Ordering::Release);
+                                        }
                                         let pending_frame = (
                                             sequence,
                                             generation,
                                             width,
                                             height,
                                             frame.clone(),
+                                            conversion_cancel,
                                         );
                                         let pending_slot = fallback_pending_frame.clone();
                                         // Coalesce to one pending item. The slot and in-flight
@@ -603,54 +613,55 @@ impl Render for PhoneControlApp {
                                             let in_flight = fallback_conversion_in_flight.clone();
                                             let pending_slot = fallback_pending_frame.clone();
                                             let cancel = worker_cancel.clone();
-                                            let conversion_cancel = Arc::new(AtomicBool::new(false));
-                                            fallback_conversion_cancel = Some(conversion_cancel.clone());
                                             let spawn = std::thread::Builder::new()
                                                 .name("airplay-fallback-convert".to_owned())
                                                 .spawn(move || {
                                                     let _in_flight_guard =
                                                         FallbackConversionInFlightGuard(Some(in_flight.clone()));
                                                     let mut current = Some(pending_frame);
-                                                    while let Some((sequence, generation, width, height, frame)) = current.take() {
-                                                        if cancel.load(Ordering::Acquire)
-                                                            || conversion_cancel.load(Ordering::Acquire)
-                                                        {
-                                                            pending_slot.clear();
-                                                            break;
+                                                    while let Some((
+                                                        sequence,
+                                                        generation,
+                                                        width,
+                                                        height,
+                                                        frame,
+                                                        frame_cancel,
+                                                    )) = current.take()
+                                                    {
+                                                        if cancel.load(Ordering::Acquire) {
+                                                            let _ = pending_slot.clear_and_release(&in_flight);
+                                                            _in_flight_guard.disarm();
+                                                            return;
                                                         }
-                                                        let started = Instant::now();
-                                                        let result = decoded_frame_to_bmp(
-                                                            frame.as_ref(),
-                                                            || cancel.load(Ordering::Acquire)
-                                                                || conversion_cancel.load(Ordering::Acquire),
-                                                        );
-                                                        let elapsed = started.elapsed();
-                                                        if !cancel.load(Ordering::Acquire)
-                                                            && !conversion_cancel.load(Ordering::Acquire)
-                                                            && crate::airplay::is_video_frame_generation_current(generation).unwrap_or(false)
-                                                        {
-                                                            if let Ok(mut slot) = result_slot.lock() {
-                                                                if !cancel.load(Ordering::Acquire)
-                                                                    && !conversion_cancel.load(Ordering::Acquire)
-                                                                    && crate::airplay::is_video_frame_generation_current(generation).unwrap_or(false)
-                                                                {
-                                                                    *slot = Some((sequence, generation, width, height, result, elapsed));
+                                                        if !frame_cancel.load(Ordering::Acquire) {
+                                                            let started = Instant::now();
+                                                            let result = decoded_frame_to_bmp(
+                                                                frame.as_ref(),
+                                                                || cancel.load(Ordering::Acquire)
+                                                                    || frame_cancel.load(Ordering::Acquire),
+                                                            );
+                                                            let elapsed = started.elapsed();
+                                                            if !cancel.load(Ordering::Acquire)
+                                                                && !frame_cancel.load(Ordering::Acquire)
+                                                                && crate::airplay::is_video_frame_generation_current(generation).unwrap_or(false)
+                                                            {
+                                                                if let Ok(mut slot) = result_slot.lock() {
+                                                                    if !cancel.load(Ordering::Acquire)
+                                                                        && !frame_cancel.load(Ordering::Acquire)
+                                                                        && crate::airplay::is_video_frame_generation_current(generation).unwrap_or(false)
+                                                                    {
+                                                                        *slot = Some((sequence, generation, width, height, result, elapsed));
+                                                                    }
                                                                 }
                                                             }
                                                         }
 
-                                                        // Hold the pending-slot lock while clearing the
-                                                        // in-flight flag. A producer either replaces the
-                                                        // pending frame before this check, or observes
-                                                        // false afterwards and starts a fresh worker.
+                                                        // A per-frame cancellation (for example, native
+                                                        // D3D11 recovery) skips only that frame. A newer
+                                                        // pending request has its own token and remains valid.
                                                         match pending_slot.take_or_release(&in_flight) {
-                                                            Ok(Some(next)) => {
-                                                                current = Some(next);
-                                                            }
+                                                            Ok(Some(next)) => current = Some(next),
                                                             Ok(None) => {
-                                                                // take_or_release clears the flag while
-                                                                // holding the slot lock. Disarm this guard
-                                                                // so it cannot clear a newly spawned worker.
                                                                 _in_flight_guard.disarm();
                                                                 return;
                                                             }
