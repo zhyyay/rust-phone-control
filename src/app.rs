@@ -188,6 +188,10 @@ impl Render for PhoneControlApp {
                 // frame is rejected as stale, so an older async fallback can
                 // never replace a newer (but intentionally dropped) frame.
                 let mut latest_observed_frame_sequence = 0u64;
+                // Track the dimensions of the bitmap currently visible in the GPUI fallback.
+                // A resolution switch must not leave the previous-size frame on screen while
+                // the replacement bitmap is being converted asynchronously.
+                let mut fallback_displayed_dimensions: Option<(u32, u32)> = None;
                 loop {
                     cx.background_executor()
                         .timer(Duration::from_millis(33))
@@ -374,6 +378,7 @@ impl Render for PhoneControlApp {
                                 *result = None;
                             }
                             this.preview_image = None;
+                            fallback_displayed_dimensions = None;
                             this.preview_status = "镜像已断开，等待 iPhone 重新投屏".to_owned();
                             next_fallback_mode = false;
                             tracing::debug!("Cleared native and bitmap preview after mirror session teardown");
@@ -423,6 +428,7 @@ impl Render for PhoneControlApp {
                                         ImageFormat::Bmp,
                                         bytes,
                                     )));
+                                    fallback_displayed_dimensions = Some((width, height));
                                     crate::airplay::mark_video_rendered(sequence);
                                     this.preview_status = format!(
                                         "GPUI 图像回退（D3D11 不可用） · {width} × {height} · sequence {sequence}"
@@ -448,6 +454,7 @@ impl Render for PhoneControlApp {
                                     // Do not leave an older bitmap on screen as if it
                                     // represented the current stream after conversion failed.
                                     this.preview_image = None;
+                                    fallback_displayed_dimensions = None;
                                     this.preview_status = format!(
                                         "GPUI 图像回退失败 · sequence {sequence} · {error}"
                                     );
@@ -520,6 +527,7 @@ impl Render for PhoneControlApp {
                                             *result = None;
                                         }
                                         this.preview_image = None;
+                                        fallback_displayed_dimensions = None;
                                         next_fallback_mode = false;
                                         ("D3D11 原生预览", false, Duration::ZERO)
                                     }
@@ -538,6 +546,16 @@ impl Render for PhoneControlApp {
                                     }
                                     Err(error) => {
                                         crate::video_renderer::hide_native_video_surface();
+                                        // Do not keep a bitmap from the previous resolution
+                                        // visible while the new frame is converted in the
+                                        // background. Same-resolution fallback may retain its
+                                        // last frame to avoid flicker during normal conversion.
+                                        if fallback_displayed_dimensions
+                                            .is_some_and(|displayed| displayed != (width, height))
+                                        {
+                                            this.preview_image = None;
+                                            fallback_displayed_dimensions = None;
+                                        }
                                         next_fallback_mode = true;
                                         tracing::debug!(
                                             %error,
