@@ -58,6 +58,19 @@ fn first_frame_wait_timed_out(started_at: Option<Instant>, now: Instant) -> bool
         .is_some_and(|elapsed| elapsed >= IDR_FIRST_FRAME_TIMEOUT)
 }
 
+fn mirror_packet_read_timed_out(
+    packet_started_at: Instant,
+    last_progress_at: Instant,
+    now: Instant,
+    idle_timeout: Duration,
+) -> bool {
+    now.checked_duration_since(last_progress_at)
+        .is_some_and(|elapsed| elapsed >= idle_timeout)
+        || now
+            .checked_duration_since(packet_started_at)
+            .is_some_and(|elapsed| elapsed >= MIRROR_PACKET_READ_TIMEOUT)
+}
+
 #[cfg(windows)]
 static ACTIVE_RTSP_SESSIONS: std::sync::atomic::AtomicUsize =
     std::sync::atomic::AtomicUsize::new(0);
@@ -470,17 +483,18 @@ fn read_exact_while_running<R: Read>(
                     io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
                 ) =>
             {
-                if last_progress.elapsed() >= idle_timeout {
-                    return Err(io::Error::new(
-                        io::ErrorKind::TimedOut,
-                        "mirror peer exceeded its packet idle timeout",
-                    ));
-                }
-                if packet_started_at.elapsed() >= MIRROR_PACKET_READ_TIMEOUT {
-                    return Err(io::Error::new(
-                        io::ErrorKind::TimedOut,
-                        "mirror peer exceeded the total packet read timeout",
-                    ));
+                if mirror_packet_read_timed_out(
+                    packet_started_at,
+                    last_progress,
+                    Instant::now(),
+                    idle_timeout,
+                ) {
+                    let message = if last_progress.elapsed() >= idle_timeout {
+                        "mirror peer exceeded its packet idle timeout"
+                    } else {
+                        "mirror peer exceeded the total packet read timeout"
+                    };
+                    return Err(io::Error::new(io::ErrorKind::TimedOut, message));
                 }
                 // A peer may stall halfway through a packet. Avoid spinning
                 // one CPU core while preserving prompt cancellation.
@@ -2559,6 +2573,38 @@ mod tests {
         assert!(last_idr_wait_warning.is_none());
         assert!(!gate.should_submit(false));
         assert!(gate.should_submit(true));
+    }
+
+    #[test]
+    fn mirror_packet_read_timeout_catches_slow_trickle_and_idle_peers() {
+        use std::time::{Duration, Instant};
+
+        let started = Instant::now();
+        let idle = Duration::from_secs(30);
+        assert!(!super::mirror_packet_read_timed_out(
+            started,
+            started + Duration::from_secs(20),
+            started + Duration::from_secs(25),
+            idle,
+        ));
+        assert!(super::mirror_packet_read_timed_out(
+            started,
+            started + Duration::from_secs(10),
+            started + Duration::from_secs(30),
+            idle,
+        ));
+        assert!(super::mirror_packet_read_timed_out(
+            started,
+            started + Duration::from_secs(110),
+            started + Duration::from_secs(120),
+            idle,
+        ));
+        assert!(!super::mirror_packet_read_timed_out(
+            started + Duration::from_secs(1),
+            started + Duration::from_secs(2),
+            started,
+            idle,
+        ));
     }
 
     #[test]
