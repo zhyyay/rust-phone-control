@@ -2458,7 +2458,10 @@ mod tests {
         let stale = previous_receiver.take_latest().unwrap().unwrap();
 
         let restarted_receiver = LatestFrameMailbox::new();
-        assert_ne!(stale.generation, restarted_receiver.generation.load(Ordering::Acquire));
+        assert_ne!(
+            stale.generation,
+            restarted_receiver.generation.load(Ordering::Acquire)
+        );
         assert!(!restarted_receiver.is_generation_current(stale.generation));
     }
 
