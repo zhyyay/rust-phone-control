@@ -485,7 +485,7 @@ fn read_exact_while_running<R: Read>(
 /// Reset per-connection decoder presentation state at a mirror TCP boundary.
 /// Negotiated stream crypto and AVC configuration remain owned by the RTSP
 /// media session; decoder references and any UI-visible frame do not.
-fn reset_after_mirror_disconnect(
+fn reset_after_mirror_stream_reset(
     frames: &super::video::LatestFrameMailbox,
     idr_recovery_gate: &mut super::video::IdrRecoveryGate,
     idr_wait_started_at: &mut Option<Instant>,
@@ -661,7 +661,7 @@ fn process_media_packets(
                 // Keep the negotiated cipher/configuration continuous across a
                 // TCP reconnect, but invalidate decoder references and all
                 // presentation state from the previous TCP peer.
-                reset_after_mirror_disconnect(
+                reset_after_mirror_stream_reset(
                     &frames,
                     &mut idr_recovery_gate,
                     &mut idr_wait_started_at,
@@ -1051,12 +1051,24 @@ fn process_media_packets(
                         // Keep the per-stream CTR position synchronized even when
                         // Media Foundation is unavailable or codec setup is pending.
                         if let Err(error) = cipher.decrypt_packet(&mut packet.payload) {
+                            // The CTR stream can no longer be trusted. Do not
+                            // leave a decoder or preview that appears current;
+                            // wait for a newly negotiated stream key/configuration.
                             mirror_cipher = None;
+                            frame_pipeline = None;
+                            reset_after_mirror_stream_reset(
+                                &frames,
+                                &mut idr_recovery_gate,
+                                &mut idr_wait_started_at,
+                                &mut first_frame_wait_started_at,
+                                &mut last_idr_wait_warning,
+                                Instant::now(),
+                            );
                             tracing::warn!(
                                 %packet.peer_addr,
                                 timestamp = packet.timestamp,
                                 %error,
-                                "AirPlay mirror cipher failed while advancing an unrendered packet"
+                                "AirPlay mirror cipher failed while advancing an unrendered packet; invalidated decoder state"
                             );
                         } else {
                             decrypted_access_units_discarded =
@@ -2508,7 +2520,7 @@ mod tests {
         let mut last_idr_wait_warning = Some(Instant::now());
         let disconnected_at = Instant::now() + Duration::from_millis(1);
 
-        super::reset_after_mirror_disconnect(
+        super::reset_after_mirror_stream_reset(
             &frames,
             &mut gate,
             &mut idr_wait_started_at,
