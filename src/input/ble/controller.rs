@@ -1,17 +1,38 @@
 //! High-level mouse and keyboard actions built on the Windows BLE HID service.
 
 use anyhow::{Result, bail};
+use std::sync::Mutex;
 
 use super::{
     reports::{KeyboardReport, MouseReport},
     service::BleHidService,
 };
-use crate::input::event::{KeyModifiers, MouseButtons};
+use crate::input::event::{InputEvent, KeyModifiers, MouseButtons};
 
 /// Single-phone input controller. The BLE service remains responsible for GATT transport;
 /// this type turns ordinary mouse and keyboard actions into correctly ordered HID reports.
 pub struct BleInputController {
     service: BleHidService,
+    input_state: Mutex<ControllerInputState>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct ControllerInputState {
+    buttons: MouseButtons,
+    modifiers: KeyModifiers,
+}
+
+impl ControllerInputState {
+    fn apply(&mut self, event: InputEvent) {
+        match event {
+            InputEvent::PointerButtons(buttons) => self.buttons = buttons,
+            InputEvent::KeyModifiers(modifiers) => self.modifiers = modifiers,
+            InputEvent::ReleaseAll => *self = Self::default(),
+            InputEvent::PointerMove { .. }
+            | InputEvent::Scroll { .. }
+            | InputEvent::KeyUsage(_) => {}
+        }
+    }
 }
 
 impl BleInputController {
@@ -19,7 +40,58 @@ impl BleInputController {
     pub async fn start() -> Result<Self> {
         Ok(Self {
             service: BleHidService::start().await?,
+            input_state: Mutex::new(ControllerInputState::default()),
         })
+    }
+
+    /// Dispatches one platform-independent input event to the BLE HID transport.
+    ///
+    /// Button and modifier events update persistent state; subsequent pointer reports retain
+    /// held buttons, and key taps retain currently-held modifiers. ReleaseAll clears both.
+    pub async fn dispatch(&self, event: InputEvent) -> Result<()> {
+        let (buttons, modifiers) = {
+            let mut state = self.input_state.lock().unwrap_or_else(|p| p.into_inner());
+            state.apply(event);
+            (state.buttons, state.modifiers)
+        };
+
+        match event {
+            InputEvent::PointerMove { dx, dy } => {
+                let (mut remaining_x, mut remaining_y) = (dx as i32, dy as i32);
+                while remaining_x != 0 || remaining_y != 0 {
+                    let step_x = remaining_x.clamp(-127, 127) as i16;
+                    let step_y = remaining_y.clamp(-127, 127) as i16;
+                    self.service.send_mouse_report(MouseReport::new(buttons, step_x, step_y, 0)).await?;
+                    remaining_x -= step_x as i32;
+                    remaining_y -= step_y as i32;
+                    if remaining_x != 0 || remaining_y != 0 {
+                        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                    }
+                }
+                Ok(())
+            }
+            InputEvent::PointerButtons(_) => {
+                self.service.send_mouse_report(MouseReport::new(buttons, 0, 0, 0)).await
+            }
+            InputEvent::Scroll { vertical } => {
+                self.service.send_mouse_report(MouseReport::new(buttons, 0, 0, vertical)).await
+            }
+            InputEvent::KeyModifiers(_) => {
+                self.service.send_keyboard_report(KeyboardReport::new(modifiers, [0; 6])).await
+            }
+            InputEvent::KeyUsage(usage) => {
+                if usage == 0 {
+                    bail!("keyboard usage 0 is reserved for no key");
+                }
+                self.service.send_keyboard_report(KeyboardReport::new(modifiers, [usage, 0, 0, 0, 0, 0])).await?;
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                self.service.send_keyboard_report(KeyboardReport::new(modifiers, [0; 6])).await
+            }
+            InputEvent::ReleaseAll => {
+                self.service.send_mouse_report(MouseReport::release()).await?;
+                self.service.send_keyboard_report(KeyboardReport::release()).await
+            }
+        }
     }
 
     /// Sends relative pointer movement. Large movements are split into signed 8-bit reports.
@@ -186,7 +258,33 @@ fn ascii_key(character: char) -> Option<(u8, bool)> {
 
 #[cfg(test)]
 mod tests {
-    use super::{ascii_key, validate_text};
+    use super::{ControllerInputState, ascii_key, validate_text};
+    use crate::input::event::{InputEvent, KeyModifiers, MouseButtons};
+
+    #[test]
+    fn dispatcher_state_preserves_held_buttons_and_modifiers_until_release_all() {
+        let mut state = ControllerInputState::default();
+        state.apply(InputEvent::PointerButtons(MouseButtons::LEFT | MouseButtons::RIGHT));
+        state.apply(InputEvent::KeyModifiers(KeyModifiers::LEFT_SHIFT));
+        state.apply(InputEvent::PointerMove { dx: 12, dy: -4 });
+        assert_eq!(state.buttons, MouseButtons::LEFT | MouseButtons::RIGHT);
+        assert_eq!(state.modifiers, KeyModifiers::LEFT_SHIFT);
+
+        state.apply(InputEvent::ReleaseAll);
+        assert_eq!(state, ControllerInputState::default());
+    }
+
+    #[test]
+    fn pointer_and_key_events_do_not_clear_held_state() {
+        let mut state = ControllerInputState {
+            buttons: MouseButtons::MIDDLE,
+            modifiers: KeyModifiers::LEFT_CTRL,
+        };
+        state.apply(InputEvent::Scroll { vertical: 1 });
+        state.apply(InputEvent::KeyUsage(0x04));
+        assert_eq!(state.buttons, MouseButtons::MIDDLE);
+        assert_eq!(state.modifiers, KeyModifiers::LEFT_CTRL);
+    }
 
     #[test]
     fn maps_letters_and_uppercase_shift() {
