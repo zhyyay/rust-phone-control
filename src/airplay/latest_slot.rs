@@ -50,11 +50,13 @@ impl<T> LatestPendingSlot<T> {
         }
     }
 
-    /// Discards any item waiting behind the active worker.
-    pub(crate) fn clear(&self) {
-        if let Ok(mut pending) = self.0.lock() {
-            *pending = None;
-        }
+    /// Discards pending work and releases worker ownership under the same
+    /// lock, so a concurrent producer cannot strand a new item.
+    pub(crate) fn clear_and_release(&self, in_flight: &AtomicBool) -> Result<(), ()> {
+        let mut pending = self.0.lock().map_err(|_| ())?;
+        *pending = None;
+        in_flight.store(false, Ordering::Release);
+        Ok(())
     }
 }
 
@@ -79,16 +81,17 @@ mod tests {
     }
 
     #[test]
-    fn clear_discards_the_pending_item_without_releasing_worker_ownership() {
+    fn clear_discards_pending_work_and_releases_worker_ownership() {
         let slot = LatestPendingSlot::default();
         let in_flight = AtomicBool::new(false);
 
         assert!(slot.submit(1, &in_flight));
         assert!(!slot.submit(2, &in_flight));
-        slot.clear();
+        slot.clear_and_release(&in_flight).unwrap();
 
         assert_eq!(slot.take_or_release(&in_flight).unwrap(), None);
         assert!(!in_flight.load(Ordering::Acquire));
+        assert!(slot.submit(3, &in_flight));
     }
 
     #[test]
