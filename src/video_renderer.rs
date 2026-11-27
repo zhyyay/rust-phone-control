@@ -550,7 +550,10 @@ pub(crate) fn upload_nv12_frame(
                         .draw_nv12_frame()
                         .map(|present_time| (upload_time, present_time))
                 })
-                .context("D3D11 NV12 preview retry failed after device recreation")?;
+                .map_err(|error| {
+                    DEVICE_RECOVERY_FAILURES.fetch_add(1, Ordering::Relaxed);
+                    error.context("D3D11 NV12 preview retry failed after device recreation")
+                })?;
             // Keep the cooldown active if the first frame on the replacement
             // device also fails; otherwise a broken driver can trigger rebuilds
             // on every incoming frame.
@@ -684,7 +687,10 @@ pub(crate) fn upload_bgra_frame(
                         .draw_video_frame()
                         .map(|present_time| (upload_time, present_time))
                 })
-                .context("D3D11 preview retry failed after device recreation")?;
+                .map_err(|error| {
+                    DEVICE_RECOVERY_FAILURES.fetch_add(1, Ordering::Relaxed);
+                    error.context("D3D11 preview retry failed after device recreation")
+                })?;
             // Do not clear the cooldown until the replacement has presented
             // a frame successfully; a failed retry must not cause rebuild churn.
             DEVICE_RECOVERY_RETRY_AFTER.with(|retry_after| retry_after.set(None));
