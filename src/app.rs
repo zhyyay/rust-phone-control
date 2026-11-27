@@ -395,7 +395,7 @@ impl Render for PhoneControlApp {
                             if let Some(cancel) = fallback_conversion_cancel.take() {
                                 cancel.store(true, Ordering::Release);
                             }
-                            fallback_pending_frame.clear();
+                            fallback_pending_frame.clear_and_release(&fallback_conversion_in_flight).ok();
                             if let Ok(mut result) = fallback_conversion_result.lock() {
                                 *result = None;
                             }
@@ -545,7 +545,7 @@ impl Render for PhoneControlApp {
                                         if let Some(cancel) = fallback_conversion_cancel.take() {
                                             cancel.store(true, Ordering::Release);
                                         }
-                                        fallback_pending_frame.clear();
+                                        fallback_pending_frame.clear_and_release(&fallback_conversion_in_flight).ok();
                                         if let Ok(mut result) = fallback_conversion_result.lock() {
                                             *result = None;
                                         }
@@ -670,7 +670,7 @@ impl Render for PhoneControlApp {
                                                     }
                                                 });
                                             if let Err(error) = spawn {
-                                                fallback_pending_frame.clear();
+                                                fallback_pending_frame.clear_and_release(&fallback_conversion_in_flight).ok();
                                                 fallback_conversion_in_flight.store(false, Ordering::Release);
                                                 tracing::warn!(
                                                     %error,
