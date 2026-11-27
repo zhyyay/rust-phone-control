@@ -424,7 +424,7 @@ pub(crate) fn upload_nv12_frame(
     y_stride: usize,
     uv_stride: usize,
     data: &[u8],
-    color_matrix: crate::airplay::video::AvcColorMatrix,
+    color_matrix: crate::airplay::AvcColorMatrix,
 ) -> anyhow::Result<()> {
     let initial_result = THREAD_RENDERER.with(|renderer| {
         let mut renderer = renderer.borrow_mut();
@@ -1461,12 +1461,12 @@ float4 PSMain(VertexOutput input) : SV_Target {{
         y_stride: usize,
         uv_stride: usize,
         data: &[u8],
-        color_matrix: crate::airplay::video::AvcColorMatrix,
+        color_matrix: crate::airplay::AvcColorMatrix,
     ) -> anyhow::Result<()> {
         self.nv12_color_matrix_override = match color_matrix {
-            crate::airplay::video::AvcColorMatrix::Bt601 => Some(false),
-            crate::airplay::video::AvcColorMatrix::Bt709 => Some(true),
-            crate::airplay::video::AvcColorMatrix::Unspecified => None,
+            crate::airplay::AvcColorMatrix::Bt601 => Some(false),
+            crate::airplay::AvcColorMatrix::Bt709 => Some(true),
+            crate::airplay::AvcColorMatrix::Unspecified => None,
         };
         if width == 0
             || height == 0
