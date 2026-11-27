@@ -329,7 +329,9 @@ fn ensure_swap_chain_with_recovery(hwnd: HWND, width: u32, height: u32) -> anyho
     if let Err(error) = replacement.ensure_swap_chain(hwnd, width, height) {
         DEVICE_RECOVERY_FAILURES.fetch_add(1, Ordering::Relaxed);
         tracing::error!(error = %format!("{error:#}"), "D3D11 swap-chain recovery failed");
-        return Err(error.context("could not recreate the native video swap chain after device removal"));
+        return Err(
+            error.context("could not recreate the native video swap chain after device removal")
+        );
     }
 
     THREAD_RENDERER.with(|renderer| {
@@ -463,7 +465,9 @@ fn recreate_device_after_removal(
     if let Err(error) = replacement.ensure_swap_chain(hwnd, surface_width, surface_height) {
         DEVICE_RECOVERY_FAILURES.fetch_add(1, Ordering::Relaxed);
         tracing::error!(error = %format!("{error:#}"), "D3D11 swap-chain recovery failed");
-        return Err(error.context("could not recreate the native video swap chain after device removal"));
+        return Err(
+            error.context("could not recreate the native video swap chain after device removal")
+        );
     }
 
     THREAD_RENDERER.with(|renderer| {
