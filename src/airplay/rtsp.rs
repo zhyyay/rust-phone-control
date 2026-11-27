@@ -4101,6 +4101,57 @@ mod tests {
     }
 
     #[test]
+    fn reconnect_packets_are_ordered_after_the_disconnect_boundary() {
+        use std::sync::mpsc;
+
+        let (sender, receiver) = mpsc::sync_channel(3);
+        let old_peer_packet = super::ReceivedMediaPacket {
+            peer_addr: "127.0.0.1:1234".parse().expect("old peer address"),
+            packet_type: crate::airplay::media::ScreenMirrorPacketType::Video,
+            timestamp: 10,
+            payload: vec![1, 2, 3],
+        };
+        let new_peer_packet = super::ReceivedMediaPacket {
+            peer_addr: "127.0.0.1:5678".parse().expect("new peer address"),
+            packet_type: crate::airplay::media::ScreenMirrorPacketType::CodecConfiguration,
+            timestamp: 20,
+            payload: vec![4, 5, 6],
+        };
+
+        sender
+            .send(super::MediaWorkerMessage::Packet(old_peer_packet))
+            .expect("queue final old-peer packet");
+        sender
+            .send(super::MediaWorkerMessage::StreamDisconnected)
+            .expect("queue old-peer disconnect boundary");
+        sender
+            .send(super::MediaWorkerMessage::Packet(new_peer_packet))
+            .expect("queue first new-peer packet");
+
+        let old = receiver.recv().expect("old-peer packet");
+        let boundary = receiver.recv().expect("disconnect boundary");
+        let new = receiver.recv().expect("new-peer packet");
+        let super::MediaWorkerMessage::Packet(old) = old else {
+            panic!("old peer's final packet must be processed first");
+        };
+        assert_eq!(old.peer_addr.port(), 1234);
+        assert_eq!(old.timestamp, 10);
+        assert!(matches!(
+            boundary,
+            super::MediaWorkerMessage::StreamDisconnected
+        ));
+        let super::MediaWorkerMessage::Packet(new) = new else {
+            panic!("new peer's first packet must follow the disconnect boundary");
+        };
+        assert_eq!(new.peer_addr.port(), 5678);
+        assert_eq!(new.timestamp, 20);
+        assert_eq!(
+            new.packet_type,
+            crate::airplay::media::ScreenMirrorPacketType::CodecConfiguration
+        );
+    }
+
+    #[test]
     fn mirror_tcp_reader_preserves_packet_boundaries_across_fragmented_and_coalesced_writes() {
         use std::io::Write;
         use std::net::{Shutdown, TcpListener};
