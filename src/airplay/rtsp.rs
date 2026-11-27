@@ -788,6 +788,7 @@ fn process_media_packets(
                                 runtime,
                                 configuration,
                                 Arc::clone(&frames),
+                                Arc::clone(&running),
                             ) {
                                 Ok(pipeline) => {
                                     decoder_initialization_successes =
