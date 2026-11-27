@@ -1045,6 +1045,15 @@ fn process_media_packets(
                                         );
                                     }
                                 }
+
+                                if cipher_state_lost {
+                                    // A partially advanced CTR context cannot be
+                                    // recovered within this media session. Stop the
+                                    // listener and worker rather than silently
+                                    // accepting packets that can never be decoded.
+                                    running.store(false, std::sync::atomic::Ordering::Release);
+                                    break;
+                                }
                             }
                         }
                     } else {
@@ -1070,6 +1079,8 @@ fn process_media_packets(
                                 %error,
                                 "AirPlay mirror cipher failed while advancing an unrendered packet; invalidated decoder state"
                             );
+                            running.store(false, std::sync::atomic::Ordering::Release);
+                            break;
                         } else {
                             decrypted_access_units_discarded =
                                 decrypted_access_units_discarded.saturating_add(1);
