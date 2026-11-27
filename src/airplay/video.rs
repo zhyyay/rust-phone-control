@@ -1763,6 +1763,14 @@ mod tests {
         // Decoder input acceptance is not equivalent to visible output.
         gate.record_frame_published();
         assert!(!gate.is_awaiting_first_frame());
+
+        // A later decoder reset must discard any previous first-frame wait.
+        gate.record_idr_submitted();
+        assert!(gate.is_awaiting_first_frame());
+        gate.begin_wait();
+        assert!(gate.is_waiting());
+        assert!(!gate.is_awaiting_first_frame());
+        assert!(!gate.should_submit(false));
     }
 
     #[test]
