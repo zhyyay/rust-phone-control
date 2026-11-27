@@ -608,20 +608,11 @@ fn process_media_packets(
             )
             && previous_configuration.as_ref() == processor.configuration();
 
-        let initialize_decoder = if duplicate_configuration {
-            // Repeated avcC packets must not churn a healthy decoder. If
-            // initialization previously failed, reserve one bounded retry.
-            if frame_pipeline.is_some() {
-                false
-            } else {
-                decoder_init_policy.begin_attempt()
-            }
-        } else if is_codec_configuration {
-            decoder_init_policy.reset();
-            decoder_init_policy.begin_attempt()
-        } else {
-            false
-        };
+        let initialize_decoder = decoder_init_policy.should_initialize(
+            is_codec_configuration,
+            duplicate_configuration,
+            frame_pipeline.is_some(),
+        );
 
         if duplicate_configuration && !initialize_decoder {
             tracing::trace!(
