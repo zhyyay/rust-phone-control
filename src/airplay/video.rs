@@ -787,6 +787,28 @@ impl DecoderInitializationPolicy {
         self.attempts = 0;
     }
 
+    /// Reserve a decoder initialization for the current packet's configuration.
+    ///
+    /// A duplicate never replaces a healthy pipeline and only consumes the
+    /// remaining retry budget when initialization previously failed. A new
+    /// configuration starts a fresh budget. Non-configuration packets do
+    /// not trigger decoder construction.
+    pub fn should_initialize(
+        &mut self,
+        is_codec_configuration: bool,
+        duplicate_configuration: bool,
+        decoder_ready: bool,
+    ) -> bool {
+        if !is_codec_configuration {
+            return false;
+        }
+        if duplicate_configuration {
+            return !decoder_ready && self.begin_attempt();
+        }
+        self.reset();
+        self.begin_attempt()
+    }
+
     /// Number of attempts made for the current codec configuration.
     pub fn attempts(&self) -> u8 {
         self.attempts
@@ -1749,6 +1771,33 @@ mod tests {
         assert_eq!(units.len(), 2);
         assert_eq!(units[0].bytes, &[0x67, 0x64]);
         assert_eq!(units[1].bytes, &[0x68, 0xee]);
+    }
+
+    #[test]
+    fn decoder_initialization_decision_preserves_healthy_pipeline_and_bounds_retries() {
+        let mut policy = DecoderInitializationPolicy::default();
+
+        // First configuration reserves its initial attempt.
+        assert!(policy.should_initialize(true, false, false));
+        assert_eq!(policy.attempts(), 1);
+
+        // A duplicate cannot churn a healthy decoder.
+        assert!(!policy.should_initialize(true, true, true));
+        assert_eq!(policy.attempts(), 1);
+
+        // After failure, exactly one duplicate retry is allowed.
+        assert!(policy.should_initialize(true, true, false));
+        assert_eq!(policy.attempts(), 2);
+        assert!(!policy.should_initialize(true, true, false));
+        assert_eq!(policy.attempts(), 2);
+
+        // A genuinely new configuration gets a fresh budget.
+        assert!(policy.should_initialize(true, false, false));
+        assert_eq!(policy.attempts(), 1);
+
+        // Video and heartbeat packets never initialize a decoder.
+        assert!(!policy.should_initialize(false, false, false));
+        assert_eq!(policy.attempts(), 1);
     }
 
     #[test]
