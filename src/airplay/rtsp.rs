@@ -777,15 +777,21 @@ fn process_media_packets(
                                 .map_err(super::decoder::MediaFoundationError::VideoDecryption)
                                 .and_then(|access_unit| {
                                     if super::video::access_unit_contains_h264_idr(&access_unit) {
+                                        // Keep the recovery gate closed until the replacement
+                                        // decoder actually accepts the IDR. Clearing it before
+                                        // submission would let following delta frames through
+                                        // when this first keyframe is rejected by the MFT.
+                                        let published = pipeline.submit_access_unit(&access_unit)?;
                                         awaiting_idr = false;
                                         idr_wait_started_at = None;
                                         last_idr_wait_warning = None;
                                         tracing::info!(
                                             %packet.peer_addr,
                                             timestamp = packet.timestamp,
-                                            "H.264 IDR received; resuming decode after decoder recovery"
+                                            published_frames = published,
+                                            "H.264 IDR accepted; resuming decode after decoder recovery"
                                         );
-                                        pipeline.submit_access_unit(&access_unit).map(Some)
+                                        Ok(Some(published))
                                     } else {
                                         Ok(None)
                                     }
