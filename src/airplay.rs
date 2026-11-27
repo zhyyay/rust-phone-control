@@ -28,6 +28,8 @@ mod mirror_crypto;
 mod pair_setup;
 mod pair_verify;
 mod pairing;
+mod latest_slot;
+pub(crate) use latest_slot::LatestPendingSlot;
 #[cfg(windows)]
 mod pairing_store;
 mod plist;
