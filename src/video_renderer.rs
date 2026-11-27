@@ -52,6 +52,7 @@ use windows_062::core::{BOOL, Interface, PCSTR, PCWSTR};
 static PRESENTED_FRAMES: AtomicU64 = AtomicU64::new(0);
 static UPLOADED_FRAMES: AtomicU64 = AtomicU64::new(0);
 static DEVICE_RECOVERIES: AtomicU64 = AtomicU64::new(0);
+static DEVICE_RECOVERY_FAILURES: AtomicU64 = AtomicU64::new(0);
 static RENDER_ERRORS: AtomicU64 = AtomicU64::new(0);
 
 /// Return whether a device recreation deadline is still in the future.
@@ -89,11 +90,12 @@ fn fit_video_viewport(
 }
 
 /// Process-wide D3D11 counters; safe to read from the GPUI diagnostics poll.
-pub(crate) fn preview_metrics() -> (u64, u64, u64, u64) {
+pub(crate) fn preview_metrics() -> (u64, u64, u64, u64, u64) {
     (
         PRESENTED_FRAMES.load(Ordering::Relaxed),
         UPLOADED_FRAMES.load(Ordering::Relaxed),
         DEVICE_RECOVERIES.load(Ordering::Relaxed),
+        DEVICE_RECOVERY_FAILURES.load(Ordering::Relaxed),
         RENDER_ERRORS.load(Ordering::Relaxed),
     )
 }
@@ -314,11 +316,21 @@ fn ensure_swap_chain_with_recovery(hwnd: HWND, width: u32, height: u32) -> anyho
         "D3D11 device was removed while ensuring the swap chain; rebuilding device"
     );
 
-    let mut replacement = D3d11Device::create_hardware()
-        .context("could not recreate D3D11 device after swap-chain device removal")?;
-    replacement
-        .ensure_swap_chain(hwnd, width, height)
-        .context("could not recreate the native video swap chain after device removal")?;
+    let mut replacement = match D3d11Device::create_hardware()
+        .context("could not recreate D3D11 device after swap-chain device removal")
+    {
+        Ok(device) => device,
+        Err(error) => {
+            DEVICE_RECOVERY_FAILURES.fetch_add(1, Ordering::Relaxed);
+            tracing::error!(error = %format!("{error:#}"), "D3D11 device recovery failed");
+            return Err(error);
+        }
+    };
+    if let Err(error) = replacement.ensure_swap_chain(hwnd, width, height) {
+        DEVICE_RECOVERY_FAILURES.fetch_add(1, Ordering::Relaxed);
+        tracing::error!(error = %format!("{error:#}"), "D3D11 swap-chain recovery failed");
+        return Err(error.context("could not recreate the native video swap chain after device removal"));
+    }
 
     THREAD_RENDERER.with(|renderer| {
         *renderer.borrow_mut() = Some(replacement);
@@ -421,7 +433,46 @@ pub(crate) fn destroy_native_video_surface() {
     });
 }
 
-/// Recreate the D3D11 device and its HWND-bound swap chain after device removal.\n///\n/// The caller is responsible for cooldown policy and for retrying the current\n/// decoded frame on the replacement device.\nfn recreate_device_after_removal(\n    hwnd: HWND,\n    surface_width: u32,\n    surface_height: u32,\n    reason: &windows_062::core::Error,\n) -> anyhow::Result<()> {\n    tracing::warn!(\n        error = %reason,\n        width = surface_width,\n        height = surface_height,\n        "D3D11 device was removed; rebuilding preview device and resources"\n    );\n\n    let mut replacement = D3d11Device::create_hardware()\n        .context("could not recreate D3D11 device after device removal")?;\n    replacement\n        .ensure_swap_chain(hwnd, surface_width, surface_height)\n        .context("could not recreate the native video swap chain after device removal")?;\n\n    THREAD_RENDERER.with(|renderer| {\n        *renderer.borrow_mut() = Some(replacement);\n    });\n    Ok(())\n}\n\n/// Upload an NV12 frame to the GPUI thread's D3D11 Y/UV textures.
+/// Recreate the D3D11 device and its HWND-bound swap chain after device removal.
+///
+/// The caller is responsible for cooldown policy and for retrying the current
+/// decoded frame on the replacement device.
+fn recreate_device_after_removal(
+    hwnd: HWND,
+    surface_width: u32,
+    surface_height: u32,
+    reason: &windows_062::core::Error,
+) -> anyhow::Result<()> {
+    tracing::warn!(
+        error = %reason,
+        width = surface_width,
+        height = surface_height,
+        "D3D11 device was removed; rebuilding preview device and resources"
+    );
+
+    let mut replacement = match D3d11Device::create_hardware()
+        .context("could not recreate D3D11 device after device removal")
+    {
+        Ok(device) => device,
+        Err(error) => {
+            DEVICE_RECOVERY_FAILURES.fetch_add(1, Ordering::Relaxed);
+            tracing::error!(error = %format!("{error:#}"), "D3D11 device recovery failed");
+            return Err(error);
+        }
+    };
+    if let Err(error) = replacement.ensure_swap_chain(hwnd, surface_width, surface_height) {
+        DEVICE_RECOVERY_FAILURES.fetch_add(1, Ordering::Relaxed);
+        tracing::error!(error = %format!("{error:#}"), "D3D11 swap-chain recovery failed");
+        return Err(error.context("could not recreate the native video swap chain after device removal"));
+    }
+
+    THREAD_RENDERER.with(|renderer| {
+        *renderer.borrow_mut() = Some(replacement);
+    });
+    Ok(())
+}
+
+/// Upload an NV12 frame to the GPUI thread's D3D11 Y/UV textures.
 /// The caller must run on the thread that initialized the native renderer.
 pub(crate) fn upload_nv12_frame(
     width: u32,
