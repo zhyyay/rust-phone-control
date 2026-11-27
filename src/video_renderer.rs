@@ -1114,7 +1114,9 @@ float4 PSMain(VertexOutput input) : SV_Target {
     /// Compile a limited-range BT.601 NV12 conversion shader.
     fn ensure_nv12_pixel_shader(&mut self, width: u32, height: u32) -> anyhow::Result<()> {
         // Prefer SPS VUI colorimetry; retain resolution heuristic only when the stream omits it.
-        let use_bt709 = self.nv12_color_matrix_override.unwrap_or(width >= 1280 || height >= 720);
+        let use_bt709 = self
+            .nv12_color_matrix_override
+            .unwrap_or(width >= 1280 || height >= 720);
         if self.nv12_pixel_shader.is_some() && self.nv12_shader_uses_bt709 == Some(use_bt709) {
             return Ok(());
         }
