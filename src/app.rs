@@ -42,6 +42,52 @@ struct PreviewSurfaceBounds {
     height: i32,
 }
 
+/// A completed CPU fallback may be shown only while its frame is still the
+/// newest observed frame and its stream generation remains active.
+fn fallback_result_is_eligible(
+    mailbox_cleared: bool,
+    newer_frame_pending: bool,
+    sequence: u64,
+    latest_observed_sequence: u64,
+    generation_current: bool,
+) -> bool {
+    !mailbox_cleared
+        && !newer_frame_pending
+        && sequence >= latest_observed_sequence
+        && generation_current
+}
+
+#[cfg(test)]
+mod fallback_result_tests {
+    use super::fallback_result_is_eligible;
+
+    #[test]
+    fn accepts_current_or_equal_sequence_when_stream_is_active() {
+        assert!(fallback_result_is_eligible(false, false, 42, 42, true));
+        assert!(fallback_result_is_eligible(false, false, 43, 42, true));
+    }
+
+    #[test]
+    fn rejects_result_after_mailbox_clear() {
+        assert!(!fallback_result_is_eligible(true, false, 42, 42, true));
+    }
+
+    #[test]
+    fn rejects_result_when_a_newer_frame_is_waiting() {
+        assert!(!fallback_result_is_eligible(false, true, 42, 42, true));
+    }
+
+    #[test]
+    fn rejects_older_sequence() {
+        assert!(!fallback_result_is_eligible(false, false, 41, 42, true));
+    }
+
+    #[test]
+    fn rejects_result_from_inactive_stream_generation() {
+        assert!(!fallback_result_is_eligible(false, false, 42, 42, false));
+    }
+}
+
 #[derive(Default)]
 pub struct PhoneControlApp {
     airplay_status: String,
@@ -320,14 +366,14 @@ impl Render for PhoneControlApp {
                     };
                     let completed_fallback = completed_fallback.filter(
                         |(sequence, generation, _, _, _, _)| {
-                            // A result removed from the worker slot before the
-                            // UI update must not resurrect the previous session's
-                            // bitmap after this tick observes a mailbox clear.
-                            !mailbox_cleared
-                                && !newer_frame_pending
-                                && *sequence >= latest_observed_frame_sequence
-                                && crate::airplay::is_video_frame_generation_current(*generation)
-                                    .unwrap_or(false)
+                            fallback_result_is_eligible(
+                                mailbox_cleared,
+                                newer_frame_pending,
+                                *sequence,
+                                latest_observed_frame_sequence,
+                                crate::airplay::is_video_frame_generation_current(*generation)
+                                    .unwrap_or(false),
+                            )
                         },
                     );
 
