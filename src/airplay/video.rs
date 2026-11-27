@@ -2482,6 +2482,37 @@ mod tests {
     }
 
     #[test]
+    fn clear_invalidates_consumed_snapshot_and_next_frame_uses_new_generation() {
+        let mailbox = LatestFrameMailbox::new();
+        let first_sequence = mailbox.publish(BgraFrame {
+            width: 1,
+            height: 1,
+            stride: 4,
+            data: vec![1; 4],
+        }).unwrap();
+        let stale_snapshot = mailbox.take_latest().unwrap().unwrap();
+        assert_eq!(stale_snapshot.sequence, first_sequence);
+        assert!(mailbox.is_generation_current(stale_snapshot.generation));
+
+        mailbox.clear().unwrap();
+
+        assert!(!mailbox.is_generation_current(stale_snapshot.generation));
+        let next_sequence = mailbox.publish(BgraFrame {
+            width: 1,
+            height: 1,
+            stride: 4,
+            data: vec![2; 4],
+        }).unwrap();
+        let current_snapshot = mailbox.take_latest().unwrap().unwrap();
+
+        assert!(next_sequence > first_sequence);
+        assert_eq!(current_snapshot.sequence, next_sequence);
+        assert_ne!(current_snapshot.generation, stale_snapshot.generation);
+        assert!(mailbox.is_generation_current(current_snapshot.generation));
+        assert!(!mailbox.is_generation_current(stale_snapshot.generation));
+    }
+
+    #[test]
     fn normalizes_bottom_up_nv12_y_and_uv_planes_independently() {
         let mut data = vec![
             1, 2, 3, 4, 5, 6, 7, 8, // Four Y rows.
