@@ -165,8 +165,15 @@ impl Render for PhoneControlApp {
                 let fallback_conversion_in_flight = Arc::new(AtomicBool::new(false));
                 // A single replaceable slot keeps only the newest frame that arrived
                 // while the fallback worker was busy; it never builds an unbounded queue.
-                let fallback_pending_frame: Arc<Mutex<Option<(u64, u64, u32, u32, Arc<crate::airplay::DecodedVideoFrame>)>>> =
-                    Arc::new(Mutex::new(None));
+                let fallback_pending_frame: Arc<
+                    crate::airplay::LatestPendingSlot<(
+                        u64,
+                        u64,
+                        u32,
+                        u32,
+                        Arc<crate::airplay::DecodedVideoFrame>,
+                    )>,
+                > = Arc::new(crate::airplay::LatestPendingSlot::default());
                 let worker_cancel = fallback_worker_cancel;
                 let fallback_conversion_result: Arc<
                     Mutex<Option<(u64, u64, u32, u32, Result<Vec<u8>, &'static str>, Duration)>>,
@@ -378,9 +385,7 @@ impl Render for PhoneControlApp {
                             if let Some(cancel) = fallback_conversion_cancel.take() {
                                 cancel.store(true, Ordering::Release);
                             }
-                            if let Ok(mut pending) = fallback_pending_frame.lock() {
-                                *pending = None;
-                            }
+                            fallback_pending_frame.clear();
                             if let Ok(mut result) = fallback_conversion_result.lock() {
                                 *result = None;
                             }
@@ -530,9 +535,7 @@ impl Render for PhoneControlApp {
                                         if let Some(cancel) = fallback_conversion_cancel.take() {
                                             cancel.store(true, Ordering::Release);
                                         }
-                                        if let Ok(mut pending) = fallback_pending_frame.lock() {
-                                            *pending = None;
-                                        }
+                                        fallback_pending_frame.clear();
                                         if let Ok(mut result) = fallback_conversion_result.lock() {
                                             *result = None;
                                         }
@@ -580,22 +583,12 @@ impl Render for PhoneControlApp {
                                             frame.clone(),
                                         );
                                         let pending_slot = fallback_pending_frame.clone();
-                                        let should_spawn = if let Ok(mut pending) = pending_slot.lock() {
-                                            if fallback_conversion_in_flight.swap(true, Ordering::AcqRel) {
-                                                // Replace, rather than queue, so conversion catches up
-                                                // to the newest decoded frame after the current one.
-                                                *pending = Some(pending_frame.clone());
-                                                false
-                                            } else {
-                                                // A worker may have exited after cancellation with
-                                                // a queued frame left behind. Never let that older
-                                                // frame run after this newly submitted frame.
-                                                *pending = None;
-                                                true
-                                            }
-                                        } else {
-                                            false
-                                        };
+                                        // Coalesce to one pending item. The slot and in-flight
+                                        // flag are coordinated under one lock to avoid lost wakeups.
+                                        let should_spawn = pending_slot.submit(
+                                            pending_frame.clone(),
+                                            &fallback_conversion_in_flight,
+                                        );
                                         if should_spawn {
                                             let result_slot = fallback_conversion_result.clone();
                                             let in_flight = fallback_conversion_in_flight.clone();
@@ -613,9 +606,7 @@ impl Render for PhoneControlApp {
                                                         if cancel.load(Ordering::Acquire)
                                                             || conversion_cancel.load(Ordering::Acquire)
                                                         {
-                                                            if let Ok(mut pending) = pending_slot.lock() {
-                                                                *pending = None;
-                                                            }
+                                                            pending_slot.clear();
                                                             break;
                                                         }
                                                         let started = Instant::now();
@@ -643,23 +634,20 @@ impl Render for PhoneControlApp {
                                                         // in-flight flag. A producer either replaces the
                                                         // pending frame before this check, or observes
                                                         // false afterwards and starts a fresh worker.
-                                                        let Ok(mut pending) = pending_slot.lock() else {
-                                                            break;
-                                                        };
-                                                        if let Some(next) = pending.take() {
+                                                        if let Some(next) = pending_slot.take() {
                                                             current = Some(next);
-                                                            drop(pending);
                                                             continue;
                                                         }
+                                                        // Release worker ownership while no pending
+                                                        // item exists; submit() uses the same slot
+                                                        // lock, so a producer either wins before this
+                                                        // check or starts a new worker afterwards.
                                                         drop(_in_flight_guard);
-                                                        drop(pending);
                                                         return;
                                                     }
                                                 });
                                             if let Err(error) = spawn {
-                                                if let Ok(mut pending) = fallback_pending_frame.lock() {
-                                                    *pending = None;
-                                                }
+                                                fallback_pending_frame.clear();
                                                 fallback_conversion_in_flight.store(false, Ordering::Release);
                                                 tracing::warn!(
                                                     %error,
