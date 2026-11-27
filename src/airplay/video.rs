@@ -1684,6 +1684,17 @@ mod tests {
         ];
         assert!(access_unit_contains_h264_idr(&mixed_access_unit));
 
+        // A typical recovery access unit may carry SPS/PPS before its IDR.
+        let parameter_sets_and_idr = [
+            0, 0, 0, 1, 0x67, 0x64, 0, 0x1f, 0, 0, 1, 0x68, 0xee, 0x3c,
+            0, 0, 0, 1, 0x65, 0x88,
+        ];
+        assert!(access_unit_contains_h264_idr(&parameter_sets_and_idr));
+
+        // A truncated start code / empty NAL must not open the recovery gate.
+        let empty_nal = [0, 0, 0, 1];
+        assert!(!access_unit_contains_h264_idr(&empty_nal));
+
         let malformed_header = [0, 0, 0, 1, 0xe5, 0x88];
         assert!(!access_unit_contains_h264_idr(&malformed_header));
     }
