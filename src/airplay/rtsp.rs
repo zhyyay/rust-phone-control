@@ -942,6 +942,7 @@ fn process_media_packets(
                                     Ok(()) => {
                                         idr_recovery_gate.begin_wait();
                                         idr_wait_started_at = Some(Instant::now());
+                                        first_frame_wait_started_at = None;
                                         last_idr_wait_warning = None;
                                         tracing::warn!(
                                         %packet.peer_addr,
@@ -956,6 +957,7 @@ fn process_media_packets(
                                         // a fresh IDR before submitting any delta access units.
                                         idr_recovery_gate.begin_wait();
                                         idr_wait_started_at = Some(Instant::now());
+                                        first_frame_wait_started_at = None;
                                         last_idr_wait_warning = None;
                                         // Do not keep submitting packets to a decoder whose
                                         // recovery failed. Dropping it lets a later duplicate
