@@ -879,6 +879,10 @@ fn process_media_packets(
                                         )
                                     }
                                     Err(recovery_error) => {
+                                        // Do not keep submitting packets to a decoder whose
+                                        // recovery failed. Dropping it lets a later duplicate
+                                        // avcC configuration consume the one bounded retry.
+                                        frame_pipeline = None;
                                         if let Err(clear_error) = frames.clear() {
                                             tracing::warn!(%clear_error, "Could not clear preview after decoder failure");
                                         }
