@@ -32,6 +32,33 @@ impl Drop for FallbackConversionInFlightGuard {
     }
 }
 
+#[cfg(all(test, windows))]
+mod fallback_worker_guard_tests {
+    use super::FallbackConversionInFlightGuard;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+
+    #[test]
+    fn dropping_worker_guard_releases_in_flight_ownership() {
+        let in_flight = Arc::new(AtomicBool::new(true));
+
+        drop(FallbackConversionInFlightGuard(Some(in_flight.clone())));
+
+        assert!(!in_flight.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn disarmed_worker_guard_does_not_release_already_transferred_ownership() {
+        let in_flight = Arc::new(AtomicBool::new(true));
+
+        FallbackConversionInFlightGuard(Some(in_flight.clone())).disarm();
+
+        assert!(in_flight.load(Ordering::Acquire));
+    }
+}
+
 #[cfg(windows)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct PreviewSurfaceBounds {
