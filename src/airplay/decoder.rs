@@ -1042,6 +1042,7 @@ pub struct H264FramePipeline<'runtime> {
     parameter_sets: Vec<u8>,
     recovery: DecoderRecoveryPolicy,
     frames: std::sync::Arc<crate::airplay::video::LatestFrameMailbox>,
+    running: std::sync::Arc<std::sync::atomic::AtomicBool>,
     color_matrix: crate::airplay::video::AvcColorMatrix,
 }
 
@@ -1053,6 +1054,7 @@ impl<'runtime> H264FramePipeline<'runtime> {
         width: u32,
         height: u32,
         frames: std::sync::Arc<crate::airplay::video::LatestFrameMailbox>,
+        running: std::sync::Arc<std::sync::atomic::AtomicBool>,
     ) -> Result<Self, MediaFoundationError> {
         let decoder = H264Decoder::new(runtime, width, height)?;
         Ok(Self {
@@ -1060,6 +1062,7 @@ impl<'runtime> H264FramePipeline<'runtime> {
             parameter_sets: Vec::new(),
             recovery: DecoderRecoveryPolicy::default(),
             frames,
+            running,
             color_matrix: crate::airplay::video::AvcColorMatrix::Unspecified,
         })
     }
@@ -1069,12 +1072,13 @@ impl<'runtime> H264FramePipeline<'runtime> {
         runtime: &'runtime MediaFoundationRuntime,
         configuration: &crate::airplay::video::AvcConfiguration,
         frames: std::sync::Arc<crate::airplay::video::LatestFrameMailbox>,
+        running: std::sync::Arc<std::sync::atomic::AtomicBool>,
     ) -> Result<Self, MediaFoundationError> {
         let dimensions = configuration
             .video_dimensions()
             .map_err(MediaFoundationError::InvalidAvcConfiguration)?
             .ok_or(MediaFoundationError::MissingSps)?;
-        let mut pipeline = Self::new(runtime, dimensions.width, dimensions.height, frames)?;
+        let mut pipeline = Self::new(runtime, dimensions.width, dimensions.height, frames, running)?;
         pipeline.color_matrix = configuration
             .video_color_matrix()
             .map_err(MediaFoundationError::InvalidAvcConfiguration)?
@@ -1105,21 +1109,27 @@ impl<'runtime> H264FramePipeline<'runtime> {
             return Err(MediaFoundationError::InputTooLarge);
         }
 
+        let frames = std::sync::Arc::clone(&self.frames);
+        let running = std::sync::Arc::clone(&self.running);
+        let color_matrix = self.color_matrix;
         let published = self
             .decoder
             .submit_access_unit_and_drain_with(access_unit, |frame| {
-                self.frames
-                    .publish_nv12(crate::airplay::video::OwnedNv12Frame {
-                        width: frame.width,
-                        height: frame.height,
-                        // Media Foundation exposes one default stride for both NV12
-                        // planes; keep the mailbox representation plane-specific
-                        // for decoder backends that can provide distinct pitches.
-                        y_stride: frame.stride,
-                        uv_stride: frame.stride,
-                        color_matrix: self.color_matrix,
-                        data: frame.data,
-                    })
+                frames
+                    .publish_nv12_if_running(
+                        crate::airplay::video::OwnedNv12Frame {
+                            width: frame.width,
+                            height: frame.height,
+                            // Media Foundation exposes one default stride for both NV12
+                            // planes; keep the mailbox representation plane-specific
+                            // for decoder backends that can provide distinct pitches.
+                            y_stride: frame.stride,
+                            uv_stride: frame.stride,
+                            color_matrix,
+                            data: frame.data,
+                        },
+                        &running,
+                    )
                     .map(|_| ())
                     .map_err(MediaFoundationError::FrameMailbox)
             })?;
