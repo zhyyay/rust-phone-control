@@ -2263,21 +2263,24 @@ mod tests {
 
         // Repeated identical avcC packets are bounded retries for the same
         // failed decoder configuration, not fresh initialization budgets.
-        for expected_attempts in [2, 2] {
-            let previous = processor.configuration().cloned();
-            assert!(matches!(
-                processor.process_packet(ScreenMirrorPacketType::CodecConfiguration, &first_avcc),
-                MirrorPacketOutcome::CodecConfigurationUpdated { .. }
-            ));
-            assert_eq!(previous.as_ref(), processor.configuration());
-            if initialization.begin_attempt() {
-                assert_eq!(initialization.attempts(), expected_attempts);
-            } else {
-                assert_eq!(initialization.attempts(), expected_attempts);
-            }
-        }
+        let previous = processor.configuration().cloned();
+        assert!(matches!(
+            processor.process_packet(ScreenMirrorPacketType::CodecConfiguration, &first_avcc),
+            MirrorPacketOutcome::CodecConfigurationUpdated { .. }
+        ));
+        assert_eq!(previous.as_ref(), processor.configuration());
+        assert!(initialization.begin_attempt());
         assert_eq!(initialization.attempts(), 2);
+
+        // Further duplicates cannot reopen the exhausted retry budget.
+        let previous = processor.configuration().cloned();
+        assert!(matches!(
+            processor.process_packet(ScreenMirrorPacketType::CodecConfiguration, &first_avcc),
+            MirrorPacketOutcome::CodecConfigurationUpdated { .. }
+        ));
+        assert_eq!(previous.as_ref(), processor.configuration());
         assert!(!initialization.begin_attempt());
+        assert_eq!(initialization.attempts(), 2);
         assert!(recovery.is_waiting());
         assert!(!recovery.should_submit(false));
 
