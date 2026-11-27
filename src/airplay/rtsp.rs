@@ -545,6 +545,12 @@ fn process_media_packets(
                 if let Err(error) = frames.clear() {
                     tracing::warn!(%error, "Could not clear preview after mirror TCP disconnect");
                 }
+                // A TCP reconnect invalidates the decoder's reference-picture
+                // state regardless of whether rebuilding the existing MFT succeeds.
+                // Keep the IDR gate active while recovery is attempted.
+                awaiting_idr = true;
+                idr_wait_started_at = Some(Instant::now());
+                last_idr_wait_warning = None;
                 if let (Some(pipeline), Some(configuration)) =
                     (frame_pipeline.as_mut(), processor.configuration())
                 {
@@ -555,10 +561,6 @@ fn process_media_packets(
                             {
                                 tracing::warn!(%error, "Could not rebuild decoder after mirror TCP reconnect");
                                 frame_pipeline = None;
-                            } else {
-                                awaiting_idr = true;
-                                idr_wait_started_at = Some(Instant::now());
-                                last_idr_wait_warning = None;
                             }
                         }
                         Ok(None) => {
