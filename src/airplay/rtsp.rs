@@ -2597,27 +2597,15 @@ mod tests {
             );
         }
 
-        fn wait_for_clear_events(
-            frames: &LatestFrameMailbox,
-            expected: u64,
-            description: &str,
-        ) {
+        fn wait_for_clear_events(frames: &LatestFrameMailbox, expected: u64, description: &str) {
             let deadline = Instant::now() + Duration::from_secs(2);
-            while frames
-                .stats()
-                .expect("read mailbox stats")
-                .clear_events
-                < expected
+            while frames.stats().expect("read mailbox stats").clear_events < expected
                 && Instant::now() < deadline
             {
                 std::thread::sleep(Duration::from_millis(5));
             }
             assert!(
-                frames
-                    .stats()
-                    .expect("read mailbox stats")
-                    .clear_events
-                    >= expected,
+                frames.stats().expect("read mailbox stats").clear_events >= expected,
                 "timed out waiting for {description}"
             );
         }
