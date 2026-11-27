@@ -48,6 +48,14 @@ const IDR_WAIT_WARNING_INTERVAL: Duration = Duration::from_secs(10);
 // after this interval; recovery remains bounded by DecoderRecoveryPolicy.
 const IDR_FIRST_FRAME_TIMEOUT: Duration = Duration::from_secs(15);
 
+/// Keep the timeout decision deterministic and safe when a timer is absent
+/// or an unexpected future instant is supplied.
+fn first_frame_wait_timed_out(started_at: Option<Instant>, now: Instant) -> bool {
+    started_at
+        .and_then(|started_at| now.checked_duration_since(started_at))
+        .is_some_and(|elapsed| elapsed >= IDR_FIRST_FRAME_TIMEOUT)
+}
+
 #[cfg(windows)]
 static ACTIVE_RTSP_SESSIONS: std::sync::atomic::AtomicUsize =
     std::sync::atomic::AtomicUsize::new(0);
@@ -758,9 +766,7 @@ fn process_media_packets(
                 video_payload_bytes = video_payload_bytes.saturating_add(packet_payload_bytes);
                 if let Some(cipher) = mirror_cipher.as_mut() {
                     let first_frame_timed_out = idr_recovery_gate.is_awaiting_first_frame()
-                        && first_frame_wait_started_at
-                            .map(|started_at| started_at.elapsed() >= IDR_FIRST_FRAME_TIMEOUT)
-                            .unwrap_or(false);
+                        && first_frame_wait_timed_out(first_frame_wait_started_at, Instant::now());
                     if first_frame_timed_out {
                         // The decoder accepted an IDR but failed to publish any output.
                         // Rebuild with the existing bounded retry budget, then require a
@@ -2415,6 +2421,30 @@ fn txt_airplay_dictionary() -> Dictionary {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn first_frame_timeout_requires_a_valid_elapsed_interval() {
+        use std::time::{Duration, Instant};
+
+        let now = Instant::now();
+        assert!(!super::first_frame_wait_timed_out(None, now));
+        assert!(!super::first_frame_wait_timed_out(
+            Some(now + Duration::from_secs(1)),
+            now
+        ));
+        assert!(!super::first_frame_wait_timed_out(
+            Some(now - Duration::from_secs(14)),
+            now
+        ));
+        assert!(super::first_frame_wait_timed_out(
+            Some(now - Duration::from_secs(15)),
+            now
+        ));
+        assert!(super::first_frame_wait_timed_out(
+            Some(now - Duration::from_secs(30)),
+            now
+        ));
+    }
+
     use super::MediaWorkerMessage;
     use super::SrpServer;
     use super::Zeroizing;
