@@ -1669,6 +1669,26 @@ mod tests {
     }
 
     #[test]
+    fn h264_idr_gate_detects_idr_across_annex_b_prefixes_and_mixed_access_units() {
+        let idr_with_four_byte_prefix = [0, 0, 0, 1, 0x65, 0x88];
+        assert!(access_unit_contains_h264_idr(&idr_with_four_byte_prefix));
+
+        let idr_with_three_byte_prefix = [0, 0, 1, 0x65, 0x88];
+        assert!(access_unit_contains_h264_idr(&idr_with_three_byte_prefix));
+
+        let delta_only = [0, 0, 0, 1, 0x41, 0x9a, 0x22];
+        assert!(!access_unit_contains_h264_idr(&delta_only));
+
+        let mixed_access_unit = [
+            0, 0, 1, 0x41, 0x9a, 0x22, 0, 0, 0, 1, 0x65, 0x88,
+        ];
+        assert!(access_unit_contains_h264_idr(&mixed_access_unit));
+
+        let malformed_header = [0, 0, 0, 1, 0xe5, 0x88];
+        assert!(!access_unit_contains_h264_idr(&malformed_header));
+    }
+
+    #[test]
     fn annex_b_split_excludes_trailing_zero_bytes_from_each_nal() {
         let data = [0, 0, 0, 1, 0x67, 0x64, 0, 0, 0, 1, 0x68, 0xee, 0, 0];
         let units = split_annex_b(&data);
