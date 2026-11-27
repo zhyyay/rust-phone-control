@@ -1696,17 +1696,15 @@ mod viewport_tests {
             let viewport =
                 fit_video_viewport(surface_width, surface_height, frame_width, frame_height)
                     .unwrap();
-            assert!(viewport.iter().all(|value| value.is_finite() && *value >= 0.0));
+            assert!(
+                viewport
+                    .iter()
+                    .all(|value| value.is_finite() && *value >= 0.0)
+            );
             assert!(viewport[0] + viewport[2] <= surface_width as f32 + 0.01);
             assert!(viewport[1] + viewport[3] <= surface_height as f32 + 0.01);
-            assert_close(
-                viewport[0] * 2.0 + viewport[2],
-                surface_width as f32,
-            );
-            assert_close(
-                viewport[1] * 2.0 + viewport[3],
-                surface_height as f32,
-            );
+            assert_close(viewport[0] * 2.0 + viewport[2], surface_width as f32);
+            assert_close(viewport[1] * 2.0 + viewport[3], surface_height as f32);
         }
     }
 }
