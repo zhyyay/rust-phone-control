@@ -151,9 +151,10 @@ impl MediaSession {
         let worker_disconnected_clients = Arc::clone(&disconnected_clients);
         let (sender, packets) = mpsc::sync_channel(MEDIA_PACKET_QUEUE_CAPACITY);
 
+        let processing_running = Arc::clone(&running);
         let worker = thread::Builder::new()
             .name("airplay-media-process".to_owned())
-            .spawn(move || process_media_packets(packets, stream_context))?;
+            .spawn(move || process_media_packets(packets, stream_context, processing_running))?;
         let accept_worker = match thread::Builder::new()
             .name("airplay-mirror-tcp".to_owned())
             .spawn(move || {
@@ -527,6 +528,7 @@ fn recover_stalled_decoder(
 fn process_media_packets(
     packets: Receiver<MediaWorkerMessage>,
     stream_context: MirrorStreamContext,
+    running: Arc<std::sync::atomic::AtomicBool>,
 ) {
     let stream_connection_id = stream_context.connection_id;
     tracing::info!(
@@ -599,6 +601,11 @@ fn process_media_packets(
     let mut decoder_init_policy = super::video::DecoderInitializationPolicy::default();
     let mut processor = super::video::MirrorStreamProcessor::new();
     loop {
+        // Stop promptly instead of draining stale encrypted packets during
+        // teardown. Decoder/MFT resources still drop on this owning worker.
+        if !running.load(std::sync::atomic::Ordering::Acquire) {
+            break;
+        }
         let message = match packets.recv_timeout(Duration::from_millis(250)) {
             Ok(message) => message,
             Err(mpsc::RecvTimeoutError::Timeout) => {
@@ -616,6 +623,10 @@ fn process_media_packets(
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         };
+        // Shutdown may race with recv_timeout returning a queued packet.
+        if !running.load(std::sync::atomic::Ordering::Acquire) {
+            break;
+        }
         let mut packet = match message {
             MediaWorkerMessage::Packet(packet) => packet,
             MediaWorkerMessage::StreamDisconnected => {
