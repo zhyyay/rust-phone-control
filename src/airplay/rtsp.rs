@@ -482,6 +482,26 @@ fn read_exact_while_running<R: Read>(
     Ok(offset == buffer.len())
 }
 
+/// Reset per-connection decoder presentation state at a mirror TCP boundary.
+/// Negotiated stream crypto and AVC configuration remain owned by the RTSP
+/// media session; decoder references and any UI-visible frame do not.
+fn reset_after_mirror_disconnect(
+    frames: &super::video::LatestFrameMailbox,
+    idr_recovery_gate: &mut super::video::IdrRecoveryGate,
+    idr_wait_started_at: &mut Option<Instant>,
+    first_frame_wait_started_at: &mut Option<Instant>,
+    last_idr_wait_warning: &mut Option<Instant>,
+    now: Instant,
+) {
+    if let Err(error) = frames.clear() {
+        tracing::warn!(%error, "Could not clear preview after mirror TCP disconnect");
+    }
+    idr_recovery_gate.begin_wait();
+    *idr_wait_started_at = Some(now);
+    *first_frame_wait_started_at = None;
+    *last_idr_wait_warning = None;
+}
+
 fn recover_stalled_decoder(
     idr_recovery_gate: &mut super::video::IdrRecoveryGate,
     idr_wait_started_at: &mut Option<Instant>,
@@ -639,18 +659,16 @@ fn process_media_packets(
             MediaWorkerMessage::Packet(packet) => packet,
             MediaWorkerMessage::StreamDisconnected => {
                 // Keep the negotiated cipher/configuration continuous across a
-                // TCP reconnect, but never leave the previous peer's frame on
-                // screen. Rebuild decoder references and wait for a fresh IDR.
-                if let Err(error) = frames.clear() {
-                    tracing::warn!(%error, "Could not clear preview after mirror TCP disconnect");
-                }
-                // A TCP reconnect invalidates the decoder's reference-picture
-                // state regardless of whether rebuilding the existing MFT succeeds.
-                // Keep the IDR gate active while recovery is attempted.
-                idr_recovery_gate.begin_wait();
-                idr_wait_started_at = Some(Instant::now());
-                first_frame_wait_started_at = None;
-                last_idr_wait_warning = None;
+                // TCP reconnect, but invalidate decoder references and all
+                // presentation state from the previous TCP peer.
+                reset_after_mirror_disconnect(
+                    &frames,
+                    &mut idr_recovery_gate,
+                    &mut idr_wait_started_at,
+                    &mut first_frame_wait_started_at,
+                    &mut last_idr_wait_warning,
+                    Instant::now(),
+                );
                 if let (Some(pipeline), Some(configuration)) =
                     (frame_pipeline.as_mut(), processor.configuration())
                 {
@@ -675,11 +693,6 @@ fn process_media_packets(
                             tracing::warn!(%error, "Cannot resume mirror preview after reconnect with invalid SPS");
                         }
                     }
-                } else {
-                    idr_recovery_gate.begin_wait();
-                    idr_wait_started_at = Some(Instant::now());
-                    first_frame_wait_started_at = None;
-                    last_idr_wait_warning = None;
                 }
                 tracing::info!(
                     "AirPlay mirror TCP connection ended; preview cleared and decoder awaiting a fresh IDR"
@@ -2471,6 +2484,50 @@ fn txt_airplay_dictionary() -> Dictionary {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn mirror_disconnect_invalidates_frames_and_rearms_idr_wait_state() {
+        use std::time::{Duration, Instant};
+
+        let frames = crate::airplay::video::LatestFrameMailbox::new();
+        frames
+            .publish(crate::airplay::video::BgraFrame {
+                width: 1,
+                height: 1,
+                stride: 4,
+                data: vec![1, 2, 3, 255],
+            })
+            .expect("publish pre-disconnect frame");
+        let stale = frames
+            .take_latest()
+            .expect("take pre-disconnect frame")
+            .expect("frame exists");
+        let mut gate = crate::airplay::video::IdrRecoveryGate::default();
+        gate.record_idr_submitted();
+        let mut idr_wait_started_at = None;
+        let mut first_frame_wait_started_at = Some(Instant::now());
+        let mut last_idr_wait_warning = Some(Instant::now());
+        let disconnected_at = Instant::now() + Duration::from_millis(1);
+
+        super::reset_after_mirror_disconnect(
+            &frames,
+            &mut gate,
+            &mut idr_wait_started_at,
+            &mut first_frame_wait_started_at,
+            &mut last_idr_wait_warning,
+            disconnected_at,
+        );
+
+        assert!(!frames.is_generation_current(stale.generation));
+        assert!(frames.take_latest().expect("mailbox healthy").is_none());
+        assert!(gate.is_waiting());
+        assert!(!gate.is_awaiting_first_frame());
+        assert_eq!(idr_wait_started_at, Some(disconnected_at));
+        assert!(first_frame_wait_started_at.is_none());
+        assert!(last_idr_wait_warning.is_none());
+        assert!(!gate.should_submit(false));
+        assert!(gate.should_submit(true));
+    }
+
     #[test]
     fn first_frame_timeout_requires_a_valid_elapsed_interval() {
         use std::time::{Duration, Instant};
