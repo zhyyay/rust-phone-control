@@ -112,7 +112,19 @@ impl BleInputController {
 
     /// Sends relative pointer movement. Large movements are split into signed 8-bit reports.
     pub async fn move_mouse(&self, dx: i32, dy: i32) -> Result<()> {
-        self.dispatch(InputEvent::PointerMove { dx, dy }).await
+        let (mut remaining_x, mut remaining_y) = (dx, dy);
+        while remaining_x != 0 || remaining_y != 0 {
+            let step_x = remaining_x.clamp(i16::MIN as i32, i16::MAX as i32) as i16;
+            let step_y = remaining_y.clamp(i16::MIN as i32, i16::MAX as i32) as i16;
+            self.dispatch(InputEvent::PointerMove {
+                dx: step_x,
+                dy: step_y,
+            })
+            .await?;
+            remaining_x -= step_x as i32;
+            remaining_y -= step_y as i32;
+        }
+        Ok(())
     }
 
     /// Clicks one mouse button while preserving any buttons already held.
@@ -134,7 +146,13 @@ impl BleInputController {
 
     /// Sends vertical wheel movement, splitting values larger than one HID report.
     pub async fn scroll(&self, amount: i32) -> Result<()> {
-        self.dispatch(InputEvent::Scroll { vertical: amount }).await
+        let mut remaining = amount;
+        while remaining != 0 {
+            let step = remaining.clamp(i16::MIN as i32, i16::MAX as i32) as i16;
+            self.dispatch(InputEvent::Scroll { vertical: step }).await?;
+            remaining -= step as i32;
+        }
+        Ok(())
     }
 
     /// Taps a USB HID keyboard usage while preserving modifiers already held.
