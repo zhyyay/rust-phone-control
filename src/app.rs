@@ -1,5 +1,6 @@
 use gpui_kit::component::{
     button::{Button, ButtonVariants},
+    input::{Input, InputState},
     label::Label,
 };
 use gpui_kit::*;
@@ -132,6 +133,8 @@ pub struct PhoneControlApp {
     preview_status: String,
     pipeline_status: String,
     d3d11_metrics_label: String,
+    /// Persistent GPUI text field used to send ASCII keyboard input over BLE HID.
+    keyboard_input: Option<Entity<InputState>>,
     /// Latest measured preview rectangle, shared with the future native-surface host.
     #[cfg(windows)]
     preview_surface_bounds: Arc<Mutex<Option<PreviewSurfaceBounds>>>,
@@ -143,6 +146,17 @@ pub struct PhoneControlApp {
     fallback_worker_cancel: Arc<AtomicBool>,
     #[cfg(windows)]
     quit_subscription: Option<Subscription>,
+}
+
+impl PhoneControlApp {
+    /// Creates the application view with its persistent keyboard input state.
+    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let mut app = Self::default();
+        app.keyboard_input = Some(cx.new(|cx| {
+            InputState::new(window, cx).placeholder("输入 ASCII 文本，按发送传到 iPhone")
+        }));
+        app
+    }
 }
 
 impl Drop for PhoneControlApp {
@@ -861,7 +875,7 @@ fn render_workspace(app: &PhoneControlApp, cx: &Context<PhoneControlApp>) -> imp
                 .gap_2()
                 .child(render_left_sidebar(app, cx))
                 .child(render_preview_column(app, cx))
-                .child(render_right_controls(cx)),
+                .child(render_right_controls(self, cx)),
         )
 }
 
@@ -1082,7 +1096,7 @@ fn render_preview_column(app: &PhoneControlApp, cx: &Context<PhoneControlApp>) -
         }))
 }
 
-fn render_right_controls(cx: &Context<PhoneControlApp>) -> impl IntoElement {
+fn render_right_controls(app: &PhoneControlApp, cx: &Context<PhoneControlApp>) -> impl IntoElement {
     div()
         .flex()
         .flex_col()
@@ -1149,12 +1163,25 @@ fn render_right_controls(cx: &Context<PhoneControlApp>) -> impl IntoElement {
                 .bg(gpui_kit::rgb(0xF6F7FB))
                 .border_1()
                 .border_color(gpui_kit::rgb(0xE5E8F0))
-                .child(Label::new("输入文字并发送到手机…"))
+                .child(if let Some(input) = app.keyboard_input.as_ref() {
+                    Input::new(input).w_full()
+                } else {
+                    div().child(Label::new("键盘输入未初始化"))
+                })
                 .child(
-                    Button::new("keyboard-send-sample")
+                    Button::new("keyboard-send-text")
                         .primary()
-                        .label("发送测试文字")
-                        .on_click(|_, _, _| type_sample_ble()),
+                        .label("发送到手机")
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            let Some(input) = this.keyboard_input.as_ref() else {
+                                return;
+                            };
+                            let text = input.read(cx).value().to_string();
+                            if text.is_empty() || !send_text_ble(text) {
+                                return;
+                            }
+                            input.update(cx, |state, cx| state.set_value("", window, cx));
+                        })),
                 ),
         )
         .child(Label::new("文件传输"))
@@ -1538,6 +1565,23 @@ fn scroll_ble(amount: i32) {
 }
 #[cfg(not(windows))]
 fn scroll_ble(_: i32) {}
+
+#[cfg(windows)]
+fn send_text_ble(text: String) -> bool {
+    match rust_phone_control::input::ble::desktop::type_text(text) {
+        Ok(()) => true,
+        Err(error) => {
+            tracing::error!(error = %format!("{error:#}"), "Could not queue BLE keyboard text");
+            false
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn send_text_ble(_: String) -> bool {
+    tracing::warn!("BLE keyboard input is only available on Windows");
+    false
+}
 
 #[cfg(windows)]
 fn type_sample_ble() {
