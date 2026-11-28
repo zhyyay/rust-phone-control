@@ -47,8 +47,9 @@ use windows_062::Win32::{
             CallWindowProcW, CreateWindowExW, DefWindowProcW, DestroyWindow, GWLP_WNDPROC, SW_HIDE,
             SW_SHOW, SWP_NOACTIVATE, SWP_NOOWNERZORDER, SWP_NOREDRAW, SWP_NOZORDER,
             SetWindowLongPtrW, SetWindowPos, ShowWindow, WINDOW_EX_STYLE, WM_CAPTURECHANGED,
-            WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEMOVE,
-            WM_MOUSEWHEEL, WM_NCDESTROY, WM_RBUTTONDBLCLK, WM_RBUTTONDOWN, WM_RBUTTONUP, WNDPROC,
+            WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDBLCLK, WM_MBUTTONDOWN,
+            WM_MBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCDESTROY,
+            WM_RBUTTONDBLCLK, WM_RBUTTONDOWN, WM_RBUTTONUP, WNDPROC,
             WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS,
         },
     },
@@ -93,6 +94,7 @@ fn mouse_buttons_match_wparam(held: crate::input::MouseButtons, flags: u32) -> b
     held != MouseButtons::NONE
         && (!held.contains(MouseButtons::LEFT) || flags & 0x0001 != 0)
         && (!held.contains(MouseButtons::RIGHT) || flags & 0x0002 != 0)
+        && (!held.contains(MouseButtons::MIDDLE) || flags & 0x0010 != 0)
 }
 
 fn recovery_cooldown_active(now: Instant, retry_after: Option<Instant>) -> bool {
@@ -194,11 +196,16 @@ unsafe extern "system" fn native_preview_wndproc(
     let y = ((lparam.0 as u32 >> 16) as u16) as i16;
 
     match message {
-        WM_LBUTTONDOWN | WM_LBUTTONDBLCLK | WM_RBUTTONDOWN | WM_RBUTTONDBLCLK => {
-            let button = if matches!(message, WM_RBUTTONDOWN | WM_RBUTTONDBLCLK) {
-                MouseButtons::RIGHT
-            } else {
-                MouseButtons::LEFT
+        WM_LBUTTONDOWN
+        | WM_LBUTTONDBLCLK
+        | WM_MBUTTONDOWN
+        | WM_MBUTTONDBLCLK
+        | WM_RBUTTONDOWN
+        | WM_RBUTTONDBLCLK => {
+            let button = match message {
+                WM_LBUTTONDOWN | WM_LBUTTONDBLCLK => MouseButtons::LEFT,
+                WM_MBUTTONDOWN | WM_MBUTTONDBLCLK => MouseButtons::MIDDLE,
+                _ => MouseButtons::RIGHT,
             };
             let previous_buttons = NATIVE_PREVIEW_HELD_BUTTONS.with(Cell::get);
             let next_buttons = update_mouse_button_state(previous_buttons, button, true);
@@ -267,11 +274,11 @@ unsafe extern "system" fn native_preview_wndproc(
                 }
             }
         }
-        WM_LBUTTONUP | WM_RBUTTONUP => {
-            let button = if message == WM_LBUTTONUP {
-                MouseButtons::LEFT
-            } else {
-                MouseButtons::RIGHT
+        WM_LBUTTONUP | WM_MBUTTONUP | WM_RBUTTONUP => {
+            let button = match message {
+                WM_LBUTTONUP => MouseButtons::LEFT,
+                WM_MBUTTONUP => MouseButtons::MIDDLE,
+                _ => MouseButtons::RIGHT,
             };
             let previous_buttons = NATIVE_PREVIEW_HELD_BUTTONS.with(Cell::get);
             let next_buttons = update_mouse_button_state(previous_buttons, button, false);
@@ -1935,6 +1942,10 @@ mod viewport_tests {
         assert!(!mouse_buttons_match_wparam(left_and_right, 0x0001));
         assert!(!mouse_buttons_match_wparam(left_and_right, 0x0002));
         assert!(!mouse_buttons_match_wparam(MouseButtons::NONE, 0x0003));
+
+        let middle_and_right = MouseButtons::MIDDLE | MouseButtons::RIGHT;
+        assert!(mouse_buttons_match_wparam(middle_and_right, 0x0012));
+        assert!(!mouse_buttons_match_wparam(middle_and_right, 0x0002));
     }
 
     #[test]
