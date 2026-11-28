@@ -79,7 +79,7 @@ impl BleInputController {
                 match (mouse_release, keyboard_release) {
                     (Ok(()), Ok(())) => {
                         Err(error.context("BLE input notification failed; neutral reports sent"))
-                    },
+                    }
                     (Err(mouse), Ok(())) => Err(anyhow::anyhow!(
                         "{error:#}; mouse neutral report also failed: {mouse:#}"
                     )),
