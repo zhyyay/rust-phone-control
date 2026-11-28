@@ -49,7 +49,8 @@ use windows_062::Win32::{
             SetWindowLongPtrW, SetWindowPos, ShowWindow, WINDOW_EX_STYLE, WM_CAPTURECHANGED,
             WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDBLCLK, WM_MBUTTONDOWN,
             WM_MBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCDESTROY,
-            WM_RBUTTONDBLCLK, WM_RBUTTONDOWN, WM_RBUTTONUP, WNDPROC, WS_CHILD, WS_CLIPCHILDREN,
+            WM_RBUTTONDBLCLK, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_XBUTTONDBLCLK, WM_XBUTTONDOWN,
+            WM_XBUTTONUP, WNDPROC, WS_CHILD, WS_CLIPCHILDREN,
             WS_CLIPSIBLINGS,
         },
     },
@@ -95,6 +96,8 @@ fn mouse_buttons_match_wparam(held: crate::input::MouseButtons, flags: u32) -> b
         && (!held.contains(MouseButtons::LEFT) || flags & 0x0001 != 0)
         && (!held.contains(MouseButtons::RIGHT) || flags & 0x0002 != 0)
         && (!held.contains(MouseButtons::MIDDLE) || flags & 0x0010 != 0)
+        && (!held.contains(MouseButtons::BACK) || flags & 0x0020 != 0)
+        && (!held.contains(MouseButtons::FORWARD) || flags & 0x0040 != 0)
 }
 
 fn recovery_cooldown_active(now: Instant, retry_after: Option<Instant>) -> bool {
@@ -197,10 +200,17 @@ unsafe extern "system" fn native_preview_wndproc(
 
     match message {
         WM_LBUTTONDOWN | WM_LBUTTONDBLCLK | WM_MBUTTONDOWN | WM_MBUTTONDBLCLK | WM_RBUTTONDOWN
-        | WM_RBUTTONDBLCLK => {
+        | WM_RBUTTONDBLCLK | WM_XBUTTONDOWN | WM_XBUTTONDBLCLK => {
             let button = match message {
                 WM_LBUTTONDOWN | WM_LBUTTONDBLCLK => MouseButtons::LEFT,
                 WM_MBUTTONDOWN | WM_MBUTTONDBLCLK => MouseButtons::MIDDLE,
+                WM_XBUTTONDOWN | WM_XBUTTONDBLCLK => {
+                    if (wparam.0 >> 16) as u16 == 1 {
+                        MouseButtons::BACK
+                    } else {
+                        MouseButtons::FORWARD
+                    }
+                }
                 _ => MouseButtons::RIGHT,
             };
             let previous_buttons = NATIVE_PREVIEW_HELD_BUTTONS.with(Cell::get);
@@ -270,10 +280,17 @@ unsafe extern "system" fn native_preview_wndproc(
                 }
             }
         }
-        WM_LBUTTONUP | WM_MBUTTONUP | WM_RBUTTONUP => {
+        WM_LBUTTONUP | WM_MBUTTONUP | WM_RBUTTONUP | WM_XBUTTONUP => {
             let button = match message {
                 WM_LBUTTONUP => MouseButtons::LEFT,
                 WM_MBUTTONUP => MouseButtons::MIDDLE,
+                WM_XBUTTONUP => {
+                    if (wparam.0 >> 16) as u16 == 1 {
+                        MouseButtons::BACK
+                    } else {
+                        MouseButtons::FORWARD
+                    }
+                }
                 _ => MouseButtons::RIGHT,
             };
             let previous_buttons = NATIVE_PREVIEW_HELD_BUTTONS.with(Cell::get);
@@ -1942,6 +1959,10 @@ mod viewport_tests {
         let middle_and_right = MouseButtons::MIDDLE | MouseButtons::RIGHT;
         assert!(mouse_buttons_match_wparam(middle_and_right, 0x0012));
         assert!(!mouse_buttons_match_wparam(middle_and_right, 0x0002));
+
+        let back_and_forward = MouseButtons::BACK | MouseButtons::FORWARD;
+        assert!(mouse_buttons_match_wparam(back_and_forward, 0x0060));
+        assert!(!mouse_buttons_match_wparam(back_and_forward, 0x0020));
     }
 
     #[test]
