@@ -47,7 +47,7 @@ use windows_062::Win32::{
             CreateWindowExW, DestroyWindow, ReleaseCapture, SW_HIDE, SW_SHOW, SWP_NOACTIVATE,
             SWP_NOOWNERZORDER, SWP_NOREDRAW, SWP_NOZORDER, SetCapture, SetWindowPos, ShowWindow,
             WINDOW_EX_STYLE, WM_CAPTURECHANGED, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE,
-            WM_NCDESTROY, WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS,
+            WM_NCDESTROY, WM_MOUSEWHEEL, WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS,
         },
     },
 };
@@ -109,6 +109,8 @@ thread_local! {
     static NATIVE_PREVIEW_DRAGGING: Cell<bool> = const { Cell::new(false) };
     /// Last client-space pointer coordinate while dragging.
     static NATIVE_PREVIEW_LAST_POINTER: Cell<Option<(i16, i16)>> = const { Cell::new(None) };
+    /// Accumulated high-resolution wheel delta until a complete HID wheel step is available.
+    static NATIVE_PREVIEW_WHEEL_REMAINDER: Cell<i32> = const { Cell::new(0) };
     /// D3D11 immediate contexts remain on the GPUI thread that first initializes them.
     static THREAD_RENDERER: RefCell<Option<D3d11Device>> = const { RefCell::new(None) };
     /// Borrowed GPUI parent HWND; never destroyed or re-parented by this module.
@@ -169,6 +171,25 @@ unsafe extern "system" fn native_preview_subclass_proc(
                 }
             }
         }
+        WM_MOUSEWHEEL => {
+            // Windows reports wheel movement in 120-unit detents; preserve
+            // smaller high-resolution deltas until a full HID wheel step exists.
+            let delta = ((wparam.0 >> 16) as u16 as i16) as i32;
+            let total = NATIVE_PREVIEW_WHEEL_REMAINDER
+                .with(|remainder| remainder.replace(remainder.get().saturating_add(delta)));
+            let steps = total / 120;
+            NATIVE_PREVIEW_WHEEL_REMAINDER.with(|remainder| remainder.set(total % 120));
+            if steps != 0 {
+                // Windows positive means up; the app's HID convention uses
+                // positive for down, so invert the direction.
+                let vertical = (-steps).clamp(i16::MIN as i32, i16::MAX as i32) as i16;
+                if let Err(error) = crate::input::ble::desktop::dispatch_event(
+                    InputEvent::Scroll { vertical },
+                ) {
+                    tracing::warn!(error = %error, "Could not dispatch native preview wheel");
+                }
+            }
+        }
         WM_LBUTTONUP => {
             NATIVE_PREVIEW_DRAGGING.with(|dragging| dragging.set(false));
             NATIVE_PREVIEW_LAST_POINTER.with(|last| last.set(None));
@@ -182,6 +203,9 @@ unsafe extern "system" fn native_preview_subclass_proc(
         WM_CAPTURECHANGED | WM_NCDESTROY => {
             let was_dragging = NATIVE_PREVIEW_DRAGGING.with(|dragging| dragging.replace(false));
             NATIVE_PREVIEW_LAST_POINTER.with(|last| last.set(None));
+            if message == WM_NCDESTROY {
+                NATIVE_PREVIEW_WHEEL_REMAINDER.with(|remainder| remainder.set(0));
+            }
             if was_dragging {
                 if let Err(error) =
                     crate::input::ble::desktop::dispatch_event(InputEvent::ReleaseAll)
