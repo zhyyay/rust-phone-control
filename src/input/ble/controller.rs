@@ -348,7 +348,8 @@ impl BleInputController {
     /// silently producing incorrect input. Unicode text injection can be added separately.
     pub async fn type_text(&self, text: &str) -> Result<()> {
         let expected_generation = self.service.subscription_generation();
-        self.type_text_for_generation(text, expected_generation).await
+        self.type_text_for_generation(text, expected_generation)
+            .await
     }
 
     /// Types text only while the HID subscription remains the one that queued the command.
@@ -363,7 +364,10 @@ impl BleInputController {
 
         for (usage, shifted) in keys {
             if !self.subscription_generation_matches(expected_generation) {
-                tracing::debug!(expected_generation, "Stopped BLE text input after HID subscription changed");
+                tracing::debug!(
+                    expected_generation,
+                    "Stopped BLE text input after HID subscription changed"
+                );
                 break;
             }
             let modifiers = if shifted {
@@ -371,7 +375,8 @@ impl BleInputController {
             } else {
                 KeyModifiers::NONE
             };
-            self.tap_key_locked(modifiers, usage, Some(expected_generation)).await?;
+            self.tap_key_locked(modifiers, usage, Some(expected_generation))
+                .await?;
             tokio::time::sleep(std::time::Duration::from_millis(8)).await;
             if !self.subscription_generation_matches(expected_generation) {
                 tracing::debug!(expected_generation, "Stopped BLE text input after HID subscription changed");
