@@ -68,10 +68,6 @@ impl BleInputController {
         if self.service.is_stopped() {
             bail!("BLE HID controller has stopped");
         }
-        if self.service.is_suspended() {
-            return Ok(());
-        }
-
         let current_generation = self.service.subscription_generation();
         let mut observed_generation = self
             .observed_subscription_generation
@@ -91,6 +87,13 @@ impl BleInputController {
             );
         }
         drop(observed_generation);
+
+        // Observe Control Point suspend/resume and CCCD transitions before suppressing
+        // input. Otherwise a generation change during suspend could leave stale held
+        // buttons/modifiers in the controller when the host resumes.
+        if self.service.is_suspended() {
+            return Ok(());
+        }
 
         match self.dispatch_reports_locked(event).await {
             Ok(()) => Ok(()),
@@ -176,14 +179,12 @@ impl BleInputController {
                     .send_keyboard_report(KeyboardReport::new(modifiers, [0; 6]))
                     .await
             }
-            InputEvent::ReleaseAll => {
-                self.service
-                    .send_mouse_report(MouseReport::release())
-                    .await?;
+            InputEvent::ReleaseAll => combine_release_results(
+                self.service.send_mouse_report(MouseReport::release()).await,
                 self.service
                     .send_keyboard_report(KeyboardReport::release())
-                    .await
-            }
+                    .await,
+            ),
         }
     }
 
@@ -336,6 +337,17 @@ impl BleInputController {
     }
 }
 
+fn combine_release_results(mouse: Result<()>, keyboard: Result<()>) -> Result<()> {
+    match (mouse, keyboard) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(error), Ok(())) => Err(error.context("sending mouse release report")),
+        (Ok(()), Err(error)) => Err(error.context("sending keyboard release report")),
+        (Err(mouse), Err(keyboard)) => Err(anyhow::anyhow!(
+            "mouse release failed: {mouse:#}; keyboard release failed: {keyboard:#}"
+        )),
+    }
+}
+
 fn refresh_input_state(
     state: &mut ControllerInputState,
     observed_generation: &mut u64,
@@ -449,6 +461,22 @@ mod tests {
         state.apply(InputEvent::KeyUsage(0x04));
         assert_eq!(state.buttons, MouseButtons::MIDDLE);
         assert_eq!(state.modifiers, KeyModifiers::LEFT_CTRL);
+    }
+
+    #[test]
+    fn release_all_reports_both_transport_failures() {
+        use anyhow::anyhow;
+        use super::combine_release_results;
+
+        assert!(combine_release_results(Ok(()), Ok(())).is_ok());
+        assert!(combine_release_results(Err(anyhow!("mouse")), Ok(())).is_err());
+        assert!(combine_release_results(Ok(()), Err(anyhow!("keyboard"))).is_err());
+
+        let error = combine_release_results(Err(anyhow!("mouse")), Err(anyhow!("keyboard")))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("mouse release failed"));
+        assert!(error.contains("keyboard release failed"));
     }
 
     #[test]
