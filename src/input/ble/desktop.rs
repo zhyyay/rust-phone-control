@@ -99,8 +99,8 @@ fn sender() -> Result<&'static Sender<Command>> {
                     // or modifier is still held. Best-effort release immediately before
                     // processing the next queued command.
                     if let Some(active) = controller.as_ref() {
-                        if let Err(release_error) = runtime
-                            .block_on(active.dispatch(InputEvent::ReleaseAll))
+                        if let Err(release_error) =
+                            runtime.block_on(active.dispatch(InputEvent::ReleaseAll))
                         {
                             tracing::error!(
                                 error = %format!("{release_error:#}"),
