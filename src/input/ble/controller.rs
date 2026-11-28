@@ -147,11 +147,23 @@ impl BleInputController {
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .buttons;
-        self.dispatch_locked(InputEvent::PointerButtons(previous_buttons | button))
-            .await?;
-        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-        self.dispatch_locked(InputEvent::PointerButtons(previous_buttons))
-            .await
+        let press_result = self
+            .dispatch_locked(InputEvent::PointerButtons(previous_buttons | button))
+            .await;
+        if press_result.is_ok() {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        let restore_result = self
+            .dispatch_locked(InputEvent::PointerButtons(previous_buttons))
+            .await;
+        match (press_result, restore_result) {
+            (Ok(()), Ok(())) => Ok(()),
+            (Err(error), Ok(())) => Err(error.context("sending mouse click press")),
+            (Ok(()), Err(error)) => Err(error.context("restoring mouse buttons after click")),
+            (Err(press), Err(restore)) => Err(anyhow::anyhow!(
+                "mouse click failed: {press:#}; restoring buttons also failed: {restore:#}"
+            )),
+        }
     }
 
     /// Sends vertical wheel movement, splitting values larger than one HID report.
@@ -182,14 +194,29 @@ impl BleInputController {
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .modifiers;
-        self.dispatch_locked(InputEvent::KeyModifiers(previous_modifiers | modifiers))
-            .await?;
-        let key_result = self.dispatch_locked(InputEvent::KeyUsage(usage)).await;
+        let modifier_result = self
+            .dispatch_locked(InputEvent::KeyModifiers(previous_modifiers | modifiers))
+            .await;
+        let key_result = if modifier_result.is_ok() {
+            self.dispatch_locked(InputEvent::KeyUsage(usage)).await
+        } else {
+            Ok(())
+        };
         let restore_result = self
             .dispatch_locked(InputEvent::KeyModifiers(previous_modifiers))
             .await;
-        key_result?;
-        restore_result
+        match (modifier_result, key_result, restore_result) {
+            (Ok(()), Ok(()), Ok(())) => Ok(()),
+            (Err(error), _, Ok(())) => Err(error.context("setting modifiers for key tap")),
+            (Ok(()), Err(error), Ok(())) => Err(error.context("sending key tap")),
+            (Ok(()), Ok(()), Err(error)) => Err(error.context("restoring modifiers after key tap")),
+            (modifier, key, restore) => Err(anyhow::anyhow!(
+                "key tap failed (modifier: {}; key: {}; restore: {})",
+                modifier.err().map(|e| format!("{e:#}")).unwrap_or_else(|| "ok".into()),
+                key.err().map(|e| format!("{e:#}")).unwrap_or_else(|| "ok".into()),
+                restore.err().map(|e| format!("{e:#}")).unwrap_or_else(|| "ok".into()),
+            )),
+        }
     }
 
     /// Types basic ASCII text. Unsupported non-ASCII characters return an error instead of
