@@ -77,13 +77,13 @@ impl BleInputController {
             .observed_subscription_generation
             .lock()
             .unwrap_or_else(|p| p.into_inner());
-        if *observed_generation != current_generation {
-            let previous_generation = *observed_generation;
-            self.input_state
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
-                .reset();
-            *observed_generation = current_generation;
+        let previous_generation = *observed_generation;
+        let state_reset = refresh_input_state(
+            &mut self.input_state.lock().unwrap_or_else(|p| p.into_inner()),
+            &mut observed_generation,
+            current_generation,
+        );
+        if state_reset {
             tracing::info!(
                 previous_generation,
                 current_generation,
@@ -336,6 +336,19 @@ impl BleInputController {
     }
 }
 
+fn refresh_input_state(
+    state: &mut ControllerInputState,
+    observed_generation: &mut u64,
+    current_generation: u64,
+) -> bool {
+    if *observed_generation == current_generation {
+        return false;
+    }
+    state.reset();
+    *observed_generation = current_generation;
+    true
+}
+
 /// Validates and maps an entire message before any HID reports are sent.
 fn validate_text(text: &str) -> Result<Vec<(u8, bool)>> {
     text.chars()
@@ -398,7 +411,7 @@ fn ascii_key(character: char) -> Option<(u8, bool)> {
 
 #[cfg(test)]
 mod tests {
-    use super::{ControllerInputState, ascii_key, validate_text};
+    use super::{ControllerInputState, ascii_key, refresh_input_state, validate_text};
     use crate::input::event::{InputEvent, KeyModifiers, MouseButtons};
 
     #[test]
@@ -436,6 +449,20 @@ mod tests {
         state.apply(InputEvent::KeyUsage(0x04));
         assert_eq!(state.buttons, MouseButtons::MIDDLE);
         assert_eq!(state.modifiers, KeyModifiers::LEFT_CTRL);
+    }
+
+    #[test]
+    fn subscription_generation_change_releases_held_input_state() {
+        let mut state = ControllerInputState {
+            buttons: MouseButtons::LEFT | MouseButtons::RIGHT,
+            modifiers: KeyModifiers::LEFT_SHIFT | KeyModifiers::LEFT_CTRL,
+        };
+        let mut observed_generation = 4;
+
+        assert!(refresh_input_state(&mut state, &mut observed_generation, 5));
+        assert_eq!(observed_generation, 5);
+        assert_eq!(state, ControllerInputState::default());
+        assert!(!refresh_input_state(&mut state, &mut observed_generation, 5));
     }
 
     #[test]
