@@ -76,6 +76,7 @@ pub enum InputEvent {
     },
     PointerButtons(MouseButtons),
     Scroll {
+        horizontal: i16,
         vertical: i16,
     },
     KeyModifiers(KeyModifiers),
