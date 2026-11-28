@@ -462,7 +462,11 @@ mod tests {
         assert!(refresh_input_state(&mut state, &mut observed_generation, 5));
         assert_eq!(observed_generation, 5);
         assert_eq!(state, ControllerInputState::default());
-        assert!(!refresh_input_state(&mut state, &mut observed_generation, 5));
+        assert!(!refresh_input_state(
+            &mut state,
+            &mut observed_generation,
+            5
+        ));
     }
 
     #[test]
