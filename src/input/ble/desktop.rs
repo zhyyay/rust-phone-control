@@ -37,7 +37,8 @@ fn publish_connection_state(controller: &Option<BleInputController>) {
     let encoded = match state {
         super::BleConnectionState::Disconnected => 0,
         super::BleConnectionState::PartiallySubscribed => 1,
-        super::BleConnectionState::Ready => 2,
+        super::BleConnectionState::Suspended => 2,
+        super::BleConnectionState::Ready => 3,
     };
     CONNECTION_STATE.store(encoded, Ordering::Release);
 }
@@ -46,7 +47,8 @@ fn publish_connection_state(controller: &Option<BleInputController>) {
 pub fn connection_state() -> super::BleConnectionState {
     match CONNECTION_STATE.load(Ordering::Acquire) {
         1 => super::BleConnectionState::PartiallySubscribed,
-        2 => super::BleConnectionState::Ready,
+        2 => super::BleConnectionState::Suspended,
+        3 => super::BleConnectionState::Ready,
         _ => super::BleConnectionState::Disconnected,
     }
 }
