@@ -7,7 +7,7 @@ use std::{
     sync::{
         OnceLock,
         atomic::{AtomicU8, Ordering},
-        mpsc::{self, RecvTimeoutError, Sender},
+        mpsc::{self, RecvTimeoutError, SyncSender, TrySendError},
     },
     thread,
     time::Duration,
@@ -26,7 +26,8 @@ enum Command {
     TypeText(String),
 }
 
-static COMMANDS: OnceLock<std::sync::Mutex<Option<Sender<Command>>>> = OnceLock::new();
+static COMMANDS: OnceLock<std::sync::Mutex<Option<SyncSender<Command>>>> = OnceLock::new();
+const COMMAND_QUEUE_CAPACITY: usize = 256;
 static CONNECTION_STATE: AtomicU8 = AtomicU8::new(0);
 static WORKER_STATE: AtomicU8 = AtomicU8::new(0);
 
@@ -71,12 +72,12 @@ pub fn connection_state() -> super::BleConnectionState {
     }
 }
 
-fn command_sender() -> &'static std::sync::Mutex<Option<Sender<Command>>> {
+fn command_sender() -> &'static std::sync::Mutex<Option<SyncSender<Command>>> {
     COMMANDS.get_or_init(|| std::sync::Mutex::new(None))
 }
 
-fn spawn_worker() -> Result<Sender<Command>> {
-    let (tx, rx) = mpsc::channel();
+fn spawn_worker() -> Result<SyncSender<Command>> {
+    let (tx, rx) = mpsc::sync_channel(COMMAND_QUEUE_CAPACITY);
     let (ready_tx, ready_rx) = mpsc::sync_channel::<std::result::Result<(), String>>(1);
     let worker = thread::Builder::new()
         .name("ble-hid-controller".into())
@@ -259,9 +260,12 @@ fn send(command: Command) -> Result<()> {
     }
 
     let sender = slot.as_ref().expect("worker sender initialized");
-    match sender.send(command) {
+    match sender.try_send(command) {
         Ok(()) => Ok(()),
-        Err(error) => {
+        Err(TrySendError::Full(_command)) => Err(anyhow::anyhow!(
+            "BLE command queue is full ({COMMAND_QUEUE_CAPACITY}); retry after pending input is processed"
+        )),
+        Err(TrySendError::Disconnected(command)) => {
             CONNECTION_STATE.store(0, Ordering::Release);
             WORKER_STATE.store(WORKER_ERROR, Ordering::Release);
             *slot = None;
@@ -272,11 +276,10 @@ fn send(command: Command) -> Result<()> {
                     return Err(spawn_error).context("restarting failed BLE controller worker");
                 }
             };
-            if let Err(send_error) = replacement.send(error.0) {
+            if let Err(send_error) = replacement.try_send(command) {
                 WORKER_STATE.store(WORKER_ERROR, Ordering::Release);
                 return Err(anyhow::anyhow!(
-                    "replacement BLE controller worker exited before accepting the command: {}",
-                    send_error
+                    "replacement BLE controller worker could not accept the command: {send_error}"
                 ));
             }
             *slot = Some(replacement);
