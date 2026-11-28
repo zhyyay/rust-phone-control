@@ -100,6 +100,12 @@ fn publish_connection_state(controller: &Option<BleInputController>) {
     CONNECTION_STATE.store(encoded, Ordering::Release);
 }
 
+/// Returns the most recently observed HID report subscription generation.
+/// The native preview uses this to discard per-connection pointer and wheel state.
+pub fn subscription_generation() -> u64 {
+    SUBSCRIPTION_GENERATION.load(Ordering::Acquire)
+}
+
 /// Returns the most recently observed HID report subscription state without blocking the UI.
 pub fn connection_state() -> super::BleConnectionState {
     match CONNECTION_STATE.load(Ordering::Acquire) {
