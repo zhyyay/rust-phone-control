@@ -82,7 +82,7 @@ impl BleHidService {
         .context("creating HID Report Map characteristic")?;
 
         let suspended = Arc::new(AtomicBool::new(false));
-        let mouse_state = Arc::new(Mutex::new(vec![0; 4]));
+        let mouse_state = Arc::new(Mutex::new(vec![0; 5]));
         let keyboard_state = Arc::new(Mutex::new(vec![0; 8]));
         let subscription_generation = Arc::new(AtomicU64::new(0));
         let mouse_subscribers = Arc::new(AtomicUsize::new(0));
@@ -199,7 +199,7 @@ impl BleHidService {
                     tracing::info!(count, "iPhone mouse HID report subscription count changed");
                     *mouse_subscription_state
                         .lock()
-                        .unwrap_or_else(|p| p.into_inner()) = vec![0; 4];
+                        .unwrap_or_else(|p| p.into_inner()) = vec![0; 5];
                     mouse_subscription_generation.fetch_add(1, Ordering::AcqRel);
                 }
                 Err(error) => {
@@ -287,7 +287,7 @@ impl BleHidService {
         })
     }
 
-    /// Sends a four-byte mouse input report to subscribed GATT clients.
+    /// Sends a five-byte mouse input report to subscribed GATT clients.
     pub async fn send_mouse_report(&self, report: MouseReport) -> Result<()> {
         if self.stopped.load(Ordering::Acquire) {
             bail!("BLE HID service has stopped");
