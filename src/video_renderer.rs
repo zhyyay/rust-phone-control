@@ -459,10 +459,11 @@ unsafe extern "system" fn native_preview_wndproc(
         WM_CAPTURECHANGED | WM_NCDESTROY => {
             let had_held_buttons = NATIVE_PREVIEW_HELD_BUTTONS
                 .with(|held| held.replace(MouseButtons::NONE) != MouseButtons::NONE);
-            let had_held_modifiers = NATIVE_PREVIEW_HELD_MODIFIERS
-                .with(|held| held.replace(crate::input::KeyModifiers::NONE) != crate::input::KeyModifiers::NONE);
-            let had_held_key_usages =
-                NATIVE_PREVIEW_HELD_KEYS.with(|held| held.replace([0; 6]).iter().any(|key| *key != 0));
+            let had_held_modifiers = NATIVE_PREVIEW_HELD_MODIFIERS.with(|held| {
+                held.replace(crate::input::KeyModifiers::NONE) != crate::input::KeyModifiers::NONE
+            });
+            let had_held_key_usages = NATIVE_PREVIEW_HELD_KEYS
+                .with(|held| held.replace([0; 6]).iter().any(|key| *key != 0));
             let had_held_keys = had_held_modifiers || had_held_key_usages;
             NATIVE_PREVIEW_LAST_POINTER.with(|last| last.set(None));
             if message == WM_NCDESTROY {
