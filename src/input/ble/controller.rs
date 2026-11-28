@@ -71,13 +71,14 @@ impl BleInputController {
             .lock()
             .unwrap_or_else(|p| p.into_inner());
         if *observed_generation != current_generation {
+            let previous_generation = *observed_generation;
             self.input_state
                 .lock()
                 .unwrap_or_else(|p| p.into_inner())
                 .reset();
             *observed_generation = current_generation;
             tracing::info!(
-                previous_generation = *observed_generation,
+                previous_generation,
                 current_generation,
                 "BLE HID subscription changed; cleared held input state"
             );
