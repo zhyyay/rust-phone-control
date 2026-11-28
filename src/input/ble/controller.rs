@@ -286,11 +286,21 @@ impl BleInputController {
             bail!("keyboard usage 0 is reserved for no key");
         }
         let _operation = self.operation_lock.lock().await;
-        self.tap_key_locked(modifiers, usage).await
+        self.tap_key_locked(modifiers, usage, None).await
     }
 
-    async fn tap_key_locked(&self, modifiers: KeyModifiers, usage: u8) -> Result<()> {
+    async fn tap_key_locked(
+        &self,
+        modifiers: KeyModifiers,
+        usage: u8,
+        expected_generation: Option<u64>,
+    ) -> Result<()> {
         self.refresh_subscription_state();
+        if let Some(expected) = expected_generation
+            && !self.subscription_generation_matches(expected)
+        {
+            return Ok(());
+        }
         let operation_generation = self.service.subscription_generation();
         let previous_modifiers = self
             .input_state
@@ -337,18 +347,36 @@ impl BleInputController {
     /// Types basic ASCII text. Unsupported non-ASCII characters return an error instead of
     /// silently producing incorrect input. Unicode text injection can be added separately.
     pub async fn type_text(&self, text: &str) -> Result<()> {
+        let expected_generation = self.service.subscription_generation();
+        self.type_text_for_generation(text, expected_generation).await
+    }
+
+    /// Types text only while the HID subscription remains the one that queued the command.
+    pub async fn type_text_for_generation(
+        &self,
+        text: &str,
+        expected_generation: u64,
+    ) -> Result<()> {
         // Validate the complete payload before sending the first HID report.
         let keys = validate_text(text)?;
         let _operation = self.operation_lock.lock().await;
 
         for (usage, shifted) in keys {
+            if !self.subscription_generation_matches(expected_generation) {
+                tracing::debug!(expected_generation, "Stopped BLE text input after HID subscription changed");
+                break;
+            }
             let modifiers = if shifted {
                 KeyModifiers::LEFT_SHIFT
             } else {
                 KeyModifiers::NONE
             };
-            self.tap_key_locked(modifiers, usage).await?;
+            self.tap_key_locked(modifiers, usage, Some(expected_generation)).await?;
             tokio::time::sleep(std::time::Duration::from_millis(8)).await;
+            if !self.subscription_generation_matches(expected_generation) {
+                tracing::debug!(expected_generation, "Stopped BLE text input after HID subscription changed");
+                break;
+            }
         }
         Ok(())
     }
@@ -361,6 +389,11 @@ impl BleInputController {
     /// Stops BLE advertising.
     pub fn stop(&self) -> Result<()> {
         self.service.stop()
+    }
+
+    /// Returns the current HID report subscription generation.
+    pub fn subscription_generation(&self) -> u64 {
+        self.service.subscription_generation()
     }
 
     /// Returns the current HID report subscription state.
