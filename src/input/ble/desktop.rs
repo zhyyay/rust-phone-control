@@ -239,6 +239,17 @@ fn spawn_worker() -> Result<WorkerSenders> {
                             } else {
                                 WORKER_STATE.store(WORKER_STOPPED, Ordering::Release);
                             }
+
+                            // Stop is prioritized over normal input. Drop anything that
+                            // accumulated behind it so a rapid restart cannot replay old input.
+                            let discarded = discard_pending_commands(&rx);
+                            clear_pointer_moves();
+                            if discarded > 0 {
+                                tracing::debug!(
+                                    discarded,
+                                    "Discarded queued BLE input commands after stop"
+                                );
+                            }
                         }
                         Command::PointerMove(batch_id) => {
                             if let Some(batch) = take_pointer_move(batch_id) {
@@ -363,6 +374,14 @@ fn clear_pointer_moves() {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     clear_pointer_move_queue(&mut queue);
+}
+
+fn discard_pending_commands(receiver: &mpsc::Receiver<Command>) -> usize {
+    let mut discarded = 0;
+    while receiver.try_recv().is_ok() {
+        discarded += 1;
+    }
+    discarded
 }
 
 fn accumulate_pointer_move(batch: &mut PointerMoveBatch, dx: i16, dy: i16) {
@@ -604,7 +623,20 @@ pub fn type_sample() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{PointerMoveBatch, PointerMoveQueue};
+    use super::{Command, PointerMoveBatch, PointerMoveQueue};
+
+    #[test]
+    fn stopping_discards_commands_waiting_in_the_normal_queue() {
+        let (sender, receiver) = std::sync::mpsc::sync_channel(4);
+        sender.send(Command::Start).unwrap();
+        sender.send(Command::Stop).unwrap();
+
+        assert_eq!(super::discard_pending_commands(&receiver), 2);
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(std::sync::mpsc::TryRecvError::Empty)
+        ));
+    }
 
     #[test]
     fn adjacent_pointer_moves_coalesce_with_bounded_accumulation() {
