@@ -133,10 +133,11 @@ impl BleHidService {
                         match reader.ReadByte()? {
                             0x00 => {
                                 suspended.store(true, Ordering::Release);
-                                *mouse_state.lock().unwrap_or_else(|p| p.into_inner()) = vec![0; 4];
-                                *keyboard_state.lock().unwrap_or_else(|p| p.into_inner()) =
-                                    vec![0; 8];
-                                subscription_generation.fetch_add(1, Ordering::AcqRel);
+                                reset_cached_reports(
+                                    &mouse_state,
+                                    &keyboard_state,
+                                    &subscription_generation,
+                                );
                             }
                             0x01 => {
                                 suspended.store(false, Ordering::Release);
@@ -378,12 +379,11 @@ impl BleHidService {
     pub fn stop(&self) -> Result<()> {
         self.stopped.store(true, Ordering::Release);
         self.suspended.store(true, Ordering::Release);
-        *self.mouse_state.lock().unwrap_or_else(|p| p.into_inner()) = vec![0; 4];
-        *self
-            .keyboard_state
-            .lock()
-            .unwrap_or_else(|p| p.into_inner()) = vec![0; 8];
-        self.subscription_generation.fetch_add(1, Ordering::AcqRel);
+        reset_cached_reports(
+            &self.mouse_state,
+            &self.keyboard_state,
+            &self.subscription_generation,
+        );
         self.mouse_subscribers.store(0, Ordering::Release);
         self.keyboard_subscribers.store(0, Ordering::Release);
 
@@ -430,6 +430,16 @@ impl Drop for BleHidService {
     }
 }
 
+fn reset_cached_reports(
+    mouse_state: &Mutex<Vec<u8>>,
+    keyboard_state: &Mutex<Vec<u8>>,
+    subscription_generation: &AtomicU64,
+) {
+    *mouse_state.lock().unwrap_or_else(|p| p.into_inner()) = vec![0; 4];
+    *keyboard_state.lock().unwrap_or_else(|p| p.into_inner()) = vec![0; 8];
+    subscription_generation.fetch_add(1, Ordering::AcqRel);
+}
+
 fn connection_state_from_flags(
     mouse_subscribed: bool,
     keyboard_subscribed: bool,
@@ -451,6 +461,24 @@ fn connection_state_from_flags(
 #[cfg(test)]
 mod connection_state_tests {
     use super::{BleConnectionState, connection_state_from_flags};
+
+    #[test]
+    fn interruption_clears_both_cached_reports_and_advances_generation() {
+        use std::sync::{
+            Mutex,
+            atomic::{AtomicU64, Ordering},
+        };
+
+        let mouse = Mutex::new(vec![1, 2, 3, 4]);
+        let keyboard = Mutex::new(vec![5, 6, 7, 8, 9, 10, 11, 12]);
+        let generation = AtomicU64::new(7);
+
+        super::reset_cached_reports(&mouse, &keyboard, &generation);
+
+        assert_eq!(*mouse.lock().unwrap(), vec![0; 4]);
+        assert_eq!(*keyboard.lock().unwrap(), vec![0; 8]);
+        assert_eq!(generation.load(Ordering::Acquire), 8);
+    }
 
     #[test]
     fn both_reports_subscribed_means_ready() {
