@@ -61,7 +61,9 @@ impl BleInputController {
                 while remaining_x != 0 || remaining_y != 0 {
                     let step_x = remaining_x.clamp(-127, 127) as i16;
                     let step_y = remaining_y.clamp(-127, 127) as i16;
-                    self.service.send_mouse_report(MouseReport::new(buttons, step_x, step_y, 0)).await?;
+                    self.service
+                        .send_mouse_report(MouseReport::new(buttons, step_x, step_y, 0))
+                        .await?;
                     remaining_x -= step_x as i32;
                     remaining_y -= step_y as i32;
                     if remaining_x != 0 || remaining_y != 0 {
@@ -71,25 +73,39 @@ impl BleInputController {
                 Ok(())
             }
             InputEvent::PointerButtons(_) => {
-                self.service.send_mouse_report(MouseReport::new(buttons, 0, 0, 0)).await
+                self.service
+                    .send_mouse_report(MouseReport::new(buttons, 0, 0, 0))
+                    .await
             }
             InputEvent::Scroll { vertical } => {
-                self.service.send_mouse_report(MouseReport::new(buttons, 0, 0, vertical)).await
+                self.service
+                    .send_mouse_report(MouseReport::new(buttons, 0, 0, vertical))
+                    .await
             }
             InputEvent::KeyModifiers(_) => {
-                self.service.send_keyboard_report(KeyboardReport::new(modifiers, [0; 6])).await
+                self.service
+                    .send_keyboard_report(KeyboardReport::new(modifiers, [0; 6]))
+                    .await
             }
             InputEvent::KeyUsage(usage) => {
                 if usage == 0 {
                     bail!("keyboard usage 0 is reserved for no key");
                 }
-                self.service.send_keyboard_report(KeyboardReport::new(modifiers, [usage, 0, 0, 0, 0, 0])).await?;
+                self.service
+                    .send_keyboard_report(KeyboardReport::new(modifiers, [usage, 0, 0, 0, 0, 0]))
+                    .await?;
                 tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-                self.service.send_keyboard_report(KeyboardReport::new(modifiers, [0; 6])).await
+                self.service
+                    .send_keyboard_report(KeyboardReport::new(modifiers, [0; 6]))
+                    .await
             }
             InputEvent::ReleaseAll => {
-                self.service.send_mouse_report(MouseReport::release()).await?;
-                self.service.send_keyboard_report(KeyboardReport::release()).await
+                self.service
+                    .send_mouse_report(MouseReport::release())
+                    .await?;
+                self.service
+                    .send_keyboard_report(KeyboardReport::release())
+                    .await
             }
         }
     }
@@ -264,7 +280,9 @@ mod tests {
     #[test]
     fn dispatcher_state_preserves_held_buttons_and_modifiers_until_release_all() {
         let mut state = ControllerInputState::default();
-        state.apply(InputEvent::PointerButtons(MouseButtons::LEFT | MouseButtons::RIGHT));
+        state.apply(InputEvent::PointerButtons(
+            MouseButtons::LEFT | MouseButtons::RIGHT,
+        ));
         state.apply(InputEvent::KeyModifiers(KeyModifiers::LEFT_SHIFT));
         state.apply(InputEvent::PointerMove { dx: 12, dy: -4 });
         assert_eq!(state.buttons, MouseButtons::LEFT | MouseButtons::RIGHT);
