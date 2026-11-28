@@ -199,7 +199,7 @@ impl BleHidService {
                     tracing::info!(count, "iPhone mouse HID report subscription count changed");
                     *mouse_subscription_state
                         .lock()
-                        .unwrap_or_else(|p| p.into_inner()) = vec![0; 5];
+                        .unwrap_or_else(|p| p.into_inner()) = vec![0; MOUSE_REPORT_LEN];
                     mouse_subscription_generation.fetch_add(1, Ordering::AcqRel);
                 }
                 Err(error) => {
@@ -226,7 +226,7 @@ impl BleHidService {
                     );
                     *keyboard_subscription_state
                         .lock()
-                        .unwrap_or_else(|p| p.into_inner()) = vec![0; 8];
+                        .unwrap_or_else(|p| p.into_inner()) = vec![0; KEYBOARD_REPORT_LEN];
                     keyboard_subscription_generation.fetch_add(1, Ordering::AcqRel);
                 }
                 Err(error) => {
@@ -475,8 +475,8 @@ mod connection_state_tests {
 
         super::reset_cached_reports(&mouse, &keyboard, &generation);
 
-        assert_eq!(*mouse.lock().unwrap(), vec![0; 4]);
-        assert_eq!(*keyboard.lock().unwrap(), vec![0; 8]);
+        assert_eq!(*mouse.lock().unwrap(), vec![0; MOUSE_REPORT_LEN]);
+        assert_eq!(*keyboard.lock().unwrap(), vec![0; KEYBOARD_REPORT_LEN]);
         assert_eq!(generation.load(Ordering::Acquire), 8);
     }
 
