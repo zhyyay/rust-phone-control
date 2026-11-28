@@ -146,7 +146,6 @@ fn spawn_worker() -> Result<Sender<Command>> {
     }
 }
 
-
 fn active(controller: &Option<BleInputController>) -> Result<&BleInputController> {
     controller
         .as_ref()
