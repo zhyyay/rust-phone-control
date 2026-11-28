@@ -123,7 +123,6 @@ mod fallback_result_tests {
 #[derive(Default)]
 pub struct PhoneControlApp {
     airplay_status: String,
-    #[cfg(windows)]
     ble_connection_status: String,
     #[cfg(windows)]
     pending_airplay_controller: Option<String>,
@@ -487,6 +486,7 @@ impl Render for PhoneControlApp {
                         let ble_status = match rust_phone_control::input::ble::desktop::connection_state() {
                             rust_phone_control::input::ble::BleConnectionState::Disconnected => "未订阅 HID 报告（尚未连接或已断开）",
                             rust_phone_control::input::ble::BleConnectionState::PartiallySubscribed => "部分 HID 报告已订阅（连接未就绪）",
+                            rust_phone_control::input::ble::BleConnectionState::Suspended => "HID 已暂停（等待恢复）",
                             rust_phone_control::input::ble::BleConnectionState::Ready => "HID 输入就绪（鼠标和键盘均已订阅）",
                         };
                         if this.ble_connection_status != ble_status {
