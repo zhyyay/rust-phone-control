@@ -343,13 +343,6 @@ fn take_pointer_move(batch_id: u64) -> Option<PointerMoveBatch> {
     batch
 }
 
-fn seal_pointer_moves() {
-    let mut queue = pointer_moves()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    queue.open_batch = None;
-}
-
 fn clear_pointer_moves() {
     let mut queue = pointer_moves()
         .lock()
