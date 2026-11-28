@@ -58,6 +58,8 @@ fn pointer_moves() -> &'static Mutex<PointerMoveQueue> {
 static COMMANDS: OnceLock<std::sync::Mutex<Option<WorkerSenders>>> = OnceLock::new();
 const COMMAND_QUEUE_CAPACITY: usize = 256;
 const CONTROL_QUEUE_CAPACITY: usize = 8;
+// Bound coalesced motion backlog to roughly 17 signed-7-bit HID reports per axis.
+const POINTER_MOVE_BATCH_LIMIT: i64 = 2_048;
 static CONNECTION_STATE: AtomicU8 = AtomicU8::new(0);
 static SUBSCRIPTION_GENERATION: AtomicU64 = AtomicU64::new(0);
 static WORKER_STATE: AtomicU8 = AtomicU8::new(0);
@@ -353,6 +355,17 @@ fn clear_pointer_moves() {
     queue.batches.clear();
 }
 
+fn accumulate_pointer_move(batch: &mut PointerMoveBatch, dx: i16, dy: i16) {
+    batch.dx = batch
+        .dx
+        .saturating_add(dx as i64)
+        .clamp(-POINTER_MOVE_BATCH_LIMIT, POINTER_MOVE_BATCH_LIMIT);
+    batch.dy = batch
+        .dy
+        .saturating_add(dy as i64)
+        .clamp(-POINTER_MOVE_BATCH_LIMIT, POINTER_MOVE_BATCH_LIMIT);
+}
+
 fn queue_pointer_move(dx: i16, dy: i16) -> Result<()> {
     let generation = SUBSCRIPTION_GENERATION.load(Ordering::Acquire);
     let mut queue = pointer_moves()
@@ -363,8 +376,7 @@ fn queue_pointer_move(dx: i16, dy: i16) -> Result<()> {
         && let Some(batch) = queue.batches.iter_mut().find(|batch| batch.id == open_id)
         && batch.generation == generation
     {
-        batch.dx = batch.dx.saturating_add(dx as i64);
-        batch.dy = batch.dy.saturating_add(dy as i64);
+        accumulate_pointer_move(batch, dx, dy);
         return Ok(());
     }
 
@@ -585,10 +597,22 @@ mod tests {
             .iter_mut()
             .find(|batch| batch.id == 1)
             .unwrap();
-        batch.dx = batch.dx.saturating_add(12);
-        batch.dy = batch.dy.saturating_add(9);
+        super::desktop::accumulate_pointer_move(batch, 12, 9);
         assert_eq!(queue.batches[0].dx, i16::MAX as i64 + 12);
         assert_eq!(queue.batches[0].dy, 5);
+    }
+
+    #[test]
+    fn coalesced_pointer_motion_has_a_bounded_backlog() {
+        let mut batch = PointerMoveBatch {
+            id: 1,
+            generation: 1,
+            dx: 2_040,
+            dy: -2_040,
+        };
+        super::accumulate_pointer_move(&mut batch, 100, -100);
+        assert_eq!(batch.dx, 2_048);
+        assert_eq!(batch.dy, -2_048);
     }
 
     #[test]
