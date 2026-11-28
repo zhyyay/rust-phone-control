@@ -693,6 +693,46 @@ mod tests {
     }
 
     #[test]
+    fn maps_us_ascii_punctuation_to_expected_hid_usages() {
+        let cases = [
+            ('-', 0x2d, false),
+            ('_', 0x2d, true),
+            ('=', 0x2e, false),
+            ('+', 0x2e, true),
+            ('[', 0x2f, false),
+            ('{', 0x2f, true),
+            (']', 0x30, false),
+            ('}', 0x30, true),
+            ('\\\\', 0x31, false),
+            ('|', 0x31, true),
+            (';', 0x33, false),
+            (':', 0x33, true),
+            ('\\'', 0x34, false),
+            ('"', 0x34, true),
+            ('`', 0x35, false),
+            ('~', 0x35, true),
+            (',', 0x36, false),
+            ('<', 0x36, true),
+            ('.', 0x37, false),
+            ('>', 0x37, true),
+            ('/', 0x38, false),
+            ('?', 0x38, true),
+        ];
+        for (character, usage, shifted) in cases {
+            assert_eq!(ascii_key(character), Some((usage, shifted)), "{character:?}");
+        }
+    }
+
+    #[test]
+    fn rejects_non_printable_ascii_controls_except_supported_whitespace() {
+        for character in ['\\0', '\\u{1b}', '\\u{7f}'] {
+            assert_eq!(ascii_key(character), None);
+        }
+        assert_eq!(ascii_key('\\n'), Some((0x28, false)));
+        assert_eq!(ascii_key('\\t'), Some((0x2b, false)));
+    }
+
+    #[test]
     fn rejects_non_ascii_text_before_typing_anything() {
         assert_eq!(ascii_key('中'), None);
         assert!(validate_text("hello 中 world").is_err());
