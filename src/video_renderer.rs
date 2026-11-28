@@ -47,7 +47,7 @@ use windows_062::Win32::{
             CreateWindowExW, DestroyWindow, ReleaseCapture, SW_HIDE, SW_SHOW, SWP_NOACTIVATE,
             SWP_NOOWNERZORDER, SWP_NOREDRAW, SWP_NOZORDER, SetCapture, SetWindowPos, ShowWindow,
             WINDOW_EX_STYLE, WM_CAPTURECHANGED, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE,
-            WM_NCDESTROY, WM_MOUSEWHEEL, WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS,
+            WM_MOUSEWHEEL, WM_NCDESTROY, WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS,
         },
     },
 };
@@ -183,9 +183,9 @@ unsafe extern "system" fn native_preview_subclass_proc(
                 // Windows positive means up; the app's HID convention uses
                 // positive for down, so invert the direction.
                 let vertical = (-steps).clamp(i16::MIN as i32, i16::MAX as i32) as i16;
-                if let Err(error) = crate::input::ble::desktop::dispatch_event(
-                    InputEvent::Scroll { vertical },
-                ) {
+                if let Err(error) =
+                    crate::input::ble::desktop::dispatch_event(InputEvent::Scroll { vertical })
+                {
                     tracing::warn!(error = %error, "Could not dispatch native preview wheel");
                 }
             }
