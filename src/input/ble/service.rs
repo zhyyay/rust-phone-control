@@ -382,6 +382,8 @@ impl BleHidService {
             .lock()
             .unwrap_or_else(|p| p.into_inner()) = vec![0; 8];
         self.subscription_generation.fetch_add(1, Ordering::AcqRel);
+        self.mouse_subscribers.store(0, Ordering::Release);
+        self.keyboard_subscribers.store(0, Ordering::Release);
 
         let mut first_error = None;
         for provider in &self.providers {
