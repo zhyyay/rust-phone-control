@@ -1,11 +1,11 @@
+#[cfg(windows)]
+use gpui::MouseButton;
 use gpui_kit::component::{
     button::{Button, ButtonVariants},
     input::{Input, InputState},
     label::Label,
 };
 use gpui_kit::*;
-#[cfg(windows)]
-use gpui::MouseButton;
 #[cfg(windows)]
 use rust_phone_control::input::{InputEvent, MouseButtons};
 
