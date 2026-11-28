@@ -554,7 +554,10 @@ pub fn scroll(amount: i32) -> Result<()> {
     let mut remaining = amount;
     while remaining != 0 {
         let step = remaining.clamp(i16::MIN as i32, i16::MAX as i32) as i16;
-        dispatch_event(InputEvent::Scroll { horizontal: 0, vertical: step })?;
+        dispatch_event(InputEvent::Scroll {
+            horizontal: 0,
+            vertical: step,
+        })?;
         remaining -= step as i32;
     }
     Ok(())
