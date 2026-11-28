@@ -225,6 +225,8 @@ thread_local! {
     /// Modifier keys currently held in the native preview.
     static NATIVE_PREVIEW_HELD_MODIFIERS: Cell<crate::input::KeyModifiers> =
         const { Cell::new(crate::input::KeyModifiers::NONE) };
+    /// Non-modifier HID usages currently held by the native preview.
+    static NATIVE_PREVIEW_HELD_KEYS: Cell<[u8; 6]> = const { Cell::new([0; 6]) };
     /// Last client-space pointer coordinate while dragging.
     static NATIVE_PREVIEW_LAST_POINTER: Cell<Option<(i16, i16)>> = const { Cell::new(None) };
     /// Accumulated high-resolution wheel delta until a complete HID wheel step is available.
@@ -268,6 +270,8 @@ unsafe extern "system" fn native_preview_wndproc(
         // A new GATT subscription starts from neutral HID state. Do not carry
         // a partial wheel detent or a stale drag into the new phone session.
         NATIVE_PREVIEW_HELD_BUTTONS.with(|held| held.set(MouseButtons::NONE));
+        NATIVE_PREVIEW_HELD_MODIFIERS.with(|held| held.set(crate::input::KeyModifiers::NONE));
+        NATIVE_PREVIEW_HELD_KEYS.with(|held| held.set([0; 6]));
         NATIVE_PREVIEW_LAST_POINTER.with(|last| last.set(None));
         NATIVE_PREVIEW_WHEEL_REMAINDER.with(|remainder| remainder.set(0));
         NATIVE_PREVIEW_PAN_REMAINDER.with(|remainder| remainder.set(0));
@@ -398,6 +402,19 @@ unsafe extern "system" fn native_preview_wndproc(
                     tracing::warn!(error = %error, "Could not dispatch native preview modifier state");
                 }
             } else if let Some(usage) = virtual_key_to_hid_usage(vk) {
+                NATIVE_PREVIEW_HELD_KEYS.with(|held| {
+                    let mut keys = held.get();
+                    if pressed {
+                        if !keys.contains(&usage)
+                            && let Some(slot) = keys.iter_mut().find(|key| **key == 0)
+                        {
+                            *slot = usage;
+                        }
+                    } else if let Some(slot) = keys.iter_mut().find(|key| **key == usage) {
+                        *slot = 0;
+                    }
+                    held.set(keys);
+                });
                 if let Err(error) = crate::input::ble::desktop::dispatch_event(InputEvent::KeyState { usage, pressed }) {
                     tracing::warn!(error = %error, usage, pressed, "Could not dispatch native preview key state");
                 }
@@ -407,12 +424,16 @@ unsafe extern "system" fn native_preview_wndproc(
             // WM_KILLFOCUS: do not leave any mouse button, modifier, or ordinary key held.
             NATIVE_PREVIEW_HELD_BUTTONS.with(|held| held.set(MouseButtons::NONE));
             NATIVE_PREVIEW_HELD_MODIFIERS.with(|held| held.set(crate::input::KeyModifiers::NONE));
+            NATIVE_PREVIEW_HELD_KEYS.with(|held| held.set([0; 6]));
             NATIVE_PREVIEW_LAST_POINTER.with(|last| last.set(None));
             let _ = crate::input::ble::desktop::dispatch_event(InputEvent::ReleaseAll);
         }
         WM_CAPTURECHANGED | WM_NCDESTROY => {
             let had_held_buttons = NATIVE_PREVIEW_HELD_BUTTONS
                 .with(|held| held.replace(MouseButtons::NONE) != MouseButtons::NONE);
+            let had_held_keys = NATIVE_PREVIEW_HELD_MODIFIERS
+                .with(|held| held.replace(crate::input::KeyModifiers::NONE) != crate::input::KeyModifiers::NONE)
+                || NATIVE_PREVIEW_HELD_KEYS.with(|held| held.replace([0; 6]).iter().any(|key| *key != 0));
             NATIVE_PREVIEW_LAST_POINTER.with(|last| last.set(None));
             if message == WM_NCDESTROY {
                 NATIVE_PREVIEW_WHEEL_REMAINDER.with(|remainder| remainder.set(0));
@@ -422,7 +443,7 @@ unsafe extern "system" fn native_preview_wndproc(
                     unsafe { SetWindowLongPtrW(hwnd, GWLP_WNDPROC, previous_proc) };
                 }
             }
-            if had_held_buttons {
+            if had_held_buttons || had_held_keys {
                 if let Err(error) =
                     crate::input::ble::desktop::dispatch_event(InputEvent::ReleaseAll)
                 {
