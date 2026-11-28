@@ -101,13 +101,24 @@ mod tests {
         // and Consumer AC Pan contributes the fifth byte.
         let map = report_map();
         let relative_axes = [0x75, 0x08, 0x95, 0x03, 0x81, 0x06];
-        let horizontal_pan = [0x05, 0x0C, 0x0A, 0x38, 0x02, 0x15, 0x81, 0x25, 0x7F,
-            0x75, 0x08, 0x95, 0x01, 0x81, 0x06];
-        assert!(map.windows(relative_axes.len()).any(|window| window == relative_axes));
-        assert!(map.windows(horizontal_pan.len()).any(|window| window == horizontal_pan));
+        let horizontal_pan = [
+            0x05, 0x0C, 0x0A, 0x38, 0x02, 0x15, 0x81, 0x25, 0x7F, 0x75, 0x08, 0x95, 0x01, 0x81,
+            0x06,
+        ];
+        assert!(
+            map.windows(relative_axes.len())
+                .any(|window| window == relative_axes)
+        );
+        assert!(
+            map.windows(horizontal_pan.len())
+                .any(|window| window == horizontal_pan)
+        );
         assert_eq!(MouseReport::release().as_bytes().len(), MOUSE_REPORT_LEN);
         assert_eq!(MOUSE_REPORT_LEN, 1 + 3 + 1);
-        assert_eq!(KeyboardReport::release().as_bytes().len(), KEYBOARD_REPORT_LEN);
+        assert_eq!(
+            KeyboardReport::release().as_bytes().len(),
+            KEYBOARD_REPORT_LEN
+        );
     }
 
     #[test]
