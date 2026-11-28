@@ -581,7 +581,7 @@ mod tests {
     use super::{PointerMoveBatch, PointerMoveQueue};
 
     #[test]
-    fn adjacent_pointer_moves_coalesce_without_overflow() {
+    fn adjacent_pointer_moves_coalesce_with_bounded_accumulation() {
         let mut queue = PointerMoveQueue {
             next_id: 1,
             open_batch: Some(1),
@@ -598,7 +598,7 @@ mod tests {
             .find(|batch| batch.id == 1)
             .unwrap();
         super::accumulate_pointer_move(batch, 12, 9);
-        assert_eq!(queue.batches[0].dx, i16::MAX as i64 + 12);
+        assert_eq!(queue.batches[0].dx, 2_048);
         assert_eq!(queue.batches[0].dy, 5);
     }
 
