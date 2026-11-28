@@ -238,7 +238,14 @@ fn send(command: Command) -> Result<()> {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     if slot.is_none() {
-        *slot = Some(spawn_worker()?);
+        match spawn_worker() {
+            Ok(sender) => *slot = Some(sender),
+            Err(error) => {
+                CONNECTION_STATE.store(0, Ordering::Release);
+                WORKER_STATE.store(WORKER_ERROR, Ordering::Release);
+                return Err(error).context("initializing BLE controller worker");
+            }
+        }
     }
 
     let sender = slot.as_ref().expect("worker sender initialized");
@@ -248,10 +255,20 @@ fn send(command: Command) -> Result<()> {
             CONNECTION_STATE.store(0, Ordering::Release);
             WORKER_STATE.store(WORKER_ERROR, Ordering::Release);
             *slot = None;
-            let replacement = spawn_worker()?;
-            replacement
-                .send(error.0)
-                .context("replacement BLE controller worker is unavailable")?;
+            let replacement = match spawn_worker() {
+                Ok(replacement) => replacement,
+                Err(spawn_error) => {
+                    WORKER_STATE.store(WORKER_ERROR, Ordering::Release);
+                    return Err(spawn_error).context("restarting failed BLE controller worker");
+                }
+            };
+            if let Err(send_error) = replacement.send(error.0) {
+                WORKER_STATE.store(WORKER_ERROR, Ordering::Release);
+                return Err(anyhow::anyhow!(
+                    "replacement BLE controller worker exited before accepting the command: {}",
+                    send_error
+                ));
+            }
             *slot = Some(replacement);
             Ok(())
         }
