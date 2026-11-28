@@ -138,6 +138,9 @@ pub struct PhoneControlApp {
     /// Latest measured preview rectangle, shared with the future native-surface host.
     #[cfg(windows)]
     preview_surface_bounds: Arc<Mutex<Option<PreviewSurfaceBounds>>>,
+    /// Last pointer location while a left-button drag is active in the preview.
+    #[cfg(windows)]
+    preview_pointer_position: Option<(f32, f32)>,
     #[cfg(windows)]
     renderer_init_attempted: bool,
     #[cfg(windows)]
@@ -1087,7 +1090,55 @@ fn render_preview_column(app: &PhoneControlApp, cx: &Context<PhoneControlApp>) -
                         }
                         None => crate::video_renderer::destroy_native_video_surface(),
                     }
-                }),
+                })
+                .on_mouse_down(MouseButton::Left, cx.listener(|this, event, _, _| {
+                    this.preview_pointer_position = Some((
+                        event.position.x.as_f32(),
+                        event.position.y.as_f32(),
+                    ));
+                    queue_ble(rust_phone_control::input::ble::desktop::dispatch_event(
+                        crate::input::InputEvent::PointerButtons(crate::input::MouseButtons::LEFT),
+                    ));
+                }))
+                .on_mouse_move(cx.listener(|this, event, _, _| {
+                    if !event.dragging() {
+                        return;
+                    }
+                    let current = (event.position.x.as_f32(), event.position.y.as_f32());
+                    if let Some(previous) = this.preview_pointer_position {
+                        let dx = (current.0 - previous.0)
+                            .round()
+                            .clamp(i16::MIN as f32, i16::MAX as f32) as i16;
+                        let dy = (current.1 - previous.1)
+                            .round()
+                            .clamp(i16::MIN as f32, i16::MAX as f32) as i16;
+                        if dx != 0 || dy != 0 {
+                            queue_ble(rust_phone_control::input::ble::desktop::dispatch_event(
+                                crate::input::InputEvent::PointerMove { dx, dy },
+                            ));
+                        }
+                    }
+                    this.preview_pointer_position = Some(current);
+                }))
+                .on_mouse_up(MouseButton::Left, cx.listener(|this, _, _, _| {
+                    this.preview_pointer_position = None;
+                    queue_ble(rust_phone_control::input::ble::desktop::dispatch_event(
+                        crate::input::InputEvent::PointerButtons(crate::input::MouseButtons::NONE),
+                    ));
+                }))
+                .on_mouse_up_out(MouseButton::Left, cx.listener(|this, _, _, _| {
+                    this.preview_pointer_position = None;
+                    queue_ble(rust_phone_control::input::ble::desktop::dispatch_event(
+                        crate::input::InputEvent::PointerButtons(crate::input::MouseButtons::NONE),
+                    ));
+                }))
+                .on_mouse_exit(cx.listener(|this, _, _, _| {
+                    if this.preview_pointer_position.take().is_some() {
+                        queue_ble(rust_phone_control::input::ble::desktop::dispatch_event(
+                            crate::input::InputEvent::PointerButtons(crate::input::MouseButtons::NONE),
+                        ));
+                    }
+                })),
         )
         .child(Label::new(if app.preview_status.is_empty() {
             "等待手机画面 · FairPlay 尚未配置，当前无法完成安全镜像"
