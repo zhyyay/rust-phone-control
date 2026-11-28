@@ -48,9 +48,8 @@ use windows_062::Win32::{
             SW_SHOW, SWP_NOACTIVATE, SWP_NOOWNERZORDER, SWP_NOREDRAW, SWP_NOZORDER,
             SetWindowLongPtrW, SetWindowPos, ShowWindow, WINDOW_EX_STYLE, WM_CAPTURECHANGED,
             WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEMOVE,
-            WM_MOUSEWHEEL,
-            WM_NCDESTROY, WM_RBUTTONDBLCLK, WM_RBUTTONDOWN, WM_RBUTTONUP, WNDPROC, WS_CHILD,
-            WS_CLIPCHILDREN, WS_CLIPSIBLINGS,
+            WM_MOUSEWHEEL, WM_NCDESTROY, WM_RBUTTONDBLCLK, WM_RBUTTONDOWN, WM_RBUTTONUP, WNDPROC,
+            WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS,
         },
     },
 };
@@ -224,12 +223,10 @@ unsafe extern "system" fn native_preview_wndproc(
                 steps
             });
             if vertical != 0 {
-                if let Err(error) =
-                    crate::input::ble::desktop::dispatch_event(InputEvent::Scroll {
-                        horizontal: 0,
-                        vertical,
-                    })
-                {
+                if let Err(error) = crate::input::ble::desktop::dispatch_event(InputEvent::Scroll {
+                    horizontal: 0,
+                    vertical,
+                }) {
                     tracing::warn!(error = %error, "Could not dispatch native preview wheel");
                 }
             }
