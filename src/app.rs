@@ -1163,9 +1163,11 @@ fn render_right_controls(app: &PhoneControlApp, cx: &Context<PhoneControlApp>) -
                 .bg(gpui_kit::rgb(0xF6F7FB))
                 .border_1()
                 .border_color(gpui_kit::rgb(0xE5E8F0))
-                .child(div().when_some(app.keyboard_input.as_ref(), |this, input| {
-                    this.child(Input::new(input).w_full())
-                }))
+                .child(if let Some(input) = app.keyboard_input.as_ref() {
+                    div().child(Input::new(input).w_full())
+                } else {
+                    div().child(Label::new("键盘输入未初始化"))
+                })
                 .child(
                     Button::new("keyboard-send-text")
                         .primary()
