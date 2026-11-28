@@ -203,12 +203,22 @@ fn spawn_worker() -> Result<Sender<Command>> {
                 }
             }
 
+            if let Some(running) = controller {
+                if let Err(error) = runtime.block_on(running.release_all()) {
+                    tracing::warn!(
+                        error = %format!("{error:#}"),
+                        "Could not release BLE inputs while shutting down worker"
+                    );
+                }
+                if let Err(error) = running.stop() {
+                    tracing::warn!(
+                        error = %format!("{error:#}"),
+                        "Could not stop BLE advertising while shutting down worker"
+                    );
+                }
+            }
             publish_connection_state(&None);
             WORKER_STATE.store(WORKER_STOPPED, Ordering::Release);
-            if let Some(running) = controller {
-                let _ = runtime.block_on(running.release_all());
-                let _ = running.stop();
-            }
         })
         .context("starting BLE controller worker thread")?;
 
