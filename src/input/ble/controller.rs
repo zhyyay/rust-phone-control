@@ -15,6 +15,7 @@ use crate::input::event::{InputEvent, KeyModifiers, MouseButtons};
 pub struct BleInputController {
     service: BleHidService,
     input_state: Mutex<ControllerInputState>,
+    observed_subscription_generation: Mutex<u64>,
     operation_lock: AsyncMutex<()>,
 }
 
@@ -44,9 +45,12 @@ impl ControllerInputState {
 impl BleInputController {
     /// Starts advertising the HID service and returns a ready-to-use controller.
     pub async fn start() -> Result<Self> {
+        let service = BleHidService::start().await?;
+        let subscription_generation = service.subscription_generation();
         Ok(Self {
-            service: BleHidService::start().await?,
+            service,
             input_state: Mutex::new(ControllerInputState::default()),
+            observed_subscription_generation: Mutex::new(subscription_generation),
             operation_lock: AsyncMutex::new(()),
         })
     }
@@ -61,6 +65,25 @@ impl BleInputController {
     }
 
     async fn dispatch_locked(&self, event: InputEvent) -> Result<()> {
+        let current_generation = self.service.subscription_generation();
+        let mut observed_generation = self
+            .observed_subscription_generation
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        if *observed_generation != current_generation {
+            self.input_state
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .reset();
+            *observed_generation = current_generation;
+            tracing::info!(
+                previous_generation = *observed_generation,
+                current_generation,
+                "BLE HID subscription changed; cleared held input state"
+            );
+        }
+        drop(observed_generation);
+
         match self.dispatch_reports_locked(event).await {
             Ok(()) => Ok(()),
             Err(error) => {
