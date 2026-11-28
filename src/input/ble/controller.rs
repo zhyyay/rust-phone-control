@@ -157,7 +157,7 @@ impl BleInputController {
                     let step_x = remaining_x.clamp(-127, 127) as i16;
                     let step_y = remaining_y.clamp(-127, 127) as i16;
                     self.service
-                        .send_mouse_report(MouseReport::new(buttons, step_x, step_y, 0))
+                        .send_mouse_report(MouseReport::new(buttons, step_x, step_y, 0, 0))
                         .await?;
                     remaining_x -= step_x as i32;
                     remaining_y -= step_y as i32;
@@ -174,12 +174,15 @@ impl BleInputController {
             }
             InputEvent::PointerButtons(_) => {
                 self.service
-                    .send_mouse_report(MouseReport::new(buttons, 0, 0, 0))
+                    .send_mouse_report(MouseReport::new(buttons, 0, 0, 0, 0))
                     .await
             }
-            InputEvent::Scroll { vertical } => {
+            InputEvent::Scroll {
+                horizontal,
+                vertical,
+            } => {
                 self.service
-                    .send_mouse_report(MouseReport::new(buttons, 0, 0, vertical))
+                    .send_mouse_report(MouseReport::new(buttons, 0, 0, vertical, horizontal))
                     .await
             }
             InputEvent::KeyModifiers(_) => {
@@ -275,7 +278,7 @@ impl BleInputController {
         let mut remaining = amount;
         while remaining != 0 {
             let step = remaining.clamp(i16::MIN as i32, i16::MAX as i32) as i16;
-            self.dispatch_locked(InputEvent::Scroll { vertical: step })
+            self.dispatch_locked(InputEvent::Scroll { horizontal: 0, vertical: step })
                 .await?;
             remaining -= step as i32;
         }
@@ -537,7 +540,7 @@ mod tests {
             buttons: MouseButtons::MIDDLE,
             modifiers: KeyModifiers::LEFT_CTRL,
         };
-        state.apply(InputEvent::Scroll { vertical: 1 });
+        state.apply(InputEvent::Scroll { horizontal: 0, vertical: 1 });
         state.apply(InputEvent::KeyUsage(0x04));
         assert_eq!(state.buttons, MouseButtons::MIDDLE);
         assert_eq!(state.modifiers, KeyModifiers::LEFT_CTRL);
