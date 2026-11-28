@@ -379,7 +379,10 @@ impl BleInputController {
                 .await?;
             tokio::time::sleep(std::time::Duration::from_millis(8)).await;
             if !self.subscription_generation_matches(expected_generation) {
-                tracing::debug!(expected_generation, "Stopped BLE text input after HID subscription changed");
+                tracing::debug!(
+                    expected_generation,
+                    "Stopped BLE text input after HID subscription changed"
+                );
                 break;
             }
         }
