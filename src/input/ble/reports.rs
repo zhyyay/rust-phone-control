@@ -1,35 +1,38 @@
 use super::descriptor::{HID_INFORMATION_VALUE, HID_REPORT_MAP};
 use crate::input::event::{KeyModifiers, MouseButtons};
 
-/// Four-byte mouse report payload; the Report Reference descriptor carries report ID 1.
+/// Five-byte mouse report payload; the Report Reference descriptor carries report ID 1.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MouseReport {
     pub buttons: MouseButtons,
     pub dx: i8,
     pub dy: i8,
     pub wheel: i8,
+    pub pan: i8,
 }
 
 impl MouseReport {
-    pub const fn new(buttons: MouseButtons, dx: i16, dy: i16, wheel: i16) -> Self {
+    pub const fn new(buttons: MouseButtons, dx: i16, dy: i16, wheel: i16, pan: i16) -> Self {
         Self {
             buttons,
             dx: clamp_i16_to_i8(dx),
             dy: clamp_i16_to_i8(dy),
             wheel: clamp_i16_to_i8(wheel),
+            pan: clamp_i16_to_i8(pan),
         }
     }
 
     pub const fn release() -> Self {
-        Self::new(MouseButtons::NONE, 0, 0, 0)
+        Self::new(MouseButtons::NONE, 0, 0, 0, 0)
     }
 
-    pub const fn as_bytes(self) -> [u8; 4] {
+    pub const fn as_bytes(self) -> [u8; 5] {
         [
             self.buttons.bits(),
             self.dx as u8,
             self.dy as u8,
             self.wheel as u8,
+            self.pan as u8,
         ]
     }
 }
@@ -91,13 +94,13 @@ mod tests {
 
     #[test]
     fn mouse_report_has_expected_layout_and_clamps_motion() {
-        let report = MouseReport::new(MouseButtons::LEFT | MouseButtons::RIGHT, 300, -300, 1);
-        assert_eq!(report.as_bytes(), [0b0000_0011, 127, 129, 1]);
+        let report = MouseReport::new(MouseButtons::LEFT | MouseButtons::RIGHT, 300, -300, 1, -2);
+        assert_eq!(report.as_bytes(), [0b0000_0011, 127, 129, 1, 254]);
     }
 
     #[test]
     fn release_report_clears_every_mouse_button_and_axis() {
-        assert_eq!(MouseReport::release().as_bytes(), [0, 0, 0, 0]);
+        assert_eq!(MouseReport::release().as_bytes(), [0, 0, 0, 0, 0]);
     }
 
     #[test]
