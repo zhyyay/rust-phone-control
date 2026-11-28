@@ -491,9 +491,10 @@ pub fn move_mouse(dx: i32, dy: i32) -> Result<()> {
 
 /// Queue one platform-independent HID input event for the active BLE controller.
 pub fn dispatch_event(event: InputEvent) -> Result<()> {
-    if let InputEvent::PointerMove { dx, dy } = event {
-        return queue_pointer_move(dx, dy);
-    }
+    let event = match event {
+        InputEvent::PointerMove { dx, dy } => return queue_pointer_move(dx, dy),
+        other => other,
+    };
 
     if matches!(&event, InputEvent::ReleaseAll) {
         clear_pointer_moves();
@@ -501,11 +502,11 @@ pub fn dispatch_event(event: InputEvent) -> Result<()> {
         return send(Command::ReleaseAll(generation));
     }
 
-    let _queue = pointer_moves()
+    let mut queue = pointer_moves()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
+    queue.open_batch = None;
     let generation = SUBSCRIPTION_GENERATION.load(Ordering::Acquire);
-    seal_pointer_moves();
     send(Command::Dispatch(event, generation))
 }
 
@@ -527,10 +528,10 @@ pub fn release_all_inputs() -> Result<()> {
 
 /// Send a left mouse click.
 pub fn left_click() -> Result<()> {
-    let _queue = pointer_moves()
+    let mut queue = pointer_moves()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    seal_pointer_moves();
+    queue.open_batch = None;
     let generation = SUBSCRIPTION_GENERATION.load(Ordering::Acquire);
     send(Command::LeftClick(generation))
 }
@@ -555,10 +556,10 @@ pub fn type_text(text: impl Into<String>) -> Result<()> {
     if text.chars().count() > 512 {
         anyhow::bail!("BLE text input is limited to 512 characters per command");
     }
-    let _queue = pointer_moves()
+    let mut queue = pointer_moves()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    seal_pointer_moves();
+    queue.open_batch = None;
     let generation = SUBSCRIPTION_GENERATION.load(Ordering::Acquire);
     send(Command::TypeText(text, generation))
 }
