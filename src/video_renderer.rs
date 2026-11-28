@@ -42,12 +42,12 @@ use windows_062::Win32::{
         },
     },
     UI::{
-        Controls::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass, SUBCLASSPROC},
+        Controls::{DefSubclassProc, RemoveWindowSubclass, SUBCLASSPROC, SetWindowSubclass},
         WindowsAndMessaging::{
-            CreateWindowExW, DestroyWindow, ReleaseCapture, SetCapture, SW_HIDE, SW_SHOW,
-            SWP_NOACTIVATE, SWP_NOOWNERZORDER, SWP_NOREDRAW, SWP_NOZORDER, SetWindowPos,
-            ShowWindow, WINDOW_EX_STYLE, WM_CAPTURECHANGED, WM_LBUTTONDOWN, WM_LBUTTONUP,
-            WM_MOUSEMOVE, WM_NCDESTROY, WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS,
+            CreateWindowExW, DestroyWindow, ReleaseCapture, SW_HIDE, SW_SHOW, SWP_NOACTIVATE,
+            SWP_NOOWNERZORDER, SWP_NOREDRAW, SWP_NOZORDER, SetCapture, SetWindowPos, ShowWindow,
+            WINDOW_EX_STYLE, WM_CAPTURECHANGED, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE,
+            WM_NCDESTROY, WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS,
         },
     },
 };
@@ -152,15 +152,20 @@ unsafe extern "system" fn native_preview_subclass_proc(
                 tracing::warn!(error = %error, "Could not dispatch native preview mouse-down");
             }
         }
-        WM_MOUSEMOVE if wparam.0 & 0x0001 != 0 => {
+        WM_MOUSEMOVE
+            if NATIVE_PREVIEW_DRAGGING.with(Cell::get) && wparam.0 & 0x0001 != 0 =>
+        {
             let previous = NATIVE_PREVIEW_LAST_POINTER.with(|last| last.replace(Some((x, y))));
             if let Some((previous_x, previous_y)) = previous {
                 let dx = x.saturating_sub(previous_x);
                 let dy = y.saturating_sub(previous_y);
                 if dx != 0 || dy != 0 {
-                    if let Err(error) = crate::input::ble::desktop::dispatch_event(
-                        InputEvent::PointerMove { dx, dy },
-                    ) {
+                    if let Err(error) =
+                        crate::input::ble::desktop::dispatch_event(InputEvent::PointerMove {
+                            dx,
+                            dy,
+                        })
+                    {
                         tracing::warn!(error = %error, "Could not dispatch native preview pointer movement");
                     }
                 }
@@ -180,12 +185,20 @@ unsafe extern "system" fn native_preview_subclass_proc(
             let was_dragging = NATIVE_PREVIEW_DRAGGING.with(|dragging| dragging.replace(false));
             NATIVE_PREVIEW_LAST_POINTER.with(|last| last.set(None));
             if was_dragging {
-                if let Err(error) = crate::input::ble::desktop::dispatch_event(InputEvent::ReleaseAll) {
+                if let Err(error) =
+                    crate::input::ble::desktop::dispatch_event(InputEvent::ReleaseAll)
+                {
                     tracing::warn!(error = %error, "Could not release native preview input capture");
                 }
             }
             if message == WM_NCDESTROY {
-                unsafe { RemoveWindowSubclass(hwnd, Some(native_preview_subclass_proc), NATIVE_PREVIEW_SUBCLASS_ID) };
+                unsafe {
+                    RemoveWindowSubclass(
+                        hwnd,
+                        Some(native_preview_subclass_proc),
+                        NATIVE_PREVIEW_SUBCLASS_ID,
+                    )
+                };
             }
         }
         _ => {}
@@ -197,7 +210,12 @@ unsafe extern "system" fn native_preview_subclass_proc(
 /// Attach mouse forwarding to the owned native child without replacing its window procedure.
 fn install_native_preview_input(hwnd: HWND) -> anyhow::Result<()> {
     let installed = unsafe {
-        SetWindowSubclass(hwnd, Some(native_preview_subclass_proc), NATIVE_PREVIEW_SUBCLASS_ID, 0)
+        SetWindowSubclass(
+            hwnd,
+            Some(native_preview_subclass_proc),
+            NATIVE_PREVIEW_SUBCLASS_ID,
+            0,
+        )
     };
     if !installed.as_bool() {
         bail!("SetWindowSubclass failed for native preview input");
@@ -287,8 +305,12 @@ pub(crate) fn sync_native_video_surface(
                 )
             }
             .context("CreateWindowExW failed for the native video child surface")?;
-            install_native_preview_input(created)
-                .context("could not install native preview mouse forwarding")?;
+            if let Err(error) = install_native_preview_input(created) {
+                // The HWND has not yet been stored in thread-local ownership;
+                // destroy it here so a failed subclass install cannot leak it.
+                unsafe { DestroyWindow(created) };
+                return Err(error).context("could not install native preview mouse forwarding");
+            }
             child_raw = created.0 as isize;
             child_cell.set(child_raw);
             NATIVE_VIDEO_CHILD_PARENT_HWND.with(|stored_parent| stored_parent.set(parent));
