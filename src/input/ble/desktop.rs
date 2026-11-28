@@ -77,8 +77,12 @@ fn sender() -> Result<&'static Sender<Command>> {
                         }
                         Command::LeftClick => {
                             let active = active(&controller)?;
-                            active.dispatch(InputEvent::PointerButtons(MouseButtons::LEFT)).await?;
-                            active.dispatch(InputEvent::PointerButtons(MouseButtons::NONE)).await?;
+                            active
+                                .dispatch(InputEvent::PointerButtons(MouseButtons::LEFT))
+                                .await?;
+                            active
+                                .dispatch(InputEvent::PointerButtons(MouseButtons::NONE))
+                                .await?;
                         }
                         Command::TypeText(value) => {
                             active(&controller)?.type_text(&value).await?;
@@ -134,7 +138,10 @@ pub fn move_mouse(dx: i32, dy: i32) -> Result<()> {
     while remaining_x != 0 || remaining_y != 0 {
         let step_x = remaining_x.clamp(i16::MIN as i32, i16::MAX as i32) as i16;
         let step_y = remaining_y.clamp(i16::MIN as i32, i16::MAX as i32) as i16;
-        send(Command::Dispatch(InputEvent::PointerMove { dx: step_x, dy: step_y }))?;
+        send(Command::Dispatch(InputEvent::PointerMove {
+            dx: step_x,
+            dy: step_y,
+        }))?;
         remaining_x -= step_x as i32;
         remaining_y -= step_y as i32;
     }
