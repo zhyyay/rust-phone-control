@@ -325,6 +325,11 @@ impl BleInputController {
         self.service.stop()
     }
 
+    /// Returns the current HID report subscription state.
+    pub fn connection_state(&self) -> super::service::BleConnectionState {
+        self.service.connection_state()
+    }
+
     /// Returns the current Windows GATT advertising status.
     pub fn advertising_status(&self) -> Result<String> {
         self.service.advertising_status()
