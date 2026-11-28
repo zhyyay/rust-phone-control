@@ -8,7 +8,9 @@ use std::{
         OnceLock,
         atomic::{AtomicU8, AtomicU64, Ordering},
         mpsc::{self, RecvTimeoutError, SyncSender, TrySendError},
+        Mutex,
     },
+    collections::VecDeque,
     thread,
     time::Duration,
 };
@@ -22,6 +24,7 @@ enum Command {
     Start,
     Stop,
     ReleaseAll(u64),
+    PointerMove(u64),
     Dispatch(InputEvent, u64),
     LeftClick(u64),
     TypeText(String, u64),
@@ -30,6 +33,27 @@ enum Command {
 struct WorkerSenders {
     normal: SyncSender<Command>,
     control: SyncSender<Command>,
+}
+
+#[derive(Debug)]
+struct PointerMoveBatch {
+    id: u64,
+    generation: u64,
+    dx: i64,
+    dy: i64,
+}
+
+#[derive(Default)]
+struct PointerMoveQueue {
+    next_id: u64,
+    open_batch: Option<u64>,
+    batches: VecDeque<PointerMoveBatch>,
+}
+
+static POINTER_MOVES: OnceLock<Mutex<PointerMoveQueue>> = OnceLock::new();
+
+fn pointer_moves() -> &'static Mutex<PointerMoveQueue> {
+    POINTER_MOVES.get_or_init(|| Mutex::new(PointerMoveQueue::default()))
 }
 
 static COMMANDS: OnceLock<std::sync::Mutex<Option<WorkerSenders>>> = OnceLock::new();
@@ -209,6 +233,23 @@ fn spawn_worker() -> Result<WorkerSenders> {
                                 WORKER_STATE.store(WORKER_STOPPED, Ordering::Release);
                             }
                         }
+                        Command::PointerMove(batch_id) => {
+                            if let Some(batch) = take_pointer_move(batch_id) {
+                                let running = active(&controller)?;
+                                if running.subscription_generation() == batch.generation {
+                                    let (mut dx, mut dy) = (batch.dx, batch.dy);
+                                    while dx != 0 || dy != 0 {
+                                        let step_x = dx.clamp(i16::MIN as i64, i16::MAX as i64) as i16;
+                                        let step_y = dy.clamp(i16::MIN as i64, i16::MAX as i64) as i16;
+                                        running.dispatch(InputEvent::PointerMove { dx: step_x, dy: step_y }).await?;
+                                        dx -= step_x as i64;
+                                        dy -= step_y as i64;
+                                    }
+                                } else {
+                                    tracing::debug!(expected_generation = batch.generation, actual_generation = running.subscription_generation(), "Discarded stale coalesced BLE pointer movement");
+                                }
+                            }
+                        }
                         Command::Dispatch(event, expected_generation) => {
                             let running = active(&controller)?;
                             if running.subscription_generation() == expected_generation {
@@ -290,6 +331,68 @@ fn spawn_worker() -> Result<WorkerSenders> {
     }
 }
 
+fn take_pointer_move(batch_id: u64) -> Option<PointerMoveBatch> {
+    let mut queue = pointer_moves()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let index = queue.batches.iter().position(|batch| batch.id == batch_id)?;
+    let batch = queue.batches.remove(index);
+    if queue.open_batch == Some(batch_id) {
+        queue.open_batch = None;
+    }
+    batch
+}
+
+fn seal_pointer_moves() {
+    let mut queue = pointer_moves()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    queue.open_batch = None;
+}
+
+fn clear_pointer_moves() {
+    let mut queue = pointer_moves()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    queue.open_batch = None;
+    queue.batches.clear();
+}
+
+fn queue_pointer_move(dx: i16, dy: i16) -> Result<()> {
+    let generation = SUBSCRIPTION_GENERATION.load(Ordering::Acquire);
+    let mut queue = pointer_moves()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+    if let Some(open_id) = queue.open_batch
+        && let Some(batch) = queue.batches.iter_mut().find(|batch| batch.id == open_id)
+        && batch.generation == generation
+    {
+        batch.dx = batch.dx.saturating_add(dx as i64);
+        batch.dy = batch.dy.saturating_add(dy as i64);
+        return Ok(());
+    }
+
+    queue.next_id = queue.next_id.wrapping_add(1).max(1);
+    let id = queue.next_id;
+    queue.batches.push_back(PointerMoveBatch {
+        id,
+        generation,
+        dx: dx as i64,
+        dy: dy as i64,
+    });
+    queue.open_batch = Some(id);
+
+    if let Err(error) = send(Command::PointerMove(id)) {
+        queue.batches.retain(|batch| batch.id != id);
+        if queue.open_batch == Some(id) {
+            queue.open_batch = None;
+        }
+        return Err(error);
+    }
+    Ok(())
+}
+
 fn active(controller: &Option<BleInputController>) -> Result<&BleInputController> {
     controller
         .as_ref()
@@ -365,6 +468,7 @@ pub fn start() -> Result<()> {
 
 /// Stop advertising and release any held inputs.
 pub fn stop() -> Result<()> {
+    clear_pointer_moves();
     send(Command::Stop).context("queue BLE stop")
 }
 
@@ -387,12 +491,22 @@ pub fn move_mouse(dx: i32, dy: i32) -> Result<()> {
 
 /// Queue one platform-independent HID input event for the active BLE controller.
 pub fn dispatch_event(event: InputEvent) -> Result<()> {
-    let generation = SUBSCRIPTION_GENERATION.load(Ordering::Acquire);
-    if matches!(&event, InputEvent::ReleaseAll) {
-        send(Command::ReleaseAll(generation))
-    } else {
-        send(Command::Dispatch(event, generation))
+    if let InputEvent::PointerMove { dx, dy } = event {
+        return queue_pointer_move(dx, dy);
     }
+
+    if matches!(&event, InputEvent::ReleaseAll) {
+        clear_pointer_moves();
+        let generation = SUBSCRIPTION_GENERATION.load(Ordering::Acquire);
+        return send(Command::ReleaseAll(generation));
+    }
+
+    let _queue = pointer_moves()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let generation = SUBSCRIPTION_GENERATION.load(Ordering::Acquire);
+    seal_pointer_moves();
+    send(Command::Dispatch(event, generation))
 }
 
 /// Press or release the requested keyboard modifier keys.
@@ -413,6 +527,10 @@ pub fn release_all_inputs() -> Result<()> {
 
 /// Send a left mouse click.
 pub fn left_click() -> Result<()> {
+    let _queue = pointer_moves()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    seal_pointer_moves();
     let generation = SUBSCRIPTION_GENERATION.load(Ordering::Acquire);
     send(Command::LeftClick(generation))
 }
@@ -437,6 +555,10 @@ pub fn type_text(text: impl Into<String>) -> Result<()> {
     if text.chars().count() > 512 {
         anyhow::bail!("BLE text input is limited to 512 characters per command");
     }
+    let _queue = pointer_moves()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    seal_pointer_moves();
     let generation = SUBSCRIPTION_GENERATION.load(Ordering::Acquire);
     send(Command::TypeText(text, generation))
 }
@@ -444,4 +566,52 @@ pub fn type_text(text: impl Into<String>) -> Result<()> {
 /// Type a short basic ASCII sample string.
 pub fn type_sample() -> Result<()> {
     type_text("BLE OK")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{PointerMoveBatch, PointerMoveQueue};
+
+    #[test]
+    fn adjacent_pointer_moves_coalesce_without_overflow() {
+        let mut queue = PointerMoveQueue {
+            next_id: 1,
+            open_batch: Some(1),
+            batches: std::collections::VecDeque::from([PointerMoveBatch {
+                id: 1,
+                generation: 7,
+                dx: i16::MAX as i64,
+                dy: -4,
+            }]),
+        };
+        let batch = queue.batches.iter_mut().find(|batch| batch.id == 1).unwrap();
+        batch.dx = batch.dx.saturating_add(12);
+        batch.dy = batch.dy.saturating_add(9);
+        assert_eq!(queue.batches[0].dx, i16::MAX as i64 + 12);
+        assert_eq!(queue.batches[0].dy, 5);
+    }
+
+    #[test]
+    fn sealed_pointer_batch_is_not_reused_for_later_motion() {
+        let mut queue = PointerMoveQueue {
+            next_id: 1,
+            open_batch: Some(1),
+            batches: std::collections::VecDeque::from([PointerMoveBatch {
+                id: 1,
+                generation: 3,
+                dx: 10,
+                dy: 5,
+            }]),
+        };
+        queue.open_batch = None;
+        queue.next_id += 1;
+        queue.batches.push_back(PointerMoveBatch {
+            id: queue.next_id,
+            generation: 3,
+            dx: 2,
+            dy: 1,
+        });
+        assert_eq!(queue.batches.len(), 2);
+        assert_ne!(queue.batches[0].id, queue.batches[1].id);
+    }
 }
