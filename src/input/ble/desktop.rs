@@ -80,6 +80,7 @@ fn sender() -> Result<&'static Sender<Command>> {
                             active
                                 .dispatch(InputEvent::PointerButtons(MouseButtons::LEFT))
                                 .await?;
+                            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
                             active
                                 .dispatch(InputEvent::PointerButtons(MouseButtons::NONE))
                                 .await?;
@@ -138,14 +139,34 @@ pub fn move_mouse(dx: i32, dy: i32) -> Result<()> {
     while remaining_x != 0 || remaining_y != 0 {
         let step_x = remaining_x.clamp(i16::MIN as i32, i16::MAX as i32) as i16;
         let step_y = remaining_y.clamp(i16::MIN as i32, i16::MAX as i32) as i16;
-        send(Command::Dispatch(InputEvent::PointerMove {
+        dispatch_event(InputEvent::PointerMove {
             dx: step_x,
             dy: step_y,
-        }))?;
+        })?;
         remaining_x -= step_x as i32;
         remaining_y -= step_y as i32;
     }
     Ok(())
+}
+
+/// Queue one platform-independent HID input event for the active BLE controller.
+pub fn dispatch_event(event: InputEvent) -> Result<()> {
+    send(Command::Dispatch(event))
+}
+
+/// Press or release the requested keyboard modifier keys.
+pub fn set_key_modifiers(modifiers: crate::input::KeyModifiers) -> Result<()> {
+    dispatch_event(InputEvent::KeyModifiers(modifiers))
+}
+
+/// Tap one USB HID keyboard usage, preserving currently held modifiers.
+pub fn tap_key_usage(usage: u8) -> Result<()> {
+    dispatch_event(InputEvent::KeyUsage(usage))
+}
+
+/// Release every held mouse button and keyboard key.
+pub fn release_all_inputs() -> Result<()> {
+    dispatch_event(InputEvent::ReleaseAll)
 }
 
 /// Send a left mouse click.
@@ -158,7 +179,7 @@ pub fn scroll(amount: i32) -> Result<()> {
     let mut remaining = amount;
     while remaining != 0 {
         let step = remaining.clamp(i16::MIN as i32, i16::MAX as i32) as i16;
-        send(Command::Dispatch(InputEvent::Scroll { vertical: step }))?;
+        dispatch_event(InputEvent::Scroll { vertical: step })?;
         remaining -= step as i32;
     }
     Ok(())
