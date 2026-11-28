@@ -122,7 +122,8 @@ thread_local! {
     /// Last client-space pointer coordinate while dragging.
     static NATIVE_PREVIEW_LAST_POINTER: Cell<Option<(i16, i16)>> = const { Cell::new(None) };
     /// Button currently held by a native preview drag, including right-button drags.
-    static NATIVE_PREVIEW_ACTIVE_BUTTON: Cell<Option<MouseButtons>> = const { Cell::new(None) };
+    static NATIVE_PREVIEW_ACTIVE_BUTTON: Cell<Option<crate::input::MouseButtons>> =
+        const { Cell::new(None) };
     /// Accumulated high-resolution wheel delta until a complete HID wheel step is available.
     static NATIVE_PREVIEW_WHEEL_REMAINDER: Cell<i32> = const { Cell::new(0) };
     /// Original STATIC window procedure, restored before the child HWND is destroyed.
