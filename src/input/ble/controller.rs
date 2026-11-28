@@ -198,7 +198,11 @@ impl BleInputController {
                     .await
             }
             InputEvent::KeyModifiers(_) => {
-                let keys = self.input_state.lock().unwrap_or_else(|p| p.into_inner()).keys;
+                let keys = self
+                    .input_state
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .keys;
                 self.service
                     .send_keyboard_report(KeyboardReport::new(modifiers, keys))
                     .await
@@ -583,9 +587,15 @@ mod tests {
             vertical: 1,
         });
         state.apply(InputEvent::KeyUsage(0x04));
-        state.apply(InputEvent::KeyState { usage: 0x04, pressed: true });
+        state.apply(InputEvent::KeyState {
+            usage: 0x04,
+            pressed: true,
+        });
         assert!(state.keys.contains(&0x04));
-        state.apply(InputEvent::KeyState { usage: 0x04, pressed: false });
+        state.apply(InputEvent::KeyState {
+            usage: 0x04,
+            pressed: false,
+        });
         assert!(!state.keys.contains(&0x04));
         assert_eq!(state.buttons, MouseButtons::MIDDLE);
         assert_eq!(state.modifiers, KeyModifiers::LEFT_CTRL);
