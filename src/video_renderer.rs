@@ -142,7 +142,13 @@ fn virtual_key_to_hid_usage(vk: u32) -> Option<u8> {
         0x6A => 0x55,
         0x6D => 0x56,
         0x6B => 0x57,
-        0x60..=0x69 => if vk == 0x60 { 0x62 } else { 0x59 + (vk as u8 - 0x61) },
+        0x60..=0x69 => {
+            if vk == 0x60 {
+                0x62
+            } else {
+                0x59 + (vk as u8 - 0x61)
+            }
+        }
         0x6E => 0x63,
         _ => return None,
     };
@@ -162,11 +168,23 @@ fn update_key_modifier(
     crate::input::KeyModifiers::from_bits(bits)
 }
 
-fn modifier_for_virtual_key(vk: u32, scan_code: u32, extended: bool) -> Option<crate::input::KeyModifiers> {
+fn modifier_for_virtual_key(
+    vk: u32,
+    scan_code: u32,
+    extended: bool,
+) -> Option<crate::input::KeyModifiers> {
     use crate::input::KeyModifiers as M;
     match vk {
-        0x10 => Some(if scan_code == 0x36 { M::RIGHT_SHIFT } else { M::LEFT_SHIFT }),
-        0x11 => Some(if extended { M::RIGHT_CTRL } else { M::LEFT_CTRL }),
+        0x10 => Some(if scan_code == 0x36 {
+            M::RIGHT_SHIFT
+        } else {
+            M::LEFT_SHIFT
+        }),
+        0x11 => Some(if extended {
+            M::RIGHT_CTRL
+        } else {
+            M::LEFT_CTRL
+        }),
         0x12 => Some(if extended { M::RIGHT_ALT } else { M::LEFT_ALT }),
         0x5B => Some(M::LEFT_GUI),
         0x5C => Some(M::RIGHT_GUI),
@@ -298,7 +316,10 @@ unsafe extern "system" fn native_preview_wndproc(
             let next_buttons = update_mouse_button_state(previous_buttons, button, true);
             NATIVE_PREVIEW_HELD_BUTTONS.with(|held| held.set(next_buttons));
             NATIVE_PREVIEW_LAST_POINTER.with(|last| last.set(Some((x, y))));
-            unsafe { SetFocus(hwnd); SetCapture(hwnd) };
+            unsafe {
+                SetFocus(hwnd);
+                SetCapture(hwnd)
+            };
             if let Err(error) =
                 crate::input::ble::desktop::dispatch_event(InputEvent::PointerButtons(next_buttons))
             {
@@ -398,7 +419,9 @@ unsafe extern "system" fn native_preview_wndproc(
                 let current = NATIVE_PREVIEW_HELD_MODIFIERS.with(Cell::get);
                 let next = update_key_modifier(current, modifier, pressed);
                 NATIVE_PREVIEW_HELD_MODIFIERS.with(|held| held.set(next));
-                if let Err(error) = crate::input::ble::desktop::dispatch_event(InputEvent::KeyModifiers(next)) {
+                if let Err(error) =
+                    crate::input::ble::desktop::dispatch_event(InputEvent::KeyModifiers(next))
+                {
                     tracing::warn!(error = %error, "Could not dispatch native preview modifier state");
                 }
             } else if let Some(usage) = virtual_key_to_hid_usage(vk) {
@@ -415,7 +438,12 @@ unsafe extern "system" fn native_preview_wndproc(
                     }
                     held.set(keys);
                 });
-                if let Err(error) = crate::input::ble::desktop::dispatch_event(InputEvent::KeyState { usage, pressed }) {
+                if let Err(error) =
+                    crate::input::ble::desktop::dispatch_event(InputEvent::KeyState {
+                        usage,
+                        pressed,
+                    })
+                {
                     tracing::warn!(error = %error, usage, pressed, "Could not dispatch native preview key state");
                 }
             }
