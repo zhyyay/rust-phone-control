@@ -85,6 +85,9 @@ pub enum InputEvent {
     /// USB HID keyboard usage ID, not a Unicode character.
     KeyUsage(u8),
     /// Press or release one USB HID keyboard usage while preserving other held keys.
-    KeyState { usage: u8, pressed: bool },
+    KeyState {
+        usage: u8,
+        pressed: bool,
+    },
     ReleaseAll,
 }
