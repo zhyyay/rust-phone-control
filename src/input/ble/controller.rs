@@ -131,7 +131,16 @@ impl BleInputController {
         }
     }
 
+    fn subscription_generation_matches(&self, expected_generation: u64) -> bool {
+        if self.service.subscription_generation() == expected_generation {
+            return true;
+        }
+        self.refresh_subscription_state();
+        false
+    }
+
     async fn dispatch_reports_locked(&self, event: InputEvent) -> Result<()> {
+        let operation_generation = self.service.subscription_generation();
         let (buttons, modifiers) = {
             let mut state = self.input_state.lock().unwrap_or_else(|p| p.into_inner());
             state.apply(event);
@@ -142,6 +151,9 @@ impl BleInputController {
             InputEvent::PointerMove { dx, dy } => {
                 let (mut remaining_x, mut remaining_y) = (dx as i32, dy as i32);
                 while remaining_x != 0 || remaining_y != 0 {
+                    if !self.subscription_generation_matches(operation_generation) {
+                        return Ok(());
+                    }
                     let step_x = remaining_x.clamp(-127, 127) as i16;
                     let step_y = remaining_y.clamp(-127, 127) as i16;
                     self.service
@@ -151,6 +163,9 @@ impl BleInputController {
                     remaining_y -= step_y as i32;
                     if remaining_x != 0 || remaining_y != 0 {
                         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                        if !self.subscription_generation_matches(operation_generation) {
+                            return Ok(());
+                        }
                     }
                 }
                 Ok(())
@@ -174,10 +189,16 @@ impl BleInputController {
                 if usage == 0 {
                     bail!("keyboard usage 0 is reserved for no key");
                 }
+                if !self.subscription_generation_matches(operation_generation) {
+                    return Ok(());
+                }
                 self.service
                     .send_keyboard_report(KeyboardReport::new(modifiers, [usage, 0, 0, 0, 0, 0]))
                     .await?;
                 tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                if !self.subscription_generation_matches(operation_generation) {
+                    return Ok(());
+                }
                 self.service
                     .send_keyboard_report(KeyboardReport::new(modifiers, [0; 6]))
                     .await
@@ -216,6 +237,7 @@ impl BleInputController {
         }
         let _operation = self.operation_lock.lock().await;
         self.refresh_subscription_state();
+        let operation_generation = self.service.subscription_generation();
         let previous_buttons = self
             .input_state
             .lock()
@@ -227,9 +249,14 @@ impl BleInputController {
         if press_result.is_ok() {
             tokio::time::sleep(std::time::Duration::from_millis(20)).await;
         }
-        let restore_result = self
-            .dispatch_locked(InputEvent::PointerButtons(previous_buttons))
-            .await;
+        let restore_result = if self.subscription_generation_matches(operation_generation) {
+            self.dispatch_locked(InputEvent::PointerButtons(previous_buttons))
+                .await
+        } else {
+            // A new HID subscription starts with neutral state; never restore buttons
+            // captured from the previous connection into the new one.
+            Ok(())
+        };
         match (press_result, restore_result) {
             (Ok(()), Ok(())) => Ok(()),
             (Err(error), Ok(())) => Err(error.context("sending mouse click press")),
@@ -264,6 +291,7 @@ impl BleInputController {
 
     async fn tap_key_locked(&self, modifiers: KeyModifiers, usage: u8) -> Result<()> {
         self.refresh_subscription_state();
+        let operation_generation = self.service.subscription_generation();
         let previous_modifiers = self
             .input_state
             .lock()
@@ -277,9 +305,13 @@ impl BleInputController {
         } else {
             Ok(())
         };
-        let restore_result = self
-            .dispatch_locked(InputEvent::KeyModifiers(previous_modifiers))
-            .await;
+        let restore_result = if self.subscription_generation_matches(operation_generation) {
+            self.dispatch_locked(InputEvent::KeyModifiers(previous_modifiers))
+                .await
+        } else {
+            // Subscription changes invalidate the old held-modifier snapshot.
+            Ok(())
+        };
         match (modifier_result, key_result, restore_result) {
             (Ok(()), Ok(()), Ok(())) => Ok(()),
             (Err(error), _, Ok(())) => Err(error.context("setting modifiers for key tap")),
