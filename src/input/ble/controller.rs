@@ -278,8 +278,11 @@ impl BleInputController {
         let mut remaining = amount;
         while remaining != 0 {
             let step = remaining.clamp(i16::MIN as i32, i16::MAX as i32) as i16;
-            self.dispatch_locked(InputEvent::Scroll { horizontal: 0, vertical: step })
-                .await?;
+            self.dispatch_locked(InputEvent::Scroll {
+                horizontal: 0,
+                vertical: step,
+            })
+            .await?;
             remaining -= step as i32;
         }
         Ok(())
