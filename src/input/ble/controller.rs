@@ -2,6 +2,7 @@
 
 use anyhow::{Result, bail};
 use std::sync::Mutex;
+use tokio::sync::Mutex as AsyncMutex;
 
 use super::{
     reports::{KeyboardReport, MouseReport},
@@ -14,6 +15,7 @@ use crate::input::event::{InputEvent, KeyModifiers, MouseButtons};
 pub struct BleInputController {
     service: BleHidService,
     input_state: Mutex<ControllerInputState>,
+    operation_lock: AsyncMutex<()>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -41,6 +43,7 @@ impl BleInputController {
         Ok(Self {
             service: BleHidService::start().await?,
             input_state: Mutex::new(ControllerInputState::default()),
+            operation_lock: AsyncMutex::new(()),
         })
     }
 
@@ -49,6 +52,11 @@ impl BleInputController {
     /// Button and modifier events update persistent state; subsequent pointer reports retain
     /// held buttons, and key taps retain currently-held modifiers. ReleaseAll clears both.
     pub async fn dispatch(&self, event: InputEvent) -> Result<()> {
+        let _operation = self.operation_lock.lock().await;
+        self.dispatch_locked(event).await
+    }
+
+    async fn dispatch_locked(&self, event: InputEvent) -> Result<()> {
         let (buttons, modifiers) = {
             let mut state = self.input_state.lock().unwrap_or_else(|p| p.into_inner());
             state.apply(event);
@@ -112,11 +120,12 @@ impl BleInputController {
 
     /// Sends relative pointer movement. Large movements are split into signed 8-bit reports.
     pub async fn move_mouse(&self, dx: i32, dy: i32) -> Result<()> {
+        let _operation = self.operation_lock.lock().await;
         let (mut remaining_x, mut remaining_y) = (dx, dy);
         while remaining_x != 0 || remaining_y != 0 {
             let step_x = remaining_x.clamp(i16::MIN as i32, i16::MAX as i32) as i16;
             let step_y = remaining_y.clamp(i16::MIN as i32, i16::MAX as i32) as i16;
-            self.dispatch(InputEvent::PointerMove {
+            self.dispatch_locked(InputEvent::PointerMove {
                 dx: step_x,
                 dy: step_y,
             })
@@ -132,24 +141,27 @@ impl BleInputController {
         if button.bits().count_ones() != 1 {
             bail!("click requires a supported mouse button");
         }
+        let _operation = self.operation_lock.lock().await;
         let previous_buttons = self
             .input_state
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .buttons;
-        self.dispatch(InputEvent::PointerButtons(previous_buttons | button))
+        self.dispatch_locked(InputEvent::PointerButtons(previous_buttons | button))
             .await?;
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-        self.dispatch(InputEvent::PointerButtons(previous_buttons))
+        self.dispatch_locked(InputEvent::PointerButtons(previous_buttons))
             .await
     }
 
     /// Sends vertical wheel movement, splitting values larger than one HID report.
     pub async fn scroll(&self, amount: i32) -> Result<()> {
+        let _operation = self.operation_lock.lock().await;
         let mut remaining = amount;
         while remaining != 0 {
             let step = remaining.clamp(i16::MIN as i32, i16::MAX as i32) as i16;
-            self.dispatch(InputEvent::Scroll { vertical: step }).await?;
+            self.dispatch_locked(InputEvent::Scroll { vertical: step })
+                .await?;
             remaining -= step as i32;
         }
         Ok(())
@@ -160,16 +172,21 @@ impl BleInputController {
         if usage == 0 {
             bail!("keyboard usage 0 is reserved for no key");
         }
+        let _operation = self.operation_lock.lock().await;
+        self.tap_key_locked(modifiers, usage).await
+    }
+
+    async fn tap_key_locked(&self, modifiers: KeyModifiers, usage: u8) -> Result<()> {
         let previous_modifiers = self
             .input_state
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .modifiers;
-        self.dispatch(InputEvent::KeyModifiers(previous_modifiers | modifiers))
+        self.dispatch_locked(InputEvent::KeyModifiers(previous_modifiers | modifiers))
             .await?;
-        let key_result = self.dispatch(InputEvent::KeyUsage(usage)).await;
+        let key_result = self.dispatch_locked(InputEvent::KeyUsage(usage)).await;
         let restore_result = self
-            .dispatch(InputEvent::KeyModifiers(previous_modifiers))
+            .dispatch_locked(InputEvent::KeyModifiers(previous_modifiers))
             .await;
         key_result?;
         restore_result
@@ -178,10 +195,9 @@ impl BleInputController {
     /// Types basic ASCII text. Unsupported non-ASCII characters return an error instead of
     /// silently producing incorrect input. Unicode text injection can be added separately.
     pub async fn type_text(&self, text: &str) -> Result<()> {
-        // Validate the complete payload before sending the first HID report. This avoids
-        // partially typing a message when a later character (for example, CJK text) is
-        // unsupported by the current keyboard layout mapper.
+        // Validate the complete payload before sending the first HID report.
         let keys = validate_text(text)?;
+        let _operation = self.operation_lock.lock().await;
 
         for (usage, shifted) in keys {
             let modifiers = if shifted {
@@ -189,7 +205,7 @@ impl BleInputController {
             } else {
                 KeyModifiers::NONE
             };
-            self.tap_key(modifiers, usage).await?;
+            self.tap_key_locked(modifiers, usage).await?;
             tokio::time::sleep(std::time::Duration::from_millis(8)).await;
         }
         Ok(())
@@ -197,8 +213,6 @@ impl BleInputController {
 
     /// Releases all mouse buttons and keyboard keys.
     pub async fn release_all(&self) -> Result<()> {
-        // Keep the controller's persistent state in sync with the reports sent to the host.
-        // Going through dispatch also clears held buttons and modifiers before the next event.
         self.dispatch(InputEvent::ReleaseAll).await
     }
 
