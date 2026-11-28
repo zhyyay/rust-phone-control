@@ -1,6 +1,9 @@
 use super::descriptor::{HID_INFORMATION_VALUE, HID_REPORT_MAP};
 use crate::input::event::{KeyModifiers, MouseButtons};
 
+pub const MOUSE_REPORT_LEN: usize = 5;
+pub const KEYBOARD_REPORT_LEN: usize = 8;
+
 /// Five-byte mouse report payload; the Report Reference descriptor carries report ID 1.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MouseReport {
@@ -26,7 +29,7 @@ impl MouseReport {
         Self::new(MouseButtons::NONE, 0, 0, 0, 0)
     }
 
-    pub const fn as_bytes(self) -> [u8; 5] {
+    pub const fn as_bytes(self) -> [u8; MOUSE_REPORT_LEN] {
         [
             self.buttons.bits(),
             self.dx as u8,
@@ -53,7 +56,7 @@ impl KeyboardReport {
         Self::new(KeyModifiers::NONE, [0; 6])
     }
 
-    pub const fn as_bytes(self) -> [u8; 8] {
+    pub const fn as_bytes(self) -> [u8; KEYBOARD_REPORT_LEN] {
         [
             self.modifiers.bits(),
             0,
@@ -91,6 +94,21 @@ pub const fn hid_information() -> [u8; 4] {
 mod tests {
     use super::*;
     use crate::input::event::{KeyModifiers, MouseButtons};
+
+    #[test]
+    fn mouse_report_length_matches_report_descriptor_fields() {
+        // Buttons + padding form one byte, X/Y/wheel form three bytes,
+        // and Consumer AC Pan contributes the fifth byte.
+        let map = report_map();
+        let relative_axes = [0x75, 0x08, 0x95, 0x03, 0x81, 0x06];
+        let horizontal_pan = [0x05, 0x0C, 0x0A, 0x38, 0x02, 0x15, 0x81, 0x25, 0x7F,
+            0x75, 0x08, 0x95, 0x01, 0x81, 0x06];
+        assert!(map.windows(relative_axes.len()).any(|window| window == relative_axes));
+        assert!(map.windows(horizontal_pan.len()).any(|window| window == horizontal_pan));
+        assert_eq!(MouseReport::release().as_bytes().len(), MOUSE_REPORT_LEN);
+        assert_eq!(MOUSE_REPORT_LEN, 1 + 3 + 1);
+        assert_eq!(KeyboardReport::release().as_bytes().len(), KEYBOARD_REPORT_LEN);
+    }
 
     #[test]
     fn mouse_report_has_expected_layout_and_clamps_motion() {
