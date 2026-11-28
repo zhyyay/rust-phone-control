@@ -317,7 +317,7 @@ unsafe extern "system" fn native_preview_wndproc(
             NATIVE_PREVIEW_HELD_BUTTONS.with(|held| held.set(next_buttons));
             NATIVE_PREVIEW_LAST_POINTER.with(|last| last.set(Some((x, y))));
             unsafe {
-                SetFocus(hwnd);
+                let _ = SetFocus(Some(hwnd));
                 SetCapture(hwnd)
             };
             if let Err(error) =
