@@ -65,6 +65,10 @@ impl BleInputController {
     }
 
     async fn dispatch_locked(&self, event: InputEvent) -> Result<()> {
+        if self.service.is_suspended() {
+            return Ok(());
+        }
+
         let current_generation = self.service.subscription_generation();
         let mut observed_generation = self
             .observed_subscription_generation
