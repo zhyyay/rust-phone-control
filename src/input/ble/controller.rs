@@ -1,6 +1,6 @@
 //! High-level mouse and keyboard actions built on the Windows BLE HID service.
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use std::sync::Mutex;
 use tokio::sync::Mutex as AsyncMutex;
 
