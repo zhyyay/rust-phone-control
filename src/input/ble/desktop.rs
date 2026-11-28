@@ -28,6 +28,24 @@ enum Command {
 
 static COMMANDS: OnceLock<std::sync::Mutex<Option<Sender<Command>>>> = OnceLock::new();
 static CONNECTION_STATE: AtomicU8 = AtomicU8::new(0);
+static WORKER_STATE: AtomicU8 = AtomicU8::new(0);
+
+const WORKER_STOPPED: u8 = 0;
+const WORKER_STARTING: u8 = 1;
+const WORKER_ADVERTISING: u8 = 2;
+const WORKER_STOPPING: u8 = 3;
+const WORKER_ERROR: u8 = 4;
+
+/// Returns the latest BLE worker lifecycle state for the desktop status panel.
+pub fn lifecycle_status() -> &'static str {
+    match WORKER_STATE.load(Ordering::Acquire) {
+        WORKER_STARTING => "蓝牙正在启动",
+        WORKER_ADVERTISING => "蓝牙广播中，等待 iPhone HID 订阅",
+        WORKER_STOPPING => "蓝牙正在停止",
+        WORKER_ERROR => "蓝牙操作失败，请查看日志后重试",
+        _ => "蓝牙已停止",
+    }
+}
 
 fn publish_connection_state(controller: &Option<BleInputController>) {
     let state = controller
@@ -96,20 +114,34 @@ fn spawn_worker() -> Result<Sender<Command>> {
                     match command {
                         Command::Start => {
                             if controller.is_some() {
+                                WORKER_STATE.store(WORKER_ADVERTISING, Ordering::Release);
                                 tracing::info!("BLE HID controller is already running");
                                 return Ok(());
                             }
-                            let started = BleInputController::start()
-                                .await
-                                .context("starting BLE HID controller")?;
-                            let status = started.advertising_status()?;
+                            WORKER_STATE.store(WORKER_STARTING, Ordering::Release);
+                            let started = match BleInputController::start().await {
+                                Ok(started) => started,
+                                Err(error) => {
+                                    WORKER_STATE.store(WORKER_ERROR, Ordering::Release);
+                                    return Err(error).context("starting BLE HID controller");
+                                }
+                            };
+                            let status = match started.advertising_status() {
+                                Ok(status) => status,
+                                Err(error) => {
+                                    WORKER_STATE.store(WORKER_ERROR, Ordering::Release);
+                                    return Err(error).context("reading BLE advertising status after start");
+                                }
+                            };
                             controller = Some(started);
+                            WORKER_STATE.store(WORKER_ADVERTISING, Ordering::Release);
                             tracing::info!(
                                 status = %status,
                                 "BLE HID controller started; connect from iPhone AssistiveTouch"
                             );
                         }
                         Command::Stop => {
+                            WORKER_STATE.store(WORKER_STOPPING, Ordering::Release);
                             if let Some(running) = controller.take() {
                                 let release_result = running
                                     .release_all()
@@ -121,15 +153,25 @@ fn spawn_worker() -> Result<Sender<Command>> {
                                 match (release_result, stop_result) {
                                     (Ok(()), Ok(())) => {
                                         tracing::info!("BLE HID advertising stopped");
+                                        WORKER_STATE.store(WORKER_STOPPED, Ordering::Release);
                                     }
-                                    (Err(release_error), Ok(())) => return Err(release_error),
-                                    (Ok(()), Err(stop_error)) => return Err(stop_error),
+                                    (Err(release_error), Ok(())) => {
+                                        WORKER_STATE.store(WORKER_STOPPED, Ordering::Release);
+                                        return Err(release_error);
+                                    }
+                                    (Ok(()), Err(stop_error)) => {
+                                        WORKER_STATE.store(WORKER_ERROR, Ordering::Release);
+                                        return Err(stop_error);
+                                    }
                                     (Err(release_error), Err(stop_error)) => {
+                                        WORKER_STATE.store(WORKER_ERROR, Ordering::Release);
                                         return Err(anyhow::anyhow!(
                                             "{release_error:#}; BLE stop also failed: {stop_error:#}"
                                         ));
                                     }
                                 }
+                            } else {
+                                WORKER_STATE.store(WORKER_STOPPED, Ordering::Release);
                             }
                         }
                         Command::Dispatch(event) => {
@@ -162,6 +204,7 @@ fn spawn_worker() -> Result<Sender<Command>> {
             }
 
             publish_connection_state(&None);
+            WORKER_STATE.store(WORKER_STOPPED, Ordering::Release);
             if let Some(running) = controller {
                 let _ = runtime.block_on(running.release_all());
                 let _ = running.stop();
@@ -203,6 +246,7 @@ fn send(command: Command) -> Result<()> {
         Ok(()) => Ok(()),
         Err(error) => {
             CONNECTION_STATE.store(0, Ordering::Release);
+            WORKER_STATE.store(WORKER_ERROR, Ordering::Release);
             *slot = None;
             let replacement = spawn_worker()?;
             replacement
