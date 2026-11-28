@@ -2115,8 +2115,14 @@ mod viewport_tests {
     fn left_and_right_modifier_states_are_independent() {
         use crate::input::KeyModifiers as M;
 
-        assert_eq!(modifier_for_virtual_key(0x10, 0x2A, false), Some(M::LEFT_SHIFT));
-        assert_eq!(modifier_for_virtual_key(0x10, 0x36, false), Some(M::RIGHT_SHIFT));
+        assert_eq!(
+            modifier_for_virtual_key(0x10, 0x2A, false),
+            Some(M::LEFT_SHIFT)
+        );
+        assert_eq!(
+            modifier_for_virtual_key(0x10, 0x36, false),
+            Some(M::RIGHT_SHIFT)
+        );
         assert_eq!(modifier_for_virtual_key(0x11, 0, true), Some(M::RIGHT_CTRL));
         assert_eq!(modifier_for_virtual_key(0x12, 0, false), Some(M::LEFT_ALT));
 
