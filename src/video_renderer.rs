@@ -566,13 +566,6 @@ pub(crate) fn destroy_native_video_surface() {
             return;
         }
         let child_hwnd = HWND(child_raw as *mut c_void);
-        unsafe {
-            RemoveWindowSubclass(
-                child_hwnd,
-                Some(native_preview_subclass_proc),
-                NATIVE_PREVIEW_SUBCLASS_ID,
-            );
-        }
         // SAFETY: this is the child HWND created and owned by this module.
         if let Err(error) = unsafe { DestroyWindow(child_hwnd) } {
             tracing::warn!(error = %error, "Could not destroy native video child window");
