@@ -6,7 +6,7 @@
 use std::{
     sync::{
         OnceLock,
-        atomic::{AtomicU8, Ordering},
+        atomic::{AtomicU64, AtomicU8, Ordering},
         mpsc::{self, RecvTimeoutError, SyncSender, TrySendError},
     },
     thread,
@@ -21,14 +21,15 @@ use anyhow::{Context, Result};
 enum Command {
     Start,
     Stop,
-    Dispatch(InputEvent),
-    LeftClick,
-    TypeText(String),
+    Dispatch(InputEvent, u64),
+    LeftClick(u64),
+    TypeText(String, u64),
 }
 
 static COMMANDS: OnceLock<std::sync::Mutex<Option<SyncSender<Command>>>> = OnceLock::new();
 const COMMAND_QUEUE_CAPACITY: usize = 256;
 static CONNECTION_STATE: AtomicU8 = AtomicU8::new(0);
+static SUBSCRIPTION_GENERATION: AtomicU64 = AtomicU64::new(0);
 static WORKER_STATE: AtomicU8 = AtomicU8::new(0);
 
 const WORKER_STOPPED: u8 = 0;
@@ -49,6 +50,11 @@ pub fn lifecycle_status() -> &'static str {
 }
 
 fn publish_connection_state(controller: &Option<BleInputController>) {
+    let generation = controller
+        .as_ref()
+        .map(BleInputController::subscription_generation)
+        .unwrap_or(0);
+    SUBSCRIPTION_GENERATION.store(generation, Ordering::Release);
     let state = controller
         .as_ref()
         .map(BleInputController::connection_state)
@@ -111,6 +117,10 @@ fn spawn_worker() -> Result<SyncSender<Command>> {
                     }
                     Err(RecvTimeoutError::Disconnected) => break,
                 };
+                // Refresh the generation immediately before consuming a queued command.
+                // Commands tagged by an earlier HID subscription must never leak into a
+                // newly connected phone.
+                publish_connection_state(&controller);
                 let result: Result<()> = runtime.block_on(async {
                     match command {
                         Command::Start => {
@@ -175,14 +185,29 @@ fn spawn_worker() -> Result<SyncSender<Command>> {
                                 WORKER_STATE.store(WORKER_STOPPED, Ordering::Release);
                             }
                         }
-                        Command::Dispatch(event) => {
-                            active(&controller)?.dispatch(event).await?;
+                        Command::Dispatch(event, expected_generation) => {
+                            let running = active(&controller)?;
+                            if running.subscription_generation() == expected_generation {
+                                running.dispatch(event).await?;
+                            } else {
+                                tracing::debug!(expected_generation, actual_generation = running.subscription_generation(), "Discarded stale BLE input command");
+                            }
                         }
-                        Command::LeftClick => {
-                            active(&controller)?.click(MouseButtons::LEFT).await?;
+                        Command::LeftClick(expected_generation) => {
+                            let running = active(&controller)?;
+                            if running.subscription_generation() == expected_generation {
+                                running.click(MouseButtons::LEFT).await?;
+                            } else {
+                                tracing::debug!(expected_generation, actual_generation = running.subscription_generation(), "Discarded stale BLE click command");
+                            }
                         }
-                        Command::TypeText(value) => {
-                            active(&controller)?.type_text(&value).await?;
+                        Command::TypeText(value, expected_generation) => {
+                            let running = active(&controller)?;
+                            if running.subscription_generation() == expected_generation {
+                                running.type_text_for_generation(&value, expected_generation).await?;
+                            } else {
+                                tracing::debug!(expected_generation, actual_generation = running.subscription_generation(), "Discarded stale BLE text command");
+                            }
                         }
                     }
                     Ok(())
@@ -317,7 +342,8 @@ pub fn move_mouse(dx: i32, dy: i32) -> Result<()> {
 
 /// Queue one platform-independent HID input event for the active BLE controller.
 pub fn dispatch_event(event: InputEvent) -> Result<()> {
-    send(Command::Dispatch(event))
+    let generation = SUBSCRIPTION_GENERATION.load(Ordering::Acquire);
+    send(Command::Dispatch(event, generation))
 }
 
 /// Press or release the requested keyboard modifier keys.
@@ -337,7 +363,8 @@ pub fn release_all_inputs() -> Result<()> {
 
 /// Send a left mouse click.
 pub fn left_click() -> Result<()> {
-    send(Command::LeftClick)
+    let generation = SUBSCRIPTION_GENERATION.load(Ordering::Acquire);
+    send(Command::LeftClick(generation))
 }
 
 /// Scroll vertically. Positive values scroll down; negative values scroll up.
@@ -360,7 +387,8 @@ pub fn type_text(text: impl Into<String>) -> Result<()> {
     if text.chars().count() > 512 {
         anyhow::bail!("BLE text input is limited to 512 characters per command");
     }
-    send(Command::TypeText(text))
+    let generation = SUBSCRIPTION_GENERATION.load(Ordering::Acquire);
+    send(Command::TypeText(text, generation))
 }
 
 /// Type a short basic ASCII sample string.
