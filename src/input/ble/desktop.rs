@@ -24,13 +24,13 @@ enum Command {
     TypeText(String),
 }
 
-static COMMANDS: OnceLock<Sender<Command>> = OnceLock::new();
+static COMMANDS: OnceLock<std::sync::Mutex<Option<Sender<Command>>>> = OnceLock::new();
 
-fn sender() -> Result<&'static Sender<Command>> {
-    if let Some(sender) = COMMANDS.get() {
-        return Ok(sender);
-    }
+fn command_sender() -> &'static std::sync::Mutex<Option<Sender<Command>>> {
+    COMMANDS.get_or_init(|| std::sync::Mutex::new(None))
+}
 
+fn spawn_worker() -> Result<Sender<Command>> {
     let (tx, rx) = mpsc::channel();
     let (ready_tx, ready_rx) = mpsc::sync_channel::<std::result::Result<(), String>>(1);
     let worker = thread::Builder::new()
@@ -66,16 +66,15 @@ fn sender() -> Result<&'static Sender<Command>> {
                             let started = BleInputController::start()
                                 .await
                                 .context("starting BLE HID controller")?;
+                            let status = started.advertising_status()?;
+                            controller = Some(started);
                             tracing::info!(
-                                status = %started.advertising_status()?,
+                                status = %status,
                                 "BLE HID controller started; connect from iPhone AssistiveTouch"
                             );
-                            controller = Some(started);
                         }
                         Command::Stop => {
                             if let Some(running) = controller.take() {
-                                // Always attempt to stop advertising, even if a final HID
-                                // release notification fails.
                                 let release_result = running
                                     .release_all()
                                     .await
@@ -112,10 +111,6 @@ fn sender() -> Result<&'static Sender<Command>> {
 
                 if let Err(error) = result {
                     tracing::error!(error = %format!("{error:#}"), "BLE desktop command failed");
-
-                    // A failed notification can leave the remote host believing a button
-                    // or modifier is still held. Best-effort release immediately before
-                    // processing the next queued command.
                     if let Some(active) = controller.as_ref() {
                         if let Err(release_error) =
                             runtime.block_on(active.dispatch(InputEvent::ReleaseAll))
@@ -137,23 +132,31 @@ fn sender() -> Result<&'static Sender<Command>> {
         .context("starting BLE controller worker thread")?;
 
     match ready_rx.recv() {
-        Ok(Ok(())) => {}
+        Ok(Ok(())) => Ok(tx),
         Ok(Err(error)) => {
             let _ = worker.join();
-            return Err(anyhow::anyhow!(
+            Err(anyhow::anyhow!(
                 "BLE controller worker could not initialize its Tokio runtime: {error}"
-            ));
+            ))
         }
         Err(error) => {
             let _ = worker.join();
-            return Err(error).context("BLE controller worker exited before initialization");
+            Err(error).context("BLE controller worker exited before initialization")
         }
     }
+}
 
-    let _ = COMMANDS.set(tx);
-    COMMANDS
-        .get()
-        .context("BLE command channel was not initialized")
+fn sender() -> Result<Sender<Command>> {
+    let mut slot = command_sender()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(sender) = slot.as_ref() {
+        return Ok(sender.clone());
+    }
+
+    let sender = spawn_worker()?;
+    *slot = Some(sender.clone());
+    Ok(sender)
 }
 
 fn active(controller: &Option<BleInputController>) -> Result<&BleInputController> {
@@ -163,19 +166,33 @@ fn active(controller: &Option<BleInputController>) -> Result<&BleInputController
 }
 
 fn send(command: Command) -> Result<()> {
-    sender()?
-        .send(command)
-        .context("BLE controller worker is unavailable")
+    let sender = sender()?;
+    match sender.send(command) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            let command = error.0;
+            let mut slot = command_sender()
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            *slot = None;
+            let replacement = spawn_worker()?;
+            replacement
+                .send(command)
+                .context("replacement BLE controller worker is unavailable")?;
+            *slot = Some(replacement);
+            Ok(())
+        }
+    }
 }
 
 /// Start Windows BLE HID advertising. Connect the iPhone from AssistiveTouch.
 pub fn start() -> Result<()> {
-    sender()?.send(Command::Start).context("queue BLE start")
+    send(Command::Start).context("queue BLE start")
 }
 
 /// Stop advertising and release any held inputs.
 pub fn stop() -> Result<()> {
-    sender()?.send(Command::Stop).context("queue BLE stop")
+    send(Command::Stop).context("queue BLE stop")
 }
 
 /// Move the relative pointer by the requested number of HID units.
