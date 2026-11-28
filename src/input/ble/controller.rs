@@ -115,16 +115,21 @@ impl BleInputController {
         self.dispatch(InputEvent::PointerMove { dx, dy }).await
     }
 
-    /// Clicks one mouse button and then sends a release report.
+    /// Clicks one mouse button while preserving any buttons already held.
     pub async fn click(&self, button: MouseButtons) -> Result<()> {
         if button.bits().count_ones() != 1 {
             bail!("click requires a supported mouse button");
         }
-        self.service
-            .send_mouse_report(MouseReport::new(button, 0, 0, 0))
+        let previous_buttons = self
+            .input_state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .buttons;
+        self.dispatch(InputEvent::PointerButtons(previous_buttons | button))
             .await?;
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-        self.service.send_mouse_report(MouseReport::release()).await
+        self.dispatch(InputEvent::PointerButtons(previous_buttons))
+            .await
     }
 
     /// Sends vertical wheel movement, splitting values larger than one HID report.
@@ -132,18 +137,24 @@ impl BleInputController {
         self.dispatch(InputEvent::Scroll { vertical: amount }).await
     }
 
-    /// Presses a USB HID keyboard usage with optional modifier bits, then releases it.
+    /// Taps a USB HID keyboard usage while preserving modifiers already held.
     pub async fn tap_key(&self, modifiers: KeyModifiers, usage: u8) -> Result<()> {
         if usage == 0 {
             bail!("keyboard usage 0 is reserved for no key");
         }
-        self.service
-            .send_keyboard_report(KeyboardReport::new(modifiers, [usage, 0, 0, 0, 0, 0]))
+        let previous_modifiers = self
+            .input_state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .modifiers;
+        self.dispatch(InputEvent::KeyModifiers(previous_modifiers | modifiers))
             .await?;
-        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-        self.service
-            .send_keyboard_report(KeyboardReport::release())
-            .await
+        let key_result = self.dispatch(InputEvent::KeyUsage(usage)).await;
+        let restore_result = self
+            .dispatch(InputEvent::KeyModifiers(previous_modifiers))
+            .await;
+        key_result?;
+        restore_result
     }
 
     /// Types basic ASCII text. Unsupported non-ASCII characters return an error instead of
