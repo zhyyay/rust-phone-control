@@ -28,11 +28,11 @@ fn main() -> Result<()> {
             ..Default::default()
         };
         logging::startup_checkpoint("gpui: opening window");
-        open_window(options, cx, |_, cx| {
+        open_window(options, cx, |window, cx| {
             logging::startup_checkpoint("window: entity factory entered");
-            cx.new(|_| {
+            cx.new(|cx| {
                 logging::startup_checkpoint("window: PhoneControlApp constructed");
-                app::PhoneControlApp::default()
+                app::PhoneControlApp::new(window, cx)
             })
         })
         .expect("failed to open Rust Phone Control window");
