@@ -610,6 +610,41 @@ mod tests {
     }
 
     #[test]
+    fn repeated_key_down_is_idempotent_and_release_preserves_other_keys() {
+        let mut state = ControllerInputState::default();
+        state.apply(InputEvent::KeyState {
+            usage: 0x04,
+            pressed: true,
+        });
+        state.apply(InputEvent::KeyState {
+            usage: 0x05,
+            pressed: true,
+        });
+        state.apply(InputEvent::KeyState {
+            usage: 0x04,
+            pressed: true,
+        });
+        assert_eq!(state.keys, [0x04, 0x05, 0, 0, 0, 0]);
+
+        state.apply(InputEvent::KeyState {
+            usage: 0x04,
+            pressed: false,
+        });
+        assert_eq!(state.keys, [0, 0x05, 0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn release_all_clears_held_keyboard_keys_and_modifiers() {
+        let mut state = ControllerInputState {
+            buttons: MouseButtons::LEFT,
+            modifiers: KeyModifiers::LEFT_SHIFT | KeyModifiers::RIGHT_CTRL,
+            keys: [0x04, 0x05, 0, 0, 0, 0],
+        };
+        state.apply(InputEvent::ReleaseAll);
+        assert_eq!(state, ControllerInputState::default());
+    }
+
+    #[test]
     fn release_all_reports_both_transport_failures() {
         use super::combine_release_results;
         use anyhow::anyhow;
