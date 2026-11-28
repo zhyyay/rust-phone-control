@@ -483,14 +483,19 @@ impl Render for PhoneControlApp {
 
                     let updated = this.update(cx, |this, cx| {
                         let mut changed = false;
-                        let ble_status = match rust_phone_control::input::ble::desktop::connection_state() {
-                            rust_phone_control::input::ble::BleConnectionState::Disconnected => "未订阅 HID 报告（尚未连接或已断开）",
-                            rust_phone_control::input::ble::BleConnectionState::PartiallySubscribed => "部分 HID 报告已订阅（连接未就绪）",
-                            rust_phone_control::input::ble::BleConnectionState::Suspended => "HID 已暂停（等待恢复）",
-                            rust_phone_control::input::ble::BleConnectionState::Ready => "HID 输入就绪（鼠标和键盘均已订阅）",
+                        let connection_status = match rust_phone_control::input::ble::desktop::connection_state() {
+                            rust_phone_control::input::ble::BleConnectionState::Disconnected => "未订阅 HID 报告",
+                            rust_phone_control::input::ble::BleConnectionState::PartiallySubscribed => "部分 HID 报告已订阅",
+                            rust_phone_control::input::ble::BleConnectionState::Suspended => "HID 输入已暂停",
+                            rust_phone_control::input::ble::BleConnectionState::Ready => "HID 鼠标和键盘输入就绪",
                         };
+                        let ble_status = format!(
+                            "{} · {}",
+                            rust_phone_control::input::ble::desktop::lifecycle_status(),
+                            connection_status
+                        );
                         if this.ble_connection_status != ble_status {
-                            this.ble_connection_status = ble_status.to_owned();
+                            this.ble_connection_status = ble_status.clone();
                             changed = true;
                         }
                         if mailbox_cleared {
