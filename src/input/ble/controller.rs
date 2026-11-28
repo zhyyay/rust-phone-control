@@ -193,12 +193,9 @@ impl BleInputController {
 
     /// Releases all mouse buttons and keyboard keys.
     pub async fn release_all(&self) -> Result<()> {
-        self.service
-            .send_mouse_report(MouseReport::release())
-            .await?;
-        self.service
-            .send_keyboard_report(KeyboardReport::release())
-            .await
+        // Keep the controller's persistent state in sync with the reports sent to the host.
+        // Going through dispatch also clears held buttons and modifiers before the next event.
+        self.dispatch(InputEvent::ReleaseAll).await
     }
 
     /// Stops BLE advertising.
