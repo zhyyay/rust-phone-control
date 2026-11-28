@@ -42,12 +42,13 @@ use windows_062::Win32::{
         },
     },
     UI::{
-        Controls::{DefSubclassProc, RemoveWindowSubclass, SUBCLASSPROC, SetWindowSubclass},
+        Input::KeyboardAndMouse::{ReleaseCapture, SetCapture},
         WindowsAndMessaging::{
-            CreateWindowExW, DestroyWindow, ReleaseCapture, SW_HIDE, SW_SHOW, SWP_NOACTIVATE,
-            SWP_NOOWNERZORDER, SWP_NOREDRAW, SWP_NOZORDER, SetCapture, SetWindowPos, ShowWindow,
-            WINDOW_EX_STYLE, WM_CAPTURECHANGED, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE,
-            WM_MOUSEWHEEL, WM_NCDESTROY, WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS,
+            CallWindowProcW, CreateWindowExW, DefWindowProcW, DestroyWindow, GWLP_WNDPROC,
+            SetWindowLongPtrW, SetWindowPos, ShowWindow, WINDOW_EX_STYLE, WM_CAPTURECHANGED,
+            WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCDESTROY, WNDPROC,
+            WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS, SW_HIDE, SW_SHOW, SWP_NOACTIVATE,
+            SWP_NOOWNERZORDER, SWP_NOREDRAW, SWP_NOZORDER,
         },
     },
 };
@@ -121,6 +122,8 @@ thread_local! {
     static NATIVE_PREVIEW_LAST_POINTER: Cell<Option<(i16, i16)>> = const { Cell::new(None) };
     /// Accumulated high-resolution wheel delta until a complete HID wheel step is available.
     static NATIVE_PREVIEW_WHEEL_REMAINDER: Cell<i32> = const { Cell::new(0) };
+    /// Original STATIC window procedure, restored before the child HWND is destroyed.
+    static NATIVE_PREVIEW_ORIGINAL_WNDPROC: Cell<isize> = const { Cell::new(0) };
     /// D3D11 immediate contexts remain on the GPUI thread that first initializes them.
     static THREAD_RENDERER: RefCell<Option<D3d11Device>> = const { RefCell::new(None) };
     /// Borrowed GPUI parent HWND; never destroyed or re-parented by this module.
@@ -138,18 +141,15 @@ thread_local! {
     static DEVICE_RECOVERY_RETRY_AFTER: Cell<Option<Instant>> = const { Cell::new(None) };
 }
 
-const NATIVE_PREVIEW_SUBCLASS_ID: usize = 0x5250_4354;
-
-unsafe extern "system" fn native_preview_subclass_proc(
+unsafe extern "system" fn native_preview_wndproc(
     hwnd: HWND,
     message: u32,
     wparam: windows_062::Win32::Foundation::WPARAM,
     lparam: windows_062::Win32::Foundation::LPARAM,
-    _subclass_id: usize,
-    _reference_data: usize,
 ) -> windows_062::Win32::Foundation::LRESULT {
     use crate::input::{InputEvent, MouseButtons};
 
+    let previous_proc = NATIVE_PREVIEW_ORIGINAL_WNDPROC.with(Cell::get);
     let x = (lparam.0 as u32 as u16) as i16;
     let y = ((lparam.0 as u32 >> 16) as u16) as i16;
 
@@ -182,8 +182,6 @@ unsafe extern "system" fn native_preview_subclass_proc(
             }
         }
         WM_MOUSEWHEEL => {
-            // Windows reports wheel movement in 120-unit detents; preserve
-            // smaller high-resolution deltas until a full HID wheel step exists.
             let delta = ((wparam.0 >> 16) as u16 as i16) as i32;
             let vertical = NATIVE_PREVIEW_WHEEL_REMAINDER.with(|remainder| {
                 let mut accumulated = remainder.get();
@@ -202,7 +200,7 @@ unsafe extern "system" fn native_preview_subclass_proc(
         WM_LBUTTONUP => {
             NATIVE_PREVIEW_DRAGGING.with(|dragging| dragging.set(false));
             NATIVE_PREVIEW_LAST_POINTER.with(|last| last.set(None));
-            unsafe { ReleaseCapture() };
+            let _ = unsafe { ReleaseCapture() };
             if let Err(error) = crate::input::ble::desktop::dispatch_event(
                 InputEvent::PointerButtons(MouseButtons::NONE),
             ) {
@@ -214,6 +212,10 @@ unsafe extern "system" fn native_preview_subclass_proc(
             NATIVE_PREVIEW_LAST_POINTER.with(|last| last.set(None));
             if message == WM_NCDESTROY {
                 NATIVE_PREVIEW_WHEEL_REMAINDER.with(|remainder| remainder.set(0));
+                NATIVE_PREVIEW_ORIGINAL_WNDPROC.with(|original| original.set(0));
+                if previous_proc != 0 {
+                    unsafe { SetWindowLongPtrW(hwnd, GWLP_WNDPROC, previous_proc) };
+                }
             }
             if was_dragging {
                 if let Err(error) =
@@ -222,35 +224,31 @@ unsafe extern "system" fn native_preview_subclass_proc(
                     tracing::warn!(error = %error, "Could not release native preview input capture");
                 }
             }
-            if message == WM_NCDESTROY {
-                unsafe {
-                    RemoveWindowSubclass(
-                        hwnd,
-                        Some(native_preview_subclass_proc),
-                        NATIVE_PREVIEW_SUBCLASS_ID,
-                    )
-                };
-            }
         }
         _ => {}
     }
 
-    unsafe { DefSubclassProc(hwnd, message, wparam, lparam) }
+    if previous_proc != 0 {
+        let previous: WNDPROC = unsafe { std::mem::transmute(previous_proc) };
+        unsafe { CallWindowProcW(previous, hwnd, message, wparam, lparam) }
+    } else {
+        unsafe { DefWindowProcW(hwnd, message, wparam, lparam) }
+    }
 }
 
-/// Attach mouse forwarding to the owned native child without replacing its window procedure.
+/// Attach mouse forwarding to the owned native child while preserving its STATIC procedure.
 fn install_native_preview_input(hwnd: HWND) -> anyhow::Result<()> {
-    let installed = unsafe {
-        SetWindowSubclass(
+    let previous = unsafe {
+        SetWindowLongPtrW(
             hwnd,
-            Some(native_preview_subclass_proc),
-            NATIVE_PREVIEW_SUBCLASS_ID,
-            0,
+            GWLP_WNDPROC,
+            native_preview_wndproc as *const () as isize,
         )
     };
-    if !installed.as_bool() {
-        bail!("SetWindowSubclass failed for native preview input");
+    if previous == 0 {
+        bail!("SetWindowLongPtrW failed for native preview input");
     }
+    NATIVE_PREVIEW_ORIGINAL_WNDPROC.with(|original| original.set(previous));
     Ok(())
 }
 
