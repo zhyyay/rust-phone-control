@@ -577,7 +577,7 @@ mod tests {
         let mut state = ControllerInputState {
             buttons: MouseButtons::LEFT | MouseButtons::MIDDLE,
             modifiers: KeyModifiers::LEFT_ALT | KeyModifiers::LEFT_SHIFT,
-            keys: [0x04, 0; 6],
+            keys: [0x04, 0, 0, 0, 0, 0],
         };
         state.reset();
         assert_eq!(state, ControllerInputState::default());
