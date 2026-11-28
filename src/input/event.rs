@@ -1,4 +1,4 @@
-/// Mouse button state. The three low bits map to HID buttons 1 through 3.
+/// Mouse button state. The five low bits map to HID buttons 1 through 5.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct MouseButtons(u8);
 
@@ -7,9 +7,11 @@ impl MouseButtons {
     pub const LEFT: Self = Self(1 << 0);
     pub const RIGHT: Self = Self(1 << 1);
     pub const MIDDLE: Self = Self(1 << 2);
+    pub const BACK: Self = Self(1 << 3);
+    pub const FORWARD: Self = Self(1 << 4);
 
     pub const fn from_bits_truncate(bits: u8) -> Self {
-        Self(bits & 0b0000_0111)
+        Self(bits & 0b0001_1111)
     }
 
     pub const fn bits(self) -> u8 {
