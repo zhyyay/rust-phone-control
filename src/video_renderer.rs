@@ -42,7 +42,7 @@ use windows_062::Win32::{
         },
     },
     UI::{
-        Input::KeyboardAndMouse::{ReleaseCapture, SetCapture},
+        Input::KeyboardAndMouse::{ReleaseCapture, SetCapture, SetFocus},
         WindowsAndMessaging::{
             CallWindowProcW, CreateWindowExW, DefWindowProcW, DestroyWindow, GWLP_WNDPROC, SW_HIDE,
             SW_SHOW, SWP_NOACTIVATE, SWP_NOOWNERZORDER, SWP_NOREDRAW, SWP_NOZORDER,
@@ -99,6 +99,81 @@ fn mouse_buttons_match_wparam(held: crate::input::MouseButtons, flags: u32) -> b
         && (!held.contains(MouseButtons::FORWARD) || flags & 0x0040 != 0)
 }
 
+/// Map Windows virtual-key codes to USB HID keyboard usages (US physical layout).
+/// This intentionally maps physical keys, not Unicode text or the active IME composition.
+fn virtual_key_to_hid_usage(vk: u32) -> Option<u8> {
+    let usage = match vk {
+        0x41..=0x5A => 0x04 + (vk as u8 - 0x41),
+        0x31..=0x39 => 0x1E + (vk as u8 - 0x31),
+        0x30 => 0x27,
+        0x0D => 0x28,
+        0x1B => 0x29,
+        0x08 => 0x2A,
+        0x09 => 0x2B,
+        0x20 => 0x2C,
+        0xBD => 0x2D,
+        0xBB => 0x2E,
+        0xDB => 0x2F,
+        0xDD => 0x30,
+        0xDC => 0x31,
+        0xBA => 0x33,
+        0xDE => 0x34,
+        0xC0 => 0x35,
+        0xBC => 0x36,
+        0xBE => 0x37,
+        0xBF => 0x38,
+        0x14 => 0x39,
+        0x70..=0x7B => 0x3A + (vk as u8 - 0x70),
+        0x2C => 0x46,
+        0x91 => 0x47,
+        0x13 => 0x48,
+        0x2D => 0x49,
+        0x24 => 0x4A,
+        0x21 => 0x4B,
+        0x2E => 0x4C,
+        0x23 => 0x4D,
+        0x22 => 0x4E,
+        0x27 => 0x4F,
+        0x25 => 0x50,
+        0x28 => 0x51,
+        0x26 => 0x52,
+        0x90 => 0x53,
+        0x6F => 0x54,
+        0x6A => 0x55,
+        0x6D => 0x56,
+        0x6B => 0x57,
+        0x60..=0x69 => if vk == 0x60 { 0x62 } else { 0x59 + (vk as u8 - 0x61) },
+        0x6E => 0x63,
+        _ => return None,
+    };
+    Some(usage)
+}
+
+fn update_key_modifier(
+    current: crate::input::KeyModifiers,
+    modifier: crate::input::KeyModifiers,
+    pressed: bool,
+) -> crate::input::KeyModifiers {
+    let bits = if pressed {
+        current.bits() | modifier.bits()
+    } else {
+        current.bits() & !modifier.bits()
+    };
+    crate::input::KeyModifiers::from_bits(bits)
+}
+
+fn modifier_for_virtual_key(vk: u32, scan_code: u32, extended: bool) -> Option<crate::input::KeyModifiers> {
+    use crate::input::KeyModifiers as M;
+    match vk {
+        0x10 => Some(if scan_code == 0x36 { M::RIGHT_SHIFT } else { M::LEFT_SHIFT }),
+        0x11 => Some(if extended { M::RIGHT_CTRL } else { M::LEFT_CTRL }),
+        0x12 => Some(if extended { M::RIGHT_ALT } else { M::LEFT_ALT }),
+        0x5B => Some(M::LEFT_GUI),
+        0x5C => Some(M::RIGHT_GUI),
+        _ => None,
+    }
+}
+
 fn recovery_cooldown_active(now: Instant, retry_after: Option<Instant>) -> bool {
     retry_after.is_some_and(|deadline| now < deadline)
 }
@@ -147,6 +222,9 @@ thread_local! {
     /// Buttons currently held by the native preview, including simultaneous left/right drags.
     static NATIVE_PREVIEW_HELD_BUTTONS: Cell<crate::input::MouseButtons> =
         const { Cell::new(crate::input::MouseButtons::NONE) };
+    /// Modifier keys currently held in the native preview.
+    static NATIVE_PREVIEW_HELD_MODIFIERS: Cell<crate::input::KeyModifiers> =
+        const { Cell::new(crate::input::KeyModifiers::NONE) };
     /// Last client-space pointer coordinate while dragging.
     static NATIVE_PREVIEW_LAST_POINTER: Cell<Option<(i16, i16)>> = const { Cell::new(None) };
     /// Accumulated high-resolution wheel delta until a complete HID wheel step is available.
@@ -216,7 +294,7 @@ unsafe extern "system" fn native_preview_wndproc(
             let next_buttons = update_mouse_button_state(previous_buttons, button, true);
             NATIVE_PREVIEW_HELD_BUTTONS.with(|held| held.set(next_buttons));
             NATIVE_PREVIEW_LAST_POINTER.with(|last| last.set(Some((x, y))));
-            unsafe { SetCapture(hwnd) };
+            unsafe { SetFocus(hwnd); SetCapture(hwnd) };
             if let Err(error) =
                 crate::input::ble::desktop::dispatch_event(InputEvent::PointerButtons(next_buttons))
             {
@@ -305,6 +383,31 @@ unsafe extern "system" fn native_preview_wndproc(
                 tracing::warn!(error = %error, "Could not dispatch native preview mouse-up");
             }
         }
+        0x0100 | 0x0104 | 0x0101 | 0x0105 => {
+            // WM_KEYDOWN/WM_SYSKEYDOWN and WM_KEYUP/WM_SYSKEYUP.
+            let pressed = message == 0x0100 || message == 0x0104;
+            let vk = wparam.0 as u32;
+            let key_data = lparam.0 as u32;
+            let scan_code = (key_data >> 16) & 0xFF;
+            let extended = key_data & (1 << 24) != 0;
+            if let Some(modifier) = modifier_for_virtual_key(vk, scan_code, extended) {
+                let current = NATIVE_PREVIEW_HELD_MODIFIERS.with(Cell::get);
+                let next = update_key_modifier(current, modifier, pressed);
+                NATIVE_PREVIEW_HELD_MODIFIERS.with(|held| held.set(next));
+                if let Err(error) = crate::input::ble::desktop::dispatch_event(InputEvent::KeyModifiers(next)) {
+                    tracing::warn!(error = %error, "Could not dispatch native preview modifier state");
+                }
+            } else if let Some(usage) = virtual_key_to_hid_usage(vk) {
+                if let Err(error) = crate::input::ble::desktop::dispatch_event(InputEvent::KeyState { usage, pressed }) {
+                    tracing::warn!(error = %error, usage, pressed, "Could not dispatch native preview key state");
+                }
+            }
+        }
+        0x0008 => {
+            // WM_KILLFOCUS: do not leave a modifier or ordinary key held on the phone.
+            NATIVE_PREVIEW_HELD_MODIFIERS.with(|held| held.set(crate::input::KeyModifiers::NONE));
+            let _ = crate::input::ble::desktop::dispatch_event(InputEvent::ReleaseAll);
+        }
         WM_CAPTURECHANGED | WM_NCDESTROY => {
             let had_held_buttons = NATIVE_PREVIEW_HELD_BUTTONS
                 .with(|held| held.replace(MouseButtons::NONE) != MouseButtons::NONE);
@@ -336,7 +439,7 @@ unsafe extern "system" fn native_preview_wndproc(
     }
 }
 
-/// Attach mouse forwarding to the owned native child while preserving its STATIC procedure.
+/// Attach mouse and physical-key forwarding to the owned native child while preserving its STATIC procedure.
 fn install_native_preview_input(hwnd: HWND) -> anyhow::Result<()> {
     let previous = unsafe {
         SetWindowLongPtrW(
