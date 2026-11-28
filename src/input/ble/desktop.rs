@@ -4,13 +4,12 @@
 //! event loop and keeps callback tasks alive while the UI is idle.
 
 use std::{
+    collections::VecDeque,
     sync::{
-        OnceLock,
+        Mutex, OnceLock,
         atomic::{AtomicU8, AtomicU64, Ordering},
         mpsc::{self, RecvTimeoutError, SyncSender, TrySendError},
-        Mutex,
     },
-    collections::VecDeque,
     thread,
     time::Duration,
 };
@@ -335,7 +334,10 @@ fn take_pointer_move(batch_id: u64) -> Option<PointerMoveBatch> {
     let mut queue = pointer_moves()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let index = queue.batches.iter().position(|batch| batch.id == batch_id)?;
+    let index = queue
+        .batches
+        .iter()
+        .position(|batch| batch.id == batch_id)?;
     let batch = queue.batches.remove(index);
     if queue.open_batch == Some(batch_id) {
         queue.open_batch = None;
@@ -578,7 +580,11 @@ mod tests {
                 dy: -4,
             }]),
         };
-        let batch = queue.batches.iter_mut().find(|batch| batch.id == 1).unwrap();
+        let batch = queue
+            .batches
+            .iter_mut()
+            .find(|batch| batch.id == 1)
+            .unwrap();
         batch.dx = batch.dx.saturating_add(12);
         batch.dy = batch.dy.saturating_add(9);
         assert_eq!(queue.batches[0].dx, i16::MAX as i64 + 12);
