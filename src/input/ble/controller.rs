@@ -212,9 +212,17 @@ impl BleInputController {
             (Ok(()), Ok(()), Err(error)) => Err(error.context("restoring modifiers after key tap")),
             (modifier, key, restore) => Err(anyhow::anyhow!(
                 "key tap failed (modifier: {}; key: {}; restore: {})",
-                modifier.err().map(|e| format!("{e:#}")).unwrap_or_else(|| "ok".into()),
-                key.err().map(|e| format!("{e:#}")).unwrap_or_else(|| "ok".into()),
-                restore.err().map(|e| format!("{e:#}")).unwrap_or_else(|| "ok".into()),
+                modifier
+                    .err()
+                    .map(|e| format!("{e:#}"))
+                    .unwrap_or_else(|| "ok".into()),
+                key.err()
+                    .map(|e| format!("{e:#}"))
+                    .unwrap_or_else(|| "ok".into()),
+                restore
+                    .err()
+                    .map(|e| format!("{e:#}"))
+                    .unwrap_or_else(|| "ok".into()),
             )),
         }
     }
