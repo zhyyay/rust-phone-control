@@ -124,6 +124,8 @@ mod fallback_result_tests {
 pub struct PhoneControlApp {
     airplay_status: String,
     #[cfg(windows)]
+    ble_connection_status: String,
+    #[cfg(windows)]
     pending_airplay_controller: Option<String>,
     #[cfg(windows)]
     trusted_airplay_controllers: Vec<String>,
@@ -482,6 +484,15 @@ impl Render for PhoneControlApp {
 
                     let updated = this.update(cx, |this, cx| {
                         let mut changed = false;
+                        let ble_status = match rust_phone_control::input::ble::desktop::connection_state() {
+                            rust_phone_control::input::ble::BleConnectionState::Disconnected => "未订阅 HID 报告（尚未连接或已断开）",
+                            rust_phone_control::input::ble::BleConnectionState::PartiallySubscribed => "部分 HID 报告已订阅（连接未就绪）",
+                            rust_phone_control::input::ble::BleConnectionState::Ready => "HID 输入就绪（鼠标和键盘均已订阅）",
+                        };
+                        if this.ble_connection_status != ble_status {
+                            this.ble_connection_status = ble_status.to_owned();
+                            changed = true;
+                        }
                         if mailbox_cleared {
                             crate::video_renderer::hide_native_video_surface();
                             if let Some(cancel) = fallback_conversion_cancel.take() {
@@ -932,7 +943,8 @@ fn render_left_sidebar(app: &PhoneControlApp, cx: &Context<PhoneControlApp>) -> 
                 .border_1()
                 .border_color(gpui_kit::rgb(0xE8EBF1))
                 .child(Label::new("  iPhone · BLE"))
-                .child(Label::new("蓝牙 HID 控制")),
+                .child(Label::new("蓝牙 HID 控制"))
+                .child(Label::new(app.ble_connection_status.as_str())),
         )
         .child(
             div()
