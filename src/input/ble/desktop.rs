@@ -293,7 +293,10 @@ fn active(controller: &Option<BleInputController>) -> Result<&BleInputController
         .context("BLE is not started; click Connect first")
 }
 
-fn send_to_worker(sender: &WorkerSenders, command: Command) -> std::result::Result<(), TrySendError<Command>> {
+fn send_to_worker(
+    sender: &WorkerSenders,
+    command: Command,
+) -> std::result::Result<(), TrySendError<Command>> {
     if is_control_command(&command) {
         sender.control.try_send(command)
     } else {
@@ -302,7 +305,10 @@ fn send_to_worker(sender: &WorkerSenders, command: Command) -> std::result::Resu
 }
 
 fn is_control_command(command: &Command) -> bool {
-    matches!(command, Command::Start | Command::Stop | Command::ReleaseAll(_))
+    matches!(
+        command,
+        Command::Start | Command::Stop | Command::ReleaseAll(_)
+    )
 }
 
 fn send(command: Command) -> Result<()> {
