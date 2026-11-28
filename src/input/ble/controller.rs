@@ -65,6 +65,9 @@ impl BleInputController {
     }
 
     async fn dispatch_locked(&self, event: InputEvent) -> Result<()> {
+        if self.service.is_stopped() {
+            bail!("BLE HID controller has stopped");
+        }
         if self.service.is_suspended() {
             return Ok(());
         }
