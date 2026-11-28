@@ -157,8 +157,8 @@ unsafe extern "system" fn native_preview_wndproc(
 
     let previous_proc = NATIVE_PREVIEW_ORIGINAL_WNDPROC.with(Cell::get);
     let generation = crate::input::ble::desktop::subscription_generation();
-    let generation_changed = NATIVE_PREVIEW_INPUT_GENERATION
-        .with(|observed| observed.replace(generation) != generation);
+    let generation_changed =
+        NATIVE_PREVIEW_INPUT_GENERATION.with(|observed| observed.replace(generation) != generation);
     if generation_changed {
         // A new GATT subscription starts from neutral HID state. Do not carry
         // a partial wheel detent or a stale drag into the new phone session.
