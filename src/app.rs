@@ -875,7 +875,7 @@ fn render_workspace(app: &PhoneControlApp, cx: &Context<PhoneControlApp>) -> imp
                 .gap_2()
                 .child(render_left_sidebar(app, cx))
                 .child(render_preview_column(app, cx))
-                .child(render_right_controls(self, cx)),
+                .child(render_right_controls(app, cx)),
         )
 }
 
@@ -1163,11 +1163,9 @@ fn render_right_controls(app: &PhoneControlApp, cx: &Context<PhoneControlApp>) -
                 .bg(gpui_kit::rgb(0xF6F7FB))
                 .border_1()
                 .border_color(gpui_kit::rgb(0xE5E8F0))
-                .child(if let Some(input) = app.keyboard_input.as_ref() {
-                    Input::new(input).w_full()
-                } else {
-                    div().child(Label::new("键盘输入未初始化"))
-                })
+                .child(div().when_some(app.keyboard_input.as_ref(), |this, input| {
+                    this.child(Input::new(input).w_full())
+                }))
                 .child(
                     Button::new("keyboard-send-text")
                         .primary()
