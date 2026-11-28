@@ -48,6 +48,7 @@ pub struct BleHidService {
     keyboard_report: GattLocalCharacteristic,
     suspended: Arc<AtomicBool>,
     stopped: AtomicBool,
+    advertising_stopped: AtomicBool,
     mouse_state: Arc<Mutex<Vec<u8>>>,
     keyboard_state: Arc<Mutex<Vec<u8>>>,
     subscription_generation: Arc<AtomicU64>,
@@ -276,6 +277,7 @@ impl BleHidService {
             keyboard_report,
             suspended,
             stopped: AtomicBool::new(false),
+            advertising_stopped: AtomicBool::new(false),
             mouse_state,
             keyboard_state,
             subscription_generation,
@@ -396,6 +398,7 @@ impl BleHidService {
         if let Some(error) = first_error {
             return Err(error).context("stopping one or more Windows BLE GATT services");
         }
+        self.advertising_stopped.store(true, Ordering::Release);
         Ok(())
     }
 
@@ -411,7 +414,8 @@ impl BleHidService {
 
 impl Drop for BleHidService {
     fn drop(&mut self) {
-        if self.stopped.swap(true, Ordering::AcqRel) {
+        self.stopped.store(true, Ordering::Release);
+        if self.advertising_stopped.swap(true, Ordering::AcqRel) {
             return;
         }
 
@@ -419,7 +423,7 @@ impl Drop for BleHidService {
             if let Err(error) = provider.StopAdvertising() {
                 tracing::warn!(
                     error = %error,
-                    "BLE HID advertising cleanup failed while dropping service"
+                    "BLE HID advertising cleanup retry failed while dropping service"
                 );
             }
         }
