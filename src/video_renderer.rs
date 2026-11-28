@@ -126,6 +126,8 @@ thread_local! {
         const { Cell::new(None) };
     /// Accumulated high-resolution wheel delta until a complete HID wheel step is available.
     static NATIVE_PREVIEW_WHEEL_REMAINDER: Cell<i32> = const { Cell::new(0) };
+    /// Last BLE subscription generation observed by this native preview window.
+    static NATIVE_PREVIEW_INPUT_GENERATION: Cell<u64> = const { Cell::new(0) };
     /// Original STATIC window procedure, restored before the child HWND is destroyed.
     static NATIVE_PREVIEW_ORIGINAL_WNDPROC: Cell<isize> = const { Cell::new(0) };
     /// D3D11 immediate contexts remain on the GPUI thread that first initializes them.
@@ -154,6 +156,17 @@ unsafe extern "system" fn native_preview_wndproc(
     use crate::input::{InputEvent, MouseButtons};
 
     let previous_proc = NATIVE_PREVIEW_ORIGINAL_WNDPROC.with(Cell::get);
+    let generation = crate::input::ble::desktop::subscription_generation();
+    let generation_changed = NATIVE_PREVIEW_INPUT_GENERATION
+        .with(|observed| observed.replace(generation) != generation);
+    if generation_changed {
+        // A new GATT subscription starts from neutral HID state. Do not carry
+        // a partial wheel detent or a stale drag into the new phone session.
+        NATIVE_PREVIEW_DRAGGING.with(|dragging| dragging.set(false));
+        NATIVE_PREVIEW_ACTIVE_BUTTON.with(|active| active.set(None));
+        NATIVE_PREVIEW_LAST_POINTER.with(|last| last.set(None));
+        NATIVE_PREVIEW_WHEEL_REMAINDER.with(|remainder| remainder.set(0));
+    }
     let x = (lparam.0 as u32 as u16) as i16;
     let y = ((lparam.0 as u32 >> 16) as u16) as i16;
 
