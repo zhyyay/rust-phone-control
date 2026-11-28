@@ -41,10 +41,14 @@ use windows_062::Win32::{
             IDXGIDevice, IDXGIFactory2, IDXGISwapChain1,
         },
     },
-    UI::WindowsAndMessaging::{
-        CreateWindowExW, DestroyWindow, SW_HIDE, SW_SHOW, SWP_NOACTIVATE, SWP_NOOWNERZORDER,
-        SWP_NOREDRAW, SWP_NOZORDER, SetWindowPos, ShowWindow, WINDOW_EX_STYLE, WS_CHILD,
-        WS_CLIPCHILDREN, WS_CLIPSIBLINGS,
+    UI::{
+        Controls::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass, SUBCLASSPROC},
+        WindowsAndMessaging::{
+            CreateWindowExW, DestroyWindow, ReleaseCapture, SetCapture, SW_HIDE, SW_SHOW,
+            SWP_NOACTIVATE, SWP_NOOWNERZORDER, SWP_NOREDRAW, SWP_NOZORDER, SetWindowPos,
+            ShowWindow, WINDOW_EX_STYLE, WM_CAPTURECHANGED, WM_LBUTTONDOWN, WM_LBUTTONUP,
+            WM_MOUSEMOVE, WM_NCDESTROY, WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS,
+        },
     },
 };
 use windows_062::core::{BOOL, Interface, PCSTR, PCWSTR};
@@ -101,6 +105,10 @@ pub(crate) fn preview_metrics() -> (u64, u64, u64, u64, u64) {
 }
 
 thread_local! {
+    /// Whether the native preview currently owns a left-button drag.
+    static NATIVE_PREVIEW_DRAGGING: Cell<bool> = const { Cell::new(false) };
+    /// Last client-space pointer coordinate while dragging.
+    static NATIVE_PREVIEW_LAST_POINTER: Cell<Option<(i16, i16)>> = const { Cell::new(None) };
     /// D3D11 immediate contexts remain on the GPUI thread that first initializes them.
     static THREAD_RENDERER: RefCell<Option<D3d11Device>> = const { RefCell::new(None) };
     /// Borrowed GPUI parent HWND; never destroyed or re-parented by this module.
@@ -116,6 +124,85 @@ thread_local! {
         const { Cell::new(None) };
     /// Prevent a removed device from triggering a rebuild attempt on every frame.
     static DEVICE_RECOVERY_RETRY_AFTER: Cell<Option<Instant>> = const { Cell::new(None) };
+}
+
+const NATIVE_PREVIEW_SUBCLASS_ID: usize = 0x5250_4354;
+
+unsafe extern "system" fn native_preview_subclass_proc(
+    hwnd: HWND,
+    message: u32,
+    wparam: windows_062::Win32::Foundation::WPARAM,
+    lparam: windows_062::Win32::Foundation::LPARAM,
+    _subclass_id: usize,
+    _reference_data: usize,
+) -> windows_062::Win32::Foundation::LRESULT {
+    use crate::input::{InputEvent, MouseButtons};
+
+    let x = (lparam.0 as u32 as u16) as i16;
+    let y = ((lparam.0 as u32 >> 16) as u16) as i16;
+
+    match message {
+        WM_LBUTTONDOWN => {
+            NATIVE_PREVIEW_DRAGGING.with(|dragging| dragging.set(true));
+            NATIVE_PREVIEW_LAST_POINTER.with(|last| last.set(Some((x, y))));
+            unsafe { SetCapture(hwnd) };
+            if let Err(error) = crate::input::ble::desktop::dispatch_event(
+                InputEvent::PointerButtons(MouseButtons::LEFT),
+            ) {
+                tracing::warn!(error = %error, "Could not dispatch native preview mouse-down");
+            }
+        }
+        WM_MOUSEMOVE if wparam.0 & 0x0001 != 0 => {
+            let previous = NATIVE_PREVIEW_LAST_POINTER.with(|last| last.replace(Some((x, y))));
+            if let Some((previous_x, previous_y)) = previous {
+                let dx = x.saturating_sub(previous_x);
+                let dy = y.saturating_sub(previous_y);
+                if dx != 0 || dy != 0 {
+                    if let Err(error) = crate::input::ble::desktop::dispatch_event(
+                        InputEvent::PointerMove { dx, dy },
+                    ) {
+                        tracing::warn!(error = %error, "Could not dispatch native preview pointer movement");
+                    }
+                }
+            }
+        }
+        WM_LBUTTONUP => {
+            NATIVE_PREVIEW_DRAGGING.with(|dragging| dragging.set(false));
+            NATIVE_PREVIEW_LAST_POINTER.with(|last| last.set(None));
+            unsafe { ReleaseCapture() };
+            if let Err(error) = crate::input::ble::desktop::dispatch_event(
+                InputEvent::PointerButtons(MouseButtons::NONE),
+            ) {
+                tracing::warn!(error = %error, "Could not dispatch native preview mouse-up");
+            }
+        }
+        WM_CAPTURECHANGED | WM_NCDESTROY => {
+            let was_dragging = NATIVE_PREVIEW_DRAGGING.with(|dragging| dragging.replace(false));
+            NATIVE_PREVIEW_LAST_POINTER.with(|last| last.set(None));
+            if was_dragging {
+                if let Err(error) = crate::input::ble::desktop::dispatch_event(InputEvent::ReleaseAll) {
+                    tracing::warn!(error = %error, "Could not release native preview input capture");
+                }
+            }
+            if message == WM_NCDESTROY {
+                unsafe { RemoveWindowSubclass(hwnd, Some(native_preview_subclass_proc), NATIVE_PREVIEW_SUBCLASS_ID) };
+            }
+        }
+        _ => {}
+    }
+
+    unsafe { DefSubclassProc(hwnd, message, wparam, lparam) }
+}
+
+/// Attach mouse forwarding to the owned native child without replacing its window procedure.
+fn install_native_preview_input(hwnd: HWND) -> anyhow::Result<()> {
+    let installed = unsafe {
+        SetWindowSubclass(hwnd, Some(native_preview_subclass_proc), NATIVE_PREVIEW_SUBCLASS_ID, 0)
+    };
+    if !installed.as_bool() {
+        bail!("SetWindowSubclass failed for native preview input");
+    }
+    Ok(())
 }
 
 /// Resolve GPUI's current Windows window handle and initialize the thread-local D3D11 device.
@@ -200,6 +287,8 @@ pub(crate) fn sync_native_video_surface(
                 )
             }
             .context("CreateWindowExW failed for the native video child surface")?;
+            install_native_preview_input(created)
+                .context("could not install native preview mouse forwarding")?;
             child_raw = created.0 as isize;
             child_cell.set(child_raw);
             NATIVE_VIDEO_CHILD_PARENT_HWND.with(|stored_parent| stored_parent.set(parent));
@@ -426,6 +515,13 @@ pub(crate) fn destroy_native_video_surface() {
             return;
         }
         let child_hwnd = HWND(child_raw as *mut c_void);
+        unsafe {
+            RemoveWindowSubclass(
+                child_hwnd,
+                Some(native_preview_subclass_proc),
+                NATIVE_PREVIEW_SUBCLASS_ID,
+            );
+        }
         // SAFETY: this is the child HWND created and owned by this module.
         if let Err(error) = unsafe { DestroyWindow(child_hwnd) } {
             tracing::warn!(error = %error, "Could not destroy native video child window");
