@@ -4,6 +4,10 @@ use gpui_kit::component::{
     label::Label,
 };
 use gpui_kit::*;
+#[cfg(windows)]
+use gpui::MouseButton;
+#[cfg(windows)]
+use rust_phone_control::input::{InputEvent, MouseButtons};
 
 #[cfg(windows)]
 use std::{
@@ -1091,16 +1095,16 @@ fn render_preview_column(app: &PhoneControlApp, cx: &Context<PhoneControlApp>) -
                         None => crate::video_renderer::destroy_native_video_surface(),
                     }
                 })
-                .on_mouse_down(MouseButton::Left, cx.listener(|this, event, _, _| {
+                .on_mouse_down(MouseButton::Left, cx.listener(|this, event: &gpui::MouseDownEvent, _, _| {
                     this.preview_pointer_position = Some((
                         event.position.x.as_f32(),
                         event.position.y.as_f32(),
                     ));
                     queue_ble(rust_phone_control::input::ble::desktop::dispatch_event(
-                        crate::input::InputEvent::PointerButtons(crate::input::MouseButtons::LEFT),
+                        InputEvent::PointerButtons(MouseButtons::LEFT),
                     ));
                 }))
-                .on_mouse_move(cx.listener(|this, event, _, _| {
+                .on_mouse_move(cx.listener(|this, event: &gpui::MouseMoveEvent, _, _| {
                     if !event.dragging() {
                         return;
                     }
@@ -1114,25 +1118,25 @@ fn render_preview_column(app: &PhoneControlApp, cx: &Context<PhoneControlApp>) -
                             .clamp(i16::MIN as f32, i16::MAX as f32) as i16;
                         if dx != 0 || dy != 0 {
                             queue_ble(rust_phone_control::input::ble::desktop::dispatch_event(
-                                crate::input::InputEvent::PointerMove { dx, dy },
+                                InputEvent::PointerMove { dx, dy },
                             ));
                         }
                     }
                     this.preview_pointer_position = Some(current);
                 }))
-                .on_mouse_up(MouseButton::Left, cx.listener(|this, _, _, _| {
+                .on_mouse_up(MouseButton::Left, cx.listener(|this, _: &gpui::MouseUpEvent, _, _| {
+                    this.preview_pointer_position = None;
+                    queue_ble(rust_phone_control::input::ble::desktop::dispatch_event(
+                        InputEvent::PointerButtons(MouseButtons::NONE),
+                    ));
+                }))
+                .on_mouse_up_out(MouseButton::Left, cx.listener(|this, _: &gpui::MouseUpEvent, _, _| {
                     this.preview_pointer_position = None;
                     queue_ble(rust_phone_control::input::ble::desktop::dispatch_event(
                         crate::input::InputEvent::PointerButtons(crate::input::MouseButtons::NONE),
                     ));
                 }))
-                .on_mouse_up_out(MouseButton::Left, cx.listener(|this, _, _, _| {
-                    this.preview_pointer_position = None;
-                    queue_ble(rust_phone_control::input::ble::desktop::dispatch_event(
-                        crate::input::InputEvent::PointerButtons(crate::input::MouseButtons::NONE),
-                    ));
-                }))
-                .on_mouse_exit(cx.listener(|this, _, _, _| {
+                .on_mouse_exit(cx.listener(|this, _: &gpui::MouseExitEvent, _, _| {
                     if this.preview_pointer_position.take().is_some() {
                         queue_ble(rust_phone_control::input::ble::desktop::dispatch_event(
                             crate::input::InputEvent::PointerButtons(crate::input::MouseButtons::NONE),
