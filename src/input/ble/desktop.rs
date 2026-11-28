@@ -146,18 +146,6 @@ fn spawn_worker() -> Result<Sender<Command>> {
     }
 }
 
-fn sender() -> Result<Sender<Command>> {
-    let mut slot = command_sender()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if let Some(sender) = slot.as_ref() {
-        return Ok(sender.clone());
-    }
-
-    let sender = spawn_worker()?;
-    *slot = Some(sender.clone());
-    Ok(sender)
-}
 
 fn active(controller: &Option<BleInputController>) -> Result<&BleInputController> {
     controller
@@ -166,18 +154,21 @@ fn active(controller: &Option<BleInputController>) -> Result<&BleInputController
 }
 
 fn send(command: Command) -> Result<()> {
-    let sender = sender()?;
+    let mut slot = command_sender()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if slot.is_none() {
+        *slot = Some(spawn_worker()?);
+    }
+
+    let sender = slot.as_ref().expect("worker sender initialized");
     match sender.send(command) {
         Ok(()) => Ok(()),
         Err(error) => {
-            let command = error.0;
-            let mut slot = command_sender()
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
             *slot = None;
             let replacement = spawn_worker()?;
             replacement
-                .send(command)
+                .send(error.0)
                 .context("replacement BLE controller worker is unavailable")?;
             *slot = Some(replacement);
             Ok(())
