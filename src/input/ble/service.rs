@@ -30,7 +30,7 @@ use super::descriptor::{
     HID_CONTROL_POINT, HID_INFORMATION, HID_INFORMATION_VALUE, HID_REPORT, HID_REPORT_MAP,
     HID_REPORT_MAP_CHARACTERISTIC, HID_REPORT_REFERENCE,
 };
-use super::reports::{KEYBOARD_REPORT_LEN, MOUSE_REPORT_LEN, KeyboardReport, MouseReport};
+use super::reports::{KEYBOARD_REPORT_LEN, KeyboardReport, MOUSE_REPORT_LEN, MouseReport};
 
 /// Observable HID subscription state for the active BLE peer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
