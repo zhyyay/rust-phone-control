@@ -2087,11 +2087,44 @@ float4 PSMain(VertexOutput input) : SV_Target {{
 
 #[cfg(test)]
 mod viewport_tests {
-    use super::{fit_video_viewport, mouse_buttons_match_wparam, update_mouse_button_state};
+    use super::{
+        fit_video_viewport, modifier_for_virtual_key, mouse_buttons_match_wparam,
+        update_key_modifier, update_mouse_button_state, virtual_key_to_hid_usage,
+    };
     use crate::input::MouseButtons;
 
     fn assert_close(actual: f32, expected: f32) {
         assert!((actual - expected).abs() < 0.01, "{actual} != {expected}");
+    }
+
+    #[test]
+    fn virtual_key_mapping_covers_common_physical_keys() {
+        assert_eq!(virtual_key_to_hid_usage(0x41), Some(0x04)); // A
+        assert_eq!(virtual_key_to_hid_usage(0x5A), Some(0x1D)); // Z
+        assert_eq!(virtual_key_to_hid_usage(0x31), Some(0x1E)); // 1
+        assert_eq!(virtual_key_to_hid_usage(0x30), Some(0x27)); // 0
+        assert_eq!(virtual_key_to_hid_usage(0x0D), Some(0x28)); // Enter
+        assert_eq!(virtual_key_to_hid_usage(0x70), Some(0x3A)); // F1
+        assert_eq!(virtual_key_to_hid_usage(0x7B), Some(0x45)); // F12
+        assert_eq!(virtual_key_to_hid_usage(0x25), Some(0x50)); // Left
+        assert_eq!(virtual_key_to_hid_usage(0x6B), Some(0x57)); // Numpad +
+        assert_eq!(virtual_key_to_hid_usage(0xFF), None); // Unsupported
+    }
+
+    #[test]
+    fn left_and_right_modifier_states_are_independent() {
+        use crate::input::KeyModifiers as M;
+
+        assert_eq!(modifier_for_virtual_key(0x10, 0x2A, false), Some(M::LEFT_SHIFT));
+        assert_eq!(modifier_for_virtual_key(0x10, 0x36, false), Some(M::RIGHT_SHIFT));
+        assert_eq!(modifier_for_virtual_key(0x11, 0, true), Some(M::RIGHT_CTRL));
+        assert_eq!(modifier_for_virtual_key(0x12, 0, false), Some(M::LEFT_ALT));
+
+        let both = update_key_modifier(M::NONE, M::LEFT_SHIFT, true);
+        let both = update_key_modifier(both, M::RIGHT_SHIFT, true);
+        assert_eq!(both, M::LEFT_SHIFT | M::RIGHT_SHIFT);
+        let right_only = update_key_modifier(both, M::LEFT_SHIFT, false);
+        assert_eq!(right_only, M::RIGHT_SHIFT);
     }
 
     #[test]
