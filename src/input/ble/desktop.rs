@@ -353,12 +353,16 @@ fn take_pointer_move(batch_id: u64) -> Option<PointerMoveBatch> {
     batch
 }
 
+fn clear_pointer_move_queue(queue: &mut PointerMoveQueue) {
+    queue.open_batch = None;
+    queue.batches.clear();
+}
+
 fn clear_pointer_moves() {
     let mut queue = pointer_moves()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    queue.open_batch = None;
-    queue.batches.clear();
+    clear_pointer_move_queue(&mut queue);
 }
 
 fn accumulate_pointer_move(batch: &mut PointerMoveBatch, dx: i16, dy: i16) {
@@ -635,6 +639,33 @@ mod tests {
         super::accumulate_pointer_move(&mut batch, 100, -100);
         assert_eq!(batch.dx, 2_048);
         assert_eq!(batch.dy, -2_048);
+    }
+
+    #[test]
+    fn clearing_pointer_moves_discards_batches_and_closes_open_batch() {
+        let mut queue = PointerMoveQueue {
+            next_id: 2,
+            open_batch: Some(2),
+            batches: std::collections::VecDeque::from([
+                PointerMoveBatch {
+                    id: 1,
+                    generation: 4,
+                    dx: 12,
+                    dy: -8,
+                },
+                PointerMoveBatch {
+                    id: 2,
+                    generation: 4,
+                    dx: 5,
+                    dy: 3,
+                },
+            ]),
+        };
+
+        super::clear_pointer_move_queue(&mut queue);
+
+        assert!(queue.batches.is_empty());
+        assert_eq!(queue.open_batch, None);
     }
 
     #[test]
