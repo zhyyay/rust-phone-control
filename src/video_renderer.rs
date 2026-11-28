@@ -124,6 +124,8 @@ fn virtual_key_to_hid_usage(vk: u32) -> Option<u8> {
         0xBF => 0x38,
         0x14 => 0x39,
         0x70..=0x7B => 0x3A + (vk as u8 - 0x70),
+        0x7C..=0x87 => 0x68 + (vk as u8 - 0x7C),
+        0x5D => 0x65,
         0x2C => 0x46,
         0x91 => 0x47,
         0x13 => 0x48,
@@ -2106,6 +2108,9 @@ mod viewport_tests {
         assert_eq!(virtual_key_to_hid_usage(0x0D), Some(0x28)); // Enter
         assert_eq!(virtual_key_to_hid_usage(0x70), Some(0x3A)); // F1
         assert_eq!(virtual_key_to_hid_usage(0x7B), Some(0x45)); // F12
+        assert_eq!(virtual_key_to_hid_usage(0x7C), Some(0x68)); // F13
+        assert_eq!(virtual_key_to_hid_usage(0x87), Some(0x73)); // F24
+        assert_eq!(virtual_key_to_hid_usage(0x5D), Some(0x65)); // Application / Menu
         assert_eq!(virtual_key_to_hid_usage(0x25), Some(0x50)); // Left
         assert_eq!(virtual_key_to_hid_usage(0x6B), Some(0x57)); // Numpad +
         assert_eq!(virtual_key_to_hid_usage(0xFF), None); // Unsupported
