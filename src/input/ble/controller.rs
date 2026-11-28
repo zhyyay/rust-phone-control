@@ -703,11 +703,11 @@ mod tests {
             ('{', 0x2f, true),
             (']', 0x30, false),
             ('}', 0x30, true),
-            ('\\\\', 0x31, false),
+            ('\\', 0x31, false),
             ('|', 0x31, true),
             (';', 0x33, false),
             (':', 0x33, true),
-            ('\\'', 0x34, false),
+            ('\'', 0x34, false),
             ('"', 0x34, true),
             ('`', 0x35, false),
             ('~', 0x35, true),
@@ -725,11 +725,11 @@ mod tests {
 
     #[test]
     fn rejects_non_printable_ascii_controls_except_supported_whitespace() {
-        for character in ['\\0', '\\u{1b}', '\\u{7f}'] {
+        for character in ['\0', '\u{1b}', '\u{7f}'] {
             assert_eq!(ascii_key(character), None);
         }
-        assert_eq!(ascii_key('\\n'), Some((0x28, false)));
-        assert_eq!(ascii_key('\\t'), Some((0x2b, false)));
+        assert_eq!(ascii_key('\n'), Some((0x28, false)));
+        assert_eq!(ascii_key('\t'), Some((0x2b, false)));
     }
 
     #[test]
