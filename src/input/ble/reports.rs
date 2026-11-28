@@ -99,6 +99,15 @@ mod tests {
     }
 
     #[test]
+    fn mouse_report_serializes_horizontal_pan_independently() {
+        let report = MouseReport::new(MouseButtons::NONE, 0, 0, 0, 7);
+        assert_eq!(report.as_bytes(), [0, 0, 0, 0, 7]);
+
+        let reverse = MouseReport::new(MouseButtons::NONE, 0, 0, 0, -7);
+        assert_eq!(reverse.as_bytes(), [0, 0, 0, 0, 249]);
+    }
+
+    #[test]
     fn release_report_clears_every_mouse_button_and_axis() {
         assert_eq!(MouseReport::release().as_bytes(), [0, 0, 0, 0, 0]);
     }
