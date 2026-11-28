@@ -2,6 +2,7 @@
 mod airplay;
 mod app;
 mod logging;
+mod input;
 
 #[cfg(windows)]
 mod platform;
