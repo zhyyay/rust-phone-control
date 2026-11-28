@@ -94,6 +94,20 @@ fn sender() -> Result<&'static Sender<Command>> {
 
                 if let Err(error) = result {
                     tracing::error!(error = %format!("{error:#}"), "BLE desktop command failed");
+
+                    // A failed notification can leave the remote host believing a button
+                    // or modifier is still held. Best-effort release immediately before
+                    // processing the next queued command.
+                    if let Some(active) = controller.as_ref() {
+                        if let Err(release_error) = runtime
+                            .block_on(active.dispatch(InputEvent::ReleaseAll))
+                        {
+                            tracing::error!(
+                                error = %format!("{release_error:#}"),
+                                "Could not release BLE inputs after command failure"
+                            );
+                        }
+                    }
                 }
             }
 
