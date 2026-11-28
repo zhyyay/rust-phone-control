@@ -465,8 +465,8 @@ mod tests {
 
     #[test]
     fn release_all_reports_both_transport_failures() {
-        use anyhow::anyhow;
         use super::combine_release_results;
+        use anyhow::anyhow;
 
         assert!(combine_release_results(Ok(()), Ok(())).is_ok());
         assert!(combine_release_results(Err(anyhow!("mouse")), Ok(())).is_err());
