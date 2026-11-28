@@ -6,8 +6,10 @@
 use std::{
     sync::{
         OnceLock,
-        mpsc::{self, Sender},
+        atomic::{AtomicU8, Ordering},
+        mpsc::{self, RecvTimeoutError, Sender},
     },
+    time::Duration,
     thread,
 };
 
@@ -25,6 +27,29 @@ enum Command {
 }
 
 static COMMANDS: OnceLock<std::sync::Mutex<Option<Sender<Command>>>> = OnceLock::new();
+static CONNECTION_STATE: AtomicU8 = AtomicU8::new(0);
+
+fn publish_connection_state(controller: &Option<BleInputController>) {
+    let state = controller
+        .as_ref()
+        .map(BleInputController::connection_state)
+        .unwrap_or(super::BleConnectionState::Disconnected);
+    let encoded = match state {
+        super::BleConnectionState::Disconnected => 0,
+        super::BleConnectionState::PartiallySubscribed => 1,
+        super::BleConnectionState::Ready => 2,
+    };
+    CONNECTION_STATE.store(encoded, Ordering::Release);
+}
+
+/// Returns the most recently observed HID report subscription state without blocking the UI.
+pub fn connection_state() -> super::BleConnectionState {
+    match CONNECTION_STATE.load(Ordering::Acquire) {
+        1 => super::BleConnectionState::PartiallySubscribed,
+        2 => super::BleConnectionState::Ready,
+        _ => super::BleConnectionState::Disconnected,
+    }
+}
 
 fn command_sender() -> &'static std::sync::Mutex<Option<Sender<Command>>> {
     COMMANDS.get_or_init(|| std::sync::Mutex::new(None))
@@ -55,7 +80,16 @@ fn spawn_worker() -> Result<Sender<Command>> {
             }
 
             let mut controller: Option<BleInputController> = None;
-            while let Ok(command) = rx.recv() {
+            publish_connection_state(&controller);
+            loop {
+                let command = match rx.recv_timeout(Duration::from_millis(250)) {
+                    Ok(command) => command,
+                    Err(RecvTimeoutError::Timeout) => {
+                        publish_connection_state(&controller);
+                        continue;
+                    }
+                    Err(RecvTimeoutError::Disconnected) => break,
+                };
                 let result: Result<()> = runtime.block_on(async {
                     match command {
                         Command::Start => {
@@ -109,6 +143,7 @@ fn spawn_worker() -> Result<Sender<Command>> {
                     Ok(())
                 });
 
+                publish_connection_state(&controller);
                 if let Err(error) = result {
                     tracing::error!(error = %format!("{error:#}"), "BLE desktop command failed");
                     if let Some(active) = controller.as_ref() {
@@ -124,6 +159,7 @@ fn spawn_worker() -> Result<Sender<Command>> {
                 }
             }
 
+            publish_connection_state(&None);
             if let Some(running) = controller {
                 let _ = runtime.block_on(running.release_all());
                 let _ = running.stop();
@@ -164,6 +200,7 @@ fn send(command: Command) -> Result<()> {
     match sender.send(command) {
         Ok(()) => Ok(()),
         Err(error) => {
+            CONNECTION_STATE.store(0, Ordering::Release);
             *slot = None;
             let replacement = spawn_worker()?;
             replacement
