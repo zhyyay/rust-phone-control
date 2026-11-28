@@ -49,8 +49,8 @@ use windows_062::Win32::{
             SetWindowLongPtrW, SetWindowPos, ShowWindow, WINDOW_EX_STYLE, WM_CAPTURECHANGED,
             WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDBLCLK, WM_MBUTTONDOWN,
             WM_MBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCDESTROY,
-            WM_RBUTTONDBLCLK, WM_RBUTTONDOWN, WM_RBUTTONUP, WNDPROC,
-            WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS,
+            WM_RBUTTONDBLCLK, WM_RBUTTONDOWN, WM_RBUTTONUP, WNDPROC, WS_CHILD, WS_CLIPCHILDREN,
+            WS_CLIPSIBLINGS,
         },
     },
 };
@@ -196,11 +196,7 @@ unsafe extern "system" fn native_preview_wndproc(
     let y = ((lparam.0 as u32 >> 16) as u16) as i16;
 
     match message {
-        WM_LBUTTONDOWN
-        | WM_LBUTTONDBLCLK
-        | WM_MBUTTONDOWN
-        | WM_MBUTTONDBLCLK
-        | WM_RBUTTONDOWN
+        WM_LBUTTONDOWN | WM_LBUTTONDBLCLK | WM_MBUTTONDOWN | WM_MBUTTONDBLCLK | WM_RBUTTONDOWN
         | WM_RBUTTONDBLCLK => {
             let button = match message {
                 WM_LBUTTONDOWN | WM_LBUTTONDBLCLK => MouseButtons::LEFT,
