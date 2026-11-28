@@ -461,6 +461,7 @@ fn connection_state_from_flags(
 #[cfg(test)]
 mod connection_state_tests {
     use super::{BleConnectionState, connection_state_from_flags};
+    use crate::input::ble::reports::{KEYBOARD_REPORT_LEN, MOUSE_REPORT_LEN};
 
     #[test]
     fn interruption_clears_both_cached_reports_and_advances_generation() {
