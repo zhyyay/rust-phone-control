@@ -37,6 +37,7 @@ use super::reports::{KeyboardReport, MouseReport};
 pub enum BleConnectionState {
     Disconnected,
     PartiallySubscribed,
+    Suspended,
     Ready,
 }
 
@@ -358,6 +359,12 @@ impl BleHidService {
 
     /// Reports whether the iPhone subscribed to the mouse and keyboard input reports.
     pub fn connection_state(&self) -> BleConnectionState {
+        if self.stopped.load(Ordering::Acquire) {
+            return BleConnectionState::Disconnected;
+        }
+        if self.suspended.load(Ordering::Acquire) {
+            return BleConnectionState::Suspended;
+        }
         let mouse = self.mouse_subscribers.load(Ordering::Acquire) > 0;
         let keyboard = self.keyboard_subscribers.load(Ordering::Acquire) > 0;
         match (mouse, keyboard) {
