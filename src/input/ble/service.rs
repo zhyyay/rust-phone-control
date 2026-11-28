@@ -8,7 +8,7 @@
 use anyhow::{Context, Result, anyhow, bail};
 use std::sync::{
     Arc, Mutex,
-    atomic::{AtomicBool, AtomicU64, Ordering},
+    atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
 };
 use windows_062::{
     Devices::Bluetooth::{
@@ -32,6 +32,14 @@ use super::descriptor::{
 };
 use super::reports::{KeyboardReport, MouseReport};
 
+/// Observable HID subscription state for the active BLE peer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BleConnectionState {
+    Disconnected,
+    PartiallySubscribed,
+    Ready,
+}
+
 /// A running, single-active-phone HID peripheral.
 pub struct BleHidService {
     providers: Vec<GattServiceProvider>,
@@ -42,6 +50,8 @@ pub struct BleHidService {
     mouse_state: Arc<Mutex<Vec<u8>>>,
     keyboard_state: Arc<Mutex<Vec<u8>>>,
     subscription_generation: Arc<AtomicU64>,
+    mouse_subscribers: Arc<AtomicUsize>,
+    keyboard_subscribers: Arc<AtomicUsize>,
 }
 
 impl BleHidService {
@@ -73,6 +83,8 @@ impl BleHidService {
         let mouse_state = Arc::new(Mutex::new(vec![0; 4]));
         let keyboard_state = Arc::new(Mutex::new(vec![0; 8]));
         let subscription_generation = Arc::new(AtomicU64::new(0));
+        let mouse_subscribers = Arc::new(AtomicUsize::new(0));
+        let keyboard_subscribers = Arc::new(AtomicUsize::new(0));
         let control_point = create_characteristic(
             &hid_service,
             HID_CONTROL_POINT,
@@ -171,6 +183,7 @@ impl BleHidService {
         // inherits stale held buttons or modifiers from an earlier connection.
         let mouse_subscription_state = Arc::clone(&mouse_state);
         let mouse_subscription_generation = Arc::clone(&subscription_generation);
+        let mouse_subscription_count = Arc::clone(&mouse_subscribers);
         mouse_report.SubscribedClientsChanged(&TypedEventHandler::<
             GattLocalCharacteristic,
             IInspectable,
@@ -179,6 +192,7 @@ impl BleHidService {
             match sender.SubscribedClients() {
                 Ok(clients) => {
                     let count = clients.Size().unwrap_or(0);
+                    mouse_subscription_count.store(count as usize, Ordering::Release);
                     tracing::info!(count, "iPhone mouse HID report subscription count changed");
                     *mouse_subscription_state
                         .lock()
@@ -193,6 +207,7 @@ impl BleHidService {
         }))?;
         let keyboard_subscription_state = Arc::clone(&keyboard_state);
         let keyboard_subscription_generation = Arc::clone(&subscription_generation);
+        let keyboard_subscription_count = Arc::clone(&keyboard_subscribers);
         keyboard_report.SubscribedClientsChanged(&TypedEventHandler::<
             GattLocalCharacteristic,
             IInspectable,
@@ -201,6 +216,7 @@ impl BleHidService {
             match sender.SubscribedClients() {
                 Ok(clients) => {
                     let count = clients.Size().unwrap_or(0);
+                    keyboard_subscription_count.store(count as usize, Ordering::Release);
                     tracing::info!(
                         count,
                         "iPhone keyboard HID report subscription count changed"
@@ -262,6 +278,8 @@ impl BleHidService {
             mouse_state,
             keyboard_state,
             subscription_generation,
+            mouse_subscribers,
+            keyboard_subscribers,
         })
     }
 
@@ -336,6 +354,17 @@ impl BleHidService {
     /// Returns whether advertising has been stopped for this service instance.
     pub fn is_stopped(&self) -> bool {
         self.stopped.load(Ordering::Acquire)
+    }
+
+    /// Reports whether the iPhone subscribed to the mouse and keyboard input reports.
+    pub fn connection_state(&self) -> BleConnectionState {
+        let mouse = self.mouse_subscribers.load(Ordering::Acquire) > 0;
+        let keyboard = self.keyboard_subscribers.load(Ordering::Acquire) > 0;
+        match (mouse, keyboard) {
+            (false, false) => BleConnectionState::Disconnected,
+            (true, true) => BleConnectionState::Ready,
+            _ => BleConnectionState::PartiallySubscribed,
+        }
     }
 
     /// Returns a generation that changes whenever input delivery is interrupted.
