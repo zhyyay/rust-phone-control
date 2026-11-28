@@ -554,7 +554,21 @@ pub fn scroll(amount: i32) -> Result<()> {
     let mut remaining = amount;
     while remaining != 0 {
         let step = remaining.clamp(i16::MIN as i32, i16::MAX as i32) as i16;
-        dispatch_event(InputEvent::Scroll { vertical: step })?;
+        dispatch_event(InputEvent::Scroll { horizontal: 0, vertical: step })?;
+        remaining -= step as i32;
+    }
+    Ok(())
+}
+
+/// Scroll horizontally. Positive values pan right; negative values pan left.
+pub fn scroll_horizontal(amount: i32) -> Result<()> {
+    let mut remaining = amount;
+    while remaining != 0 {
+        let step = remaining.clamp(i16::MIN as i32, i16::MAX as i32) as i16;
+        dispatch_event(InputEvent::Scroll {
+            horizontal: step,
+            vertical: 0,
+        })?;
         remaining -= step as i32;
     }
     Ok(())
