@@ -9,8 +9,8 @@ use std::{
         atomic::{AtomicU8, Ordering},
         mpsc::{self, RecvTimeoutError, Sender},
     },
-    time::Duration,
     thread,
+    time::Duration,
 };
 
 use super::BleInputController;
