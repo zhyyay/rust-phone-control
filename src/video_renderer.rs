@@ -404,8 +404,10 @@ unsafe extern "system" fn native_preview_wndproc(
             }
         }
         0x0008 => {
-            // WM_KILLFOCUS: do not leave a modifier or ordinary key held on the phone.
+            // WM_KILLFOCUS: do not leave any mouse button, modifier, or ordinary key held.
+            NATIVE_PREVIEW_HELD_BUTTONS.with(|held| held.set(MouseButtons::NONE));
             NATIVE_PREVIEW_HELD_MODIFIERS.with(|held| held.set(crate::input::KeyModifiers::NONE));
+            NATIVE_PREVIEW_LAST_POINTER.with(|last| last.set(None));
             let _ = crate::input::ble::desktop::dispatch_event(InputEvent::ReleaseAll);
         }
         WM_CAPTURECHANGED | WM_NCDESTROY => {
