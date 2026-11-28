@@ -30,7 +30,7 @@ use super::descriptor::{
     HID_CONTROL_POINT, HID_INFORMATION, HID_INFORMATION_VALUE, HID_REPORT, HID_REPORT_MAP,
     HID_REPORT_MAP_CHARACTERISTIC, HID_REPORT_REFERENCE,
 };
-use super::reports::{KeyboardReport, MouseReport};
+use super::reports::{KEYBOARD_REPORT_LEN, MOUSE_REPORT_LEN, KeyboardReport, MouseReport};
 
 /// Observable HID subscription state for the active BLE peer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -82,8 +82,8 @@ impl BleHidService {
         .context("creating HID Report Map characteristic")?;
 
         let suspended = Arc::new(AtomicBool::new(false));
-        let mouse_state = Arc::new(Mutex::new(vec![0; 5]));
-        let keyboard_state = Arc::new(Mutex::new(vec![0; 8]));
+        let mouse_state = Arc::new(Mutex::new(vec![0; MOUSE_REPORT_LEN]));
+        let keyboard_state = Arc::new(Mutex::new(vec![0; KEYBOARD_REPORT_LEN]));
         let subscription_generation = Arc::new(AtomicU64::new(0));
         let mouse_subscribers = Arc::new(AtomicUsize::new(0));
         let keyboard_subscribers = Arc::new(AtomicUsize::new(0));
@@ -435,7 +435,7 @@ fn reset_cached_reports(
     keyboard_state: &Mutex<Vec<u8>>,
     subscription_generation: &AtomicU64,
 ) {
-    *mouse_state.lock().unwrap_or_else(|p| p.into_inner()) = vec![0; 4];
+    *mouse_state.lock().unwrap_or_else(|p| p.into_inner()) = vec![0; MOUSE_REPORT_LEN];
     *keyboard_state.lock().unwrap_or_else(|p| p.into_inner()) = vec![0; 8];
     subscription_generation.fetch_add(1, Ordering::AcqRel);
 }
