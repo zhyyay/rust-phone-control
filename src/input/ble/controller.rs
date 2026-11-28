@@ -23,6 +23,7 @@ pub struct BleInputController {
 struct ControllerInputState {
     buttons: MouseButtons,
     modifiers: KeyModifiers,
+    keys: [u8; 6],
 }
 
 impl ControllerInputState {
@@ -34,6 +35,17 @@ impl ControllerInputState {
         match event {
             InputEvent::PointerButtons(buttons) => self.buttons = buttons,
             InputEvent::KeyModifiers(modifiers) => self.modifiers = modifiers,
+            InputEvent::KeyState { usage, pressed } => {
+                if pressed {
+                    if !self.keys.contains(&usage)
+                        && let Some(slot) = self.keys.iter_mut().find(|key| **key == 0)
+                    {
+                        *slot = usage;
+                    }
+                } else if let Some(slot) = self.keys.iter_mut().find(|key| **key == usage) {
+                    *slot = 0;
+                }
+            }
             InputEvent::ReleaseAll => self.reset(),
             InputEvent::PointerMove { .. }
             | InputEvent::Scroll { .. }
@@ -186,8 +198,24 @@ impl BleInputController {
                     .await
             }
             InputEvent::KeyModifiers(_) => {
+                let keys = self.input_state.lock().unwrap_or_else(|p| p.into_inner()).keys;
                 self.service
-                    .send_keyboard_report(KeyboardReport::new(modifiers, [0; 6]))
+                    .send_keyboard_report(KeyboardReport::new(modifiers, keys))
+                    .await
+            }
+            InputEvent::KeyState { usage, pressed } => {
+                if usage == 0 {
+                    bail!("keyboard usage 0 is reserved for no key");
+                }
+                let keys = self.input_state.lock().unwrap_or_else(|p| p.into_inner()).keys;
+                if pressed && !keys.contains(&usage) && !keys.contains(&0) {
+                    bail!("USB HID keyboard supports at most six simultaneous non-modifier keys");
+                }
+                if !self.subscription_generation_matches(operation_generation) {
+                    return Ok(());
+                }
+                self.service
+                    .send_keyboard_report(KeyboardReport::new(modifiers, keys))
                     .await
             }
             InputEvent::KeyUsage(usage) => {
@@ -548,6 +576,10 @@ mod tests {
             vertical: 1,
         });
         state.apply(InputEvent::KeyUsage(0x04));
+        state.apply(InputEvent::KeyState { usage: 0x04, pressed: true });
+        assert!(state.keys.contains(&0x04));
+        state.apply(InputEvent::KeyState { usage: 0x04, pressed: false });
+        assert!(!state.keys.contains(&0x04));
         assert_eq!(state.buttons, MouseButtons::MIDDLE);
         assert_eq!(state.modifiers, KeyModifiers::LEFT_CTRL);
     }
