@@ -379,7 +379,7 @@ pub fn move_mouse(dx: i32, dy: i32) -> Result<()> {
 /// Queue one platform-independent HID input event for the active BLE controller.
 pub fn dispatch_event(event: InputEvent) -> Result<()> {
     let generation = SUBSCRIPTION_GENERATION.load(Ordering::Acquire);
-    if matches!(event, InputEvent::ReleaseAll) {
+    if matches!(&event, InputEvent::ReleaseAll) {
         send(Command::ReleaseAll(generation))
     } else {
         send(Command::Dispatch(event, generation))
