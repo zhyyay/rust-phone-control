@@ -225,7 +225,10 @@ unsafe extern "system" fn native_preview_wndproc(
             });
             if vertical != 0 {
                 if let Err(error) =
-                    crate::input::ble::desktop::dispatch_event(InputEvent::Scroll { vertical })
+                    crate::input::ble::desktop::dispatch_event(InputEvent::Scroll {
+                        horizontal: 0,
+                        vertical,
+                    })
                 {
                     tracing::warn!(error = %error, "Could not dispatch native preview wheel");
                 }
