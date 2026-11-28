@@ -25,11 +25,15 @@ struct ControllerInputState {
 }
 
 impl ControllerInputState {
+    fn reset(&mut self) {
+        *self = Self::default();
+    }
+
     fn apply(&mut self, event: InputEvent) {
         match event {
             InputEvent::PointerButtons(buttons) => self.buttons = buttons,
             InputEvent::KeyModifiers(modifiers) => self.modifiers = modifiers,
-            InputEvent::ReleaseAll => *self = Self::default(),
+            InputEvent::ReleaseAll => self.reset(),
             InputEvent::PointerMove { .. }
             | InputEvent::Scroll { .. }
             | InputEvent::KeyUsage(_) => {}
@@ -57,6 +61,37 @@ impl BleInputController {
     }
 
     async fn dispatch_locked(&self, event: InputEvent) -> Result<()> {
+        match self.dispatch_reports_locked(event).await {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                // A failed GATT notification may have reached the phone even when the
+                // local call reports an error. Forget held state first, then independently
+                // attempt neutral mouse and keyboard reports without short-circuiting.
+                self.input_state
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .reset();
+                let mouse_release = self.service.send_mouse_report(MouseReport::release()).await;
+                let keyboard_release = self.service
+                    .send_keyboard_report(KeyboardReport::release())
+                    .await;
+                match (mouse_release, keyboard_release) {
+                    (Ok(()), Ok(())) => Err(error.context("BLE input notification failed; neutral reports sent")),
+                    (Err(mouse), Ok(())) => Err(anyhow::anyhow!(
+                        "{error:#}; mouse neutral report also failed: {mouse:#}"
+                    )),
+                    (Ok(()), Err(keyboard)) => Err(anyhow::anyhow!(
+                        "{error:#}; keyboard neutral report also failed: {keyboard:#}"
+                    )),
+                    (Err(mouse), Err(keyboard)) => Err(anyhow::anyhow!(
+                        "{error:#}; mouse neutral report failed: {mouse:#}; keyboard neutral report failed: {keyboard:#}"
+                    )),
+                }
+            }
+        }
+    }
+
+    async fn dispatch_reports_locked(&self, event: InputEvent) -> Result<()> {
         let (buttons, modifiers) = {
             let mut state = self.input_state.lock().unwrap_or_else(|p| p.into_inner());
             state.apply(event);
@@ -338,7 +373,17 @@ mod tests {
         assert_eq!(state.buttons, MouseButtons::LEFT | MouseButtons::RIGHT);
         assert_eq!(state.modifiers, KeyModifiers::LEFT_SHIFT);
 
-        state.apply(InputEvent::ReleaseAll);
+        state.reset();
+        assert_eq!(state, ControllerInputState::default());
+    }
+
+    #[test]
+    fn reset_clears_both_mouse_and_keyboard_state() {
+        let mut state = ControllerInputState {
+            buttons: MouseButtons::LEFT | MouseButtons::MIDDLE,
+            modifiers: KeyModifiers::LEFT_ALT | KeyModifiers::LEFT_SHIFT,
+        };
+        state.reset();
         assert_eq!(state, ControllerInputState::default());
     }
 
