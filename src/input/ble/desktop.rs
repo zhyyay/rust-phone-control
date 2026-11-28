@@ -94,14 +94,7 @@ fn sender() -> Result<&'static Sender<Command>> {
                             active(&controller)?.dispatch(event).await?;
                         }
                         Command::LeftClick => {
-                            let active = active(&controller)?;
-                            active
-                                .dispatch(InputEvent::PointerButtons(MouseButtons::LEFT))
-                                .await?;
-                            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-                            active
-                                .dispatch(InputEvent::PointerButtons(MouseButtons::NONE))
-                                .await?;
+                            active(&controller)?.click(MouseButtons::LEFT).await?;
                         }
                         Command::TypeText(value) => {
                             active(&controller)?.type_text(&value).await?;
