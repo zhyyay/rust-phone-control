@@ -273,7 +273,10 @@ fn spawn_worker() -> Result<WorkerSenders> {
         .context("starting BLE controller worker thread")?;
 
     match ready_rx.recv() {
-        Ok(Ok(())) => Ok(tx),
+        Ok(Ok(())) => Ok(WorkerSenders {
+            normal: tx,
+            control: control_tx,
+        }),
         Ok(Err(error)) => {
             let _ = worker.join();
             Err(anyhow::anyhow!(
