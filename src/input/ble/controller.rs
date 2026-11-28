@@ -543,7 +543,10 @@ mod tests {
             buttons: MouseButtons::MIDDLE,
             modifiers: KeyModifiers::LEFT_CTRL,
         };
-        state.apply(InputEvent::Scroll { horizontal: 0, vertical: 1 });
+        state.apply(InputEvent::Scroll {
+            horizontal: 0,
+            vertical: 1,
+        });
         state.apply(InputEvent::KeyUsage(0x04));
         assert_eq!(state.buttons, MouseButtons::MIDDLE);
         assert_eq!(state.modifiers, KeyModifiers::LEFT_CTRL);
