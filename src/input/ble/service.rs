@@ -436,7 +436,7 @@ fn reset_cached_reports(
     subscription_generation: &AtomicU64,
 ) {
     *mouse_state.lock().unwrap_or_else(|p| p.into_inner()) = vec![0; MOUSE_REPORT_LEN];
-    *keyboard_state.lock().unwrap_or_else(|p| p.into_inner()) = vec![0; 8];
+    *keyboard_state.lock().unwrap_or_else(|p| p.into_inner()) = vec![0; KEYBOARD_REPORT_LEN];
     subscription_generation.fetch_add(1, Ordering::AcqRel);
 }
 
