@@ -205,9 +205,8 @@ unsafe extern "system" fn native_preview_wndproc(
             NATIVE_PREVIEW_HELD_BUTTONS.with(|held| held.set(next_buttons));
             NATIVE_PREVIEW_LAST_POINTER.with(|last| last.set(Some((x, y))));
             unsafe { SetCapture(hwnd) };
-            if let Err(error) = crate::input::ble::desktop::dispatch_event(
-                InputEvent::PointerButtons(next_buttons),
-            )
+            if let Err(error) =
+                crate::input::ble::desktop::dispatch_event(InputEvent::PointerButtons(next_buttons))
             {
                 tracing::warn!(error = %error, "Could not dispatch native preview mouse-down");
             }
@@ -281,9 +280,8 @@ unsafe extern "system" fn native_preview_wndproc(
                 NATIVE_PREVIEW_LAST_POINTER.with(|last| last.set(None));
                 let _ = unsafe { ReleaseCapture() };
             }
-            if let Err(error) = crate::input::ble::desktop::dispatch_event(
-                InputEvent::PointerButtons(next_buttons),
-            ) {
+            if let Err(error) =
+                crate::input::ble::desktop::dispatch_event(InputEvent::PointerButtons(next_buttons)) {
                 tracing::warn!(error = %error, "Could not dispatch native preview mouse-up");
             }
         }
