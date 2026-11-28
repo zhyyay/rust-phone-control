@@ -535,8 +535,7 @@ pub fn tap_key_usage(usage: u8) -> Result<()> {
 
 /// Release every held mouse button and keyboard key.
 pub fn release_all_inputs() -> Result<()> {
-    let generation = SUBSCRIPTION_GENERATION.load(Ordering::Acquire);
-    send(Command::ReleaseAll(generation))
+    dispatch_event(InputEvent::ReleaseAll)
 }
 
 /// Send a left mouse click.
