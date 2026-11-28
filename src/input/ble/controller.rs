@@ -68,25 +68,7 @@ impl BleInputController {
         if self.service.is_stopped() {
             bail!("BLE HID controller has stopped");
         }
-        let current_generation = self.service.subscription_generation();
-        let mut observed_generation = self
-            .observed_subscription_generation
-            .lock()
-            .unwrap_or_else(|p| p.into_inner());
-        let previous_generation = *observed_generation;
-        let state_reset = refresh_input_state(
-            &mut self.input_state.lock().unwrap_or_else(|p| p.into_inner()),
-            &mut observed_generation,
-            current_generation,
-        );
-        if state_reset {
-            tracing::info!(
-                previous_generation,
-                current_generation,
-                "BLE HID subscription changed; cleared held input state"
-            );
-        }
-        drop(observed_generation);
+        self.refresh_subscription_state();
 
         // Observe Control Point suspend/resume and CCCD transitions before suppressing
         // input. Otherwise a generation change during suspend could leave stale held
@@ -125,6 +107,27 @@ impl BleInputController {
                     )),
                 }
             }
+        }
+    }
+
+    fn refresh_subscription_state(&self) {
+        let current_generation = self.service.subscription_generation();
+        let mut observed_generation = self
+            .observed_subscription_generation
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let previous_generation = *observed_generation;
+        let state_reset = refresh_input_state(
+            &mut self.input_state.lock().unwrap_or_else(|p| p.into_inner()),
+            &mut observed_generation,
+            current_generation,
+        );
+        if state_reset {
+            tracing::info!(
+                previous_generation,
+                current_generation,
+                "BLE HID subscription changed; cleared held input state"
+            );
         }
     }
 
@@ -212,6 +215,7 @@ impl BleInputController {
             bail!("click requires a supported mouse button");
         }
         let _operation = self.operation_lock.lock().await;
+        self.refresh_subscription_state();
         let previous_buttons = self
             .input_state
             .lock()
@@ -259,6 +263,7 @@ impl BleInputController {
     }
 
     async fn tap_key_locked(&self, modifiers: KeyModifiers, usage: u8) -> Result<()> {
+        self.refresh_subscription_state();
         let previous_modifiers = self
             .input_state
             .lock()
