@@ -8,7 +8,7 @@
 use anyhow::{Context, Result, anyhow, bail};
 use std::sync::{
     Arc, Mutex,
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicU64, Ordering},
 };
 use windows_062::{
     Devices::Bluetooth::{
@@ -40,6 +40,7 @@ pub struct BleHidService {
     suspended: Arc<AtomicBool>,
     mouse_state: Arc<Mutex<Vec<u8>>>,
     keyboard_state: Arc<Mutex<Vec<u8>>>,
+    subscription_generation: Arc<AtomicU64>,
 }
 
 impl BleHidService {
@@ -70,6 +71,7 @@ impl BleHidService {
         let suspended = Arc::new(AtomicBool::new(false));
         let mouse_state = Arc::new(Mutex::new(vec![0; 4]));
         let keyboard_state = Arc::new(Mutex::new(vec![0; 8]));
+        let subscription_generation = Arc::new(AtomicU64::new(0));
         let control_point = create_characteristic(
             &hid_service,
             HID_CONTROL_POINT,
@@ -159,36 +161,54 @@ impl BleHidService {
 
         // A BLE link can be connected without the HID host subscribing to input reports.
         // Track CCCD subscriptions separately so the probe can distinguish the two states.
+        let mouse_subscription_state = Arc::clone(&mouse_state);
+        let mouse_subscription_generation = Arc::clone(&subscription_generation);
         mouse_report.SubscribedClientsChanged(&TypedEventHandler::<
             GattLocalCharacteristic,
             IInspectable,
-        >::new(|sender, _args| {
-            // windows 0.62 event handlers receive a borrowed Ref; unwrap it to
-            // the underlying GattLocalCharacteristic before calling projected APIs.
+        >::new(move |sender, _args| {
             let sender = sender.ok()?;
             match sender.SubscribedClients() {
-                Ok(clients) => tracing::info!(
-                    count = clients.Size().unwrap_or(0),
-                    "iPhone mouse HID report subscription count changed"
-                ),
+                Ok(clients) => {
+                    let count = clients.Size().unwrap_or(0);
+                    tracing::info!(
+                        count,
+                        "iPhone mouse HID report subscription count changed"
+                    );
+                    if count == 0 {
+                        *mouse_subscription_state
+                            .lock()
+                            .unwrap_or_else(|p| p.into_inner()) = vec![0; 4];
+                        mouse_subscription_generation.fetch_add(1, Ordering::AcqRel);
+                    }
+                }
                 Err(error) => {
                     tracing::warn!("Could not read mouse HID subscribed clients: {error}")
                 }
             }
             Ok(())
         }))?;
+        let keyboard_subscription_state = Arc::clone(&keyboard_state);
+        let keyboard_subscription_generation = Arc::clone(&subscription_generation);
         keyboard_report.SubscribedClientsChanged(&TypedEventHandler::<
             GattLocalCharacteristic,
             IInspectable,
-        >::new(|sender, _args| {
-            // windows 0.62 event handlers receive a borrowed Ref; unwrap it to
-            // the underlying GattLocalCharacteristic before calling projected APIs.
+        >::new(move |sender, _args| {
             let sender = sender.ok()?;
             match sender.SubscribedClients() {
-                Ok(clients) => tracing::info!(
-                    count = clients.Size().unwrap_or(0),
-                    "iPhone keyboard HID report subscription count changed"
-                ),
+                Ok(clients) => {
+                    let count = clients.Size().unwrap_or(0);
+                    tracing::info!(
+                        count,
+                        "iPhone keyboard HID report subscription count changed"
+                    );
+                    if count == 0 {
+                        *keyboard_subscription_state
+                            .lock()
+                            .unwrap_or_else(|p| p.into_inner()) = vec![0; 8];
+                        keyboard_subscription_generation.fetch_add(1, Ordering::AcqRel);
+                    }
+                }
                 Err(error) => {
                     tracing::warn!("Could not read keyboard HID subscribed clients: {error}")
                 }
@@ -239,6 +259,7 @@ impl BleHidService {
             suspended,
             mouse_state,
             keyboard_state,
+            subscription_generation,
         })
     }
 
@@ -297,6 +318,11 @@ impl BleHidService {
             }
         }
         Ok(())
+    }
+
+    /// Returns a generation that changes whenever an input report loses all subscribers.
+    pub fn subscription_generation(&self) -> u64 {
+        self.subscription_generation.load(Ordering::Acquire)
     }
 
     /// Stops advertising all published GATT services.
