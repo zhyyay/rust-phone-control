@@ -32,7 +32,8 @@ fn sender() -> Result<&'static Sender<Command>> {
     }
 
     let (tx, rx) = mpsc::channel();
-    thread::Builder::new()
+    let (ready_tx, ready_rx) = mpsc::sync_channel::<std::result::Result<(), String>>(1);
+    let worker = thread::Builder::new()
         .name("ble-hid-controller".into())
         .spawn(move || {
             let runtime = match tokio::runtime::Builder::new_multi_thread()
@@ -42,10 +43,16 @@ fn sender() -> Result<&'static Sender<Command>> {
             {
                 Ok(runtime) => runtime,
                 Err(error) => {
-                    tracing::error!("Could not start BLE controller runtime: {error}");
+                    let message = error.to_string();
+                    let _ = ready_tx.send(Err(message.clone()));
+                    tracing::error!("Could not start BLE controller runtime: {message}");
                     return;
                 }
             };
+
+            if ready_tx.send(Ok(())).is_err() {
+                return;
+            }
 
             let mut controller: Option<BleInputController> = None;
             while let Ok(command) = rx.recv() {
@@ -128,6 +135,20 @@ fn sender() -> Result<&'static Sender<Command>> {
             }
         })
         .context("starting BLE controller worker thread")?;
+
+    match ready_rx.recv() {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => {
+            let _ = worker.join();
+            return Err(anyhow::anyhow!(
+                "BLE controller worker could not initialize its Tokio runtime: {error}"
+            ));
+        }
+        Err(error) => {
+            let _ = worker.join();
+            return Err(error).context("BLE controller worker exited before initialization");
+        }
+    }
 
     let _ = COMMANDS.set(tx);
     COMMANDS
