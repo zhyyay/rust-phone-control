@@ -6,7 +6,7 @@
 use std::{
     sync::{
         OnceLock,
-        atomic::{AtomicU64, AtomicU8, Ordering},
+        atomic::{AtomicU8, AtomicU64, Ordering},
         mpsc::{self, RecvTimeoutError, SyncSender, TrySendError},
     },
     thread,
