@@ -85,6 +85,7 @@ impl BleHidService {
         let control_point_suspended = Arc::clone(&suspended);
         let control_point_mouse_state = Arc::clone(&mouse_state);
         let control_point_keyboard_state = Arc::clone(&keyboard_state);
+        let control_point_subscription_generation = Arc::clone(&subscription_generation);
         control_point.WriteRequested(&TypedEventHandler::<
             GattLocalCharacteristic,
             GattWriteRequestedEventArgs,
@@ -94,6 +95,7 @@ impl BleHidService {
                 let suspended = Arc::clone(&control_point_suspended);
                 let mouse_state = Arc::clone(&control_point_mouse_state);
                 let keyboard_state = Arc::clone(&control_point_keyboard_state);
+                let subscription_generation = Arc::clone(&control_point_subscription_generation);
                 let runtime = callback_runtime.clone();
                 runtime.spawn(async move {
                     let result = async {
@@ -119,6 +121,7 @@ impl BleHidService {
                                 *mouse_state.lock().unwrap_or_else(|p| p.into_inner()) = vec![0; 4];
                                 *keyboard_state.lock().unwrap_or_else(|p| p.into_inner()) =
                                     vec![0; 8];
+                                subscription_generation.fetch_add(1, Ordering::AcqRel);
                             }
                             0x01 => suspended.store(false, Ordering::Release),
                             _ => {
@@ -171,10 +174,7 @@ impl BleHidService {
             match sender.SubscribedClients() {
                 Ok(clients) => {
                     let count = clients.Size().unwrap_or(0);
-                    tracing::info!(
-                        count,
-                        "iPhone mouse HID report subscription count changed"
-                    );
+                    tracing::info!(count, "iPhone mouse HID report subscription count changed");
                     if count == 0 {
                         *mouse_subscription_state
                             .lock()
@@ -198,10 +198,7 @@ impl BleHidService {
             match sender.SubscribedClients() {
                 Ok(clients) => {
                     let count = clients.Size().unwrap_or(0);
-                    tracing::info!(
-                        count,
-                        "iPhone keyboard HID report subscription count changed"
-                    );
+                    tracing::info!(count, "iPhone keyboard HID report subscription count changed");
                     if count == 0 {
                         *keyboard_subscription_state
                             .lock()
@@ -327,6 +324,11 @@ impl BleHidService {
 
     /// Stops advertising all published GATT services.
     pub fn stop(&self) -> Result<()> {
+        self.suspended.store(true, Ordering::Release);
+        *self.mouse_state.lock().unwrap_or_else(|p| p.into_inner()) = vec![0; 4];
+        *self.keyboard_state.lock().unwrap_or_else(|p| p.into_inner()) = vec![0; 8];
+        self.subscription_generation.fetch_add(1, Ordering::AcqRel);
+
         let mut first_error = None;
         for provider in &self.providers {
             if let Err(error) = provider.StopAdvertising() {
