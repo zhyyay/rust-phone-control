@@ -72,6 +72,29 @@ fn accumulate_wheel_delta(remainder: &mut i32, delta: i32) -> i16 {
     (-steps).clamp(i16::MIN as i32, i16::MAX as i32) as i16
 }
 
+/// Update one button in the currently held mouse-button bitset.
+fn update_mouse_button_state(
+    current: crate::input::MouseButtons,
+    button: crate::input::MouseButtons,
+    pressed: bool,
+) -> crate::input::MouseButtons {
+    use crate::input::MouseButtons;
+    let bits = if pressed {
+        current.bits() | button.bits()
+    } else {
+        current.bits() & !button.bits()
+    };
+    MouseButtons::from_bits_truncate(bits)
+}
+
+/// Return whether all held buttons are still reported by a WM_MOUSEMOVE message.
+fn mouse_buttons_match_wparam(held: crate::input::MouseButtons, flags: u32) -> bool {
+    use crate::input::MouseButtons;
+    held != MouseButtons::NONE
+        && (!held.contains(MouseButtons::LEFT) || flags & 0x0001 != 0)
+        && (!held.contains(MouseButtons::RIGHT) || flags & 0x0002 != 0)
+}
+
 fn recovery_cooldown_active(now: Instant, retry_after: Option<Instant>) -> bool {
     retry_after.is_some_and(|deadline| now < deadline)
 }
@@ -117,13 +140,11 @@ pub(crate) fn preview_metrics() -> (u64, u64, u64, u64, u64) {
 }
 
 thread_local! {
-    /// Whether the native preview currently owns a left-button drag.
-    static NATIVE_PREVIEW_DRAGGING: Cell<bool> = const { Cell::new(false) };
+    /// Buttons currently held by the native preview, including simultaneous left/right drags.
+    static NATIVE_PREVIEW_HELD_BUTTONS: Cell<crate::input::MouseButtons> =
+        const { Cell::new(crate::input::MouseButtons::NONE) };
     /// Last client-space pointer coordinate while dragging.
     static NATIVE_PREVIEW_LAST_POINTER: Cell<Option<(i16, i16)>> = const { Cell::new(None) };
-    /// Button currently held by a native preview drag, including right-button drags.
-    static NATIVE_PREVIEW_ACTIVE_BUTTON: Cell<Option<crate::input::MouseButtons>> =
-        const { Cell::new(None) };
     /// Accumulated high-resolution wheel delta until a complete HID wheel step is available.
     static NATIVE_PREVIEW_WHEEL_REMAINDER: Cell<i32> = const { Cell::new(0) };
     /// Accumulated high-resolution horizontal wheel delta.
@@ -164,8 +185,7 @@ unsafe extern "system" fn native_preview_wndproc(
     if generation_changed {
         // A new GATT subscription starts from neutral HID state. Do not carry
         // a partial wheel detent or a stale drag into the new phone session.
-        NATIVE_PREVIEW_DRAGGING.with(|dragging| dragging.set(false));
-        NATIVE_PREVIEW_ACTIVE_BUTTON.with(|active| active.set(None));
+        NATIVE_PREVIEW_HELD_BUTTONS.with(|held| held.set(MouseButtons::NONE));
         NATIVE_PREVIEW_LAST_POINTER.with(|last| last.set(None));
         NATIVE_PREVIEW_WHEEL_REMAINDER.with(|remainder| remainder.set(0));
         NATIVE_PREVIEW_PAN_REMAINDER.with(|remainder| remainder.set(0));
@@ -180,23 +200,23 @@ unsafe extern "system" fn native_preview_wndproc(
             } else {
                 MouseButtons::LEFT
             };
-            NATIVE_PREVIEW_DRAGGING.with(|dragging| dragging.set(true));
-            NATIVE_PREVIEW_ACTIVE_BUTTON.with(|active| active.set(Some(button)));
+            let previous_buttons = NATIVE_PREVIEW_HELD_BUTTONS.with(Cell::get);
+            let next_buttons = update_mouse_button_state(previous_buttons, button, true);
+            NATIVE_PREVIEW_HELD_BUTTONS.with(|held| held.set(next_buttons));
             NATIVE_PREVIEW_LAST_POINTER.with(|last| last.set(Some((x, y))));
             unsafe { SetCapture(hwnd) };
-            if let Err(error) =
-                crate::input::ble::desktop::dispatch_event(InputEvent::PointerButtons(button))
+            if let Err(error) = crate::input::ble::desktop::dispatch_event(
+                InputEvent::PointerButtons(next_buttons),
+            )
             {
                 tracing::warn!(error = %error, "Could not dispatch native preview mouse-down");
             }
         }
         WM_MOUSEMOVE
-            if NATIVE_PREVIEW_DRAGGING.with(Cell::get)
-                && NATIVE_PREVIEW_ACTIVE_BUTTON.with(|active| match active.get() {
-                    Some(button) if button == MouseButtons::LEFT => wparam.0 & 0x0001 != 0,
-                    Some(button) if button == MouseButtons::RIGHT => wparam.0 & 0x0002 != 0,
-                    _ => false,
-                }) =>
+            if mouse_buttons_match_wparam(
+                NATIVE_PREVIEW_HELD_BUTTONS.with(Cell::get),
+                wparam.0 as u32,
+            ) =>
         {
             let previous = NATIVE_PREVIEW_LAST_POINTER.with(|last| last.replace(Some((x, y))));
             if let Some((previous_x, previous_y)) = previous {
@@ -249,19 +269,27 @@ unsafe extern "system" fn native_preview_wndproc(
             }
         }
         WM_LBUTTONUP | WM_RBUTTONUP => {
-            NATIVE_PREVIEW_DRAGGING.with(|dragging| dragging.set(false));
-            NATIVE_PREVIEW_ACTIVE_BUTTON.with(|active| active.set(None));
-            NATIVE_PREVIEW_LAST_POINTER.with(|last| last.set(None));
-            let _ = unsafe { ReleaseCapture() };
+            let button = if message == WM_LBUTTONUP {
+                MouseButtons::LEFT
+            } else {
+                MouseButtons::RIGHT
+            };
+            let previous_buttons = NATIVE_PREVIEW_HELD_BUTTONS.with(Cell::get);
+            let next_buttons = update_mouse_button_state(previous_buttons, button, false);
+            NATIVE_PREVIEW_HELD_BUTTONS.with(|held| held.set(next_buttons));
+            if next_buttons == MouseButtons::NONE {
+                NATIVE_PREVIEW_LAST_POINTER.with(|last| last.set(None));
+                let _ = unsafe { ReleaseCapture() };
+            }
             if let Err(error) = crate::input::ble::desktop::dispatch_event(
-                InputEvent::PointerButtons(MouseButtons::NONE),
+                InputEvent::PointerButtons(next_buttons),
             ) {
                 tracing::warn!(error = %error, "Could not dispatch native preview mouse-up");
             }
         }
         WM_CAPTURECHANGED | WM_NCDESTROY => {
-            let was_dragging = NATIVE_PREVIEW_DRAGGING.with(|dragging| dragging.replace(false));
-            NATIVE_PREVIEW_ACTIVE_BUTTON.with(|active| active.set(None));
+            let had_held_buttons = NATIVE_PREVIEW_HELD_BUTTONS
+                .with(|held| held.replace(MouseButtons::NONE) != MouseButtons::NONE);
             NATIVE_PREVIEW_LAST_POINTER.with(|last| last.set(None));
             if message == WM_NCDESTROY {
                 NATIVE_PREVIEW_WHEEL_REMAINDER.with(|remainder| remainder.set(0));
@@ -271,7 +299,7 @@ unsafe extern "system" fn native_preview_wndproc(
                     unsafe { SetWindowLongPtrW(hwnd, GWLP_WNDPROC, previous_proc) };
                 }
             }
-            if was_dragging {
+            if had_held_buttons {
                 if let Err(error) =
                     crate::input::ble::desktop::dispatch_event(InputEvent::ReleaseAll)
                 {
@@ -1884,10 +1912,30 @@ float4 PSMain(VertexOutput input) : SV_Target {{
 
 #[cfg(test)]
 mod viewport_tests {
-    use super::fit_video_viewport;
+    use super::{fit_video_viewport, mouse_buttons_match_wparam, update_mouse_button_state};
+    use crate::input::MouseButtons;
 
     fn assert_close(actual: f32, expected: f32) {
         assert!((actual - expected).abs() < 0.01, "{actual} != {expected}");
+    }
+
+    #[test]
+    fn native_preview_tracks_simultaneous_mouse_buttons_independently() {
+        let both = update_mouse_button_state(MouseButtons::LEFT, MouseButtons::RIGHT, true);
+        assert_eq!(both, MouseButtons::LEFT | MouseButtons::RIGHT);
+        let left_only = update_mouse_button_state(both, MouseButtons::RIGHT, false);
+        assert_eq!(left_only, MouseButtons::LEFT);
+        let none = update_mouse_button_state(left_only, MouseButtons::LEFT, false);
+        assert_eq!(none, MouseButtons::NONE);
+    }
+
+    #[test]
+    fn native_preview_drag_requires_every_held_button_flag() {
+        let left_and_right = MouseButtons::LEFT | MouseButtons::RIGHT;
+        assert!(mouse_buttons_match_wparam(left_and_right, 0x0003));
+        assert!(!mouse_buttons_match_wparam(left_and_right, 0x0001));
+        assert!(!mouse_buttons_match_wparam(left_and_right, 0x0002));
+        assert!(!mouse_buttons_match_wparam(MouseButtons::NONE, 0x0003));
     }
 
     #[test]
