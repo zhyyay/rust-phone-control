@@ -166,7 +166,8 @@ impl BleHidService {
         add_report_reference(&keyboard_report, 2).await?;
 
         // A BLE link can be connected without the HID host subscribing to input reports.
-        // Track CCCD subscriptions separately so the probe can distinguish the two states.
+        // Reset cached reports on every CCCD transition so a newly subscribed host never
+        // inherits stale held buttons or modifiers from an earlier connection.
         let mouse_subscription_state = Arc::clone(&mouse_state);
         let mouse_subscription_generation = Arc::clone(&subscription_generation);
         mouse_report.SubscribedClientsChanged(&TypedEventHandler::<
@@ -178,12 +179,10 @@ impl BleHidService {
                 Ok(clients) => {
                     let count = clients.Size().unwrap_or(0);
                     tracing::info!(count, "iPhone mouse HID report subscription count changed");
-                    if count == 0 {
-                        *mouse_subscription_state
-                            .lock()
-                            .unwrap_or_else(|p| p.into_inner()) = vec![0; 4];
-                        mouse_subscription_generation.fetch_add(1, Ordering::AcqRel);
-                    }
+                    *mouse_subscription_state
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner()) = vec![0; 4];
+                    mouse_subscription_generation.fetch_add(1, Ordering::AcqRel);
                 }
                 Err(error) => {
                     tracing::warn!("Could not read mouse HID subscribed clients: {error}")
@@ -205,12 +204,10 @@ impl BleHidService {
                         count,
                         "iPhone keyboard HID report subscription count changed"
                     );
-                    if count == 0 {
-                        *keyboard_subscription_state
-                            .lock()
-                            .unwrap_or_else(|p| p.into_inner()) = vec![0; 8];
-                        keyboard_subscription_generation.fetch_add(1, Ordering::AcqRel);
-                    }
+                    *keyboard_subscription_state
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner()) = vec![0; 8];
+                    keyboard_subscription_generation.fetch_add(1, Ordering::AcqRel);
                 }
                 Err(error) => {
                     tracing::warn!("Could not read keyboard HID subscribed clients: {error}")
