@@ -47,7 +47,8 @@ use windows_062::Win32::{
             CallWindowProcW, CreateWindowExW, DefWindowProcW, DestroyWindow, GWLP_WNDPROC, SW_HIDE,
             SW_SHOW, SWP_NOACTIVATE, SWP_NOOWNERZORDER, SWP_NOREDRAW, SWP_NOZORDER,
             SetWindowLongPtrW, SetWindowPos, ShowWindow, WINDOW_EX_STYLE, WM_CAPTURECHANGED,
-            WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCDESTROY, WNDPROC,
+            WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL,
+            WM_NCDESTROY, WM_RBUTTONDBLCLK, WM_RBUTTONDOWN, WM_RBUTTONUP, WNDPROC,
             WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS,
         },
     },
@@ -120,6 +121,8 @@ thread_local! {
     static NATIVE_PREVIEW_DRAGGING: Cell<bool> = const { Cell::new(false) };
     /// Last client-space pointer coordinate while dragging.
     static NATIVE_PREVIEW_LAST_POINTER: Cell<Option<(i16, i16)>> = const { Cell::new(None) };
+    /// Button currently held by a native preview drag, including right-button drags.
+    static NATIVE_PREVIEW_ACTIVE_BUTTON: Cell<Option<MouseButtons>> = const { Cell::new(None) };
     /// Accumulated high-resolution wheel delta until a complete HID wheel step is available.
     static NATIVE_PREVIEW_WHEEL_REMAINDER: Cell<i32> = const { Cell::new(0) };
     /// Original STATIC window procedure, restored before the child HWND is destroyed.
@@ -154,17 +157,24 @@ unsafe extern "system" fn native_preview_wndproc(
     let y = ((lparam.0 as u32 >> 16) as u16) as i16;
 
     match message {
-        WM_LBUTTONDOWN => {
+        WM_LBUTTONDOWN | WM_LBUTTONDBLCLK | WM_RBUTTONDOWN | WM_RBUTTONDBLCLK => {
+            let button = if matches!(message, WM_RBUTTONDOWN | WM_RBUTTONDBLCLK) {
+                MouseButtons::RIGHT
+            } else {
+                MouseButtons::LEFT
+            };
             NATIVE_PREVIEW_DRAGGING.with(|dragging| dragging.set(true));
+            NATIVE_PREVIEW_ACTIVE_BUTTON.with(|active| active.set(Some(button)));
             NATIVE_PREVIEW_LAST_POINTER.with(|last| last.set(Some((x, y))));
             unsafe { SetCapture(hwnd) };
             if let Err(error) = crate::input::ble::desktop::dispatch_event(
-                InputEvent::PointerButtons(MouseButtons::LEFT),
+                InputEvent::PointerButtons(button),
             ) {
                 tracing::warn!(error = %error, "Could not dispatch native preview mouse-down");
             }
         }
-        WM_MOUSEMOVE if NATIVE_PREVIEW_DRAGGING.with(Cell::get) && wparam.0 & 0x0001 != 0 => {
+        WM_MOUSEMOVE if NATIVE_PREVIEW_DRAGGING.with(Cell::get)
+            && wparam.0 & (0x0001 | 0x0002) != 0 => {
             let previous = NATIVE_PREVIEW_LAST_POINTER.with(|last| last.replace(Some((x, y))));
             if let Some((previous_x, previous_y)) = previous {
                 let dx = x.saturating_sub(previous_x);
@@ -197,8 +207,9 @@ unsafe extern "system" fn native_preview_wndproc(
                 }
             }
         }
-        WM_LBUTTONUP => {
+        WM_LBUTTONUP | WM_RBUTTONUP => {
             NATIVE_PREVIEW_DRAGGING.with(|dragging| dragging.set(false));
+            NATIVE_PREVIEW_ACTIVE_BUTTON.with(|active| active.set(None));
             NATIVE_PREVIEW_LAST_POINTER.with(|last| last.set(None));
             let _ = unsafe { ReleaseCapture() };
             if let Err(error) = crate::input::ble::desktop::dispatch_event(
@@ -209,6 +220,7 @@ unsafe extern "system" fn native_preview_wndproc(
         }
         WM_CAPTURECHANGED | WM_NCDESTROY => {
             let was_dragging = NATIVE_PREVIEW_DRAGGING.with(|dragging| dragging.replace(false));
+            NATIVE_PREVIEW_ACTIVE_BUTTON.with(|active| active.set(None));
             NATIVE_PREVIEW_LAST_POINTER.with(|last| last.set(None));
             if message == WM_NCDESTROY {
                 NATIVE_PREVIEW_WHEEL_REMAINDER.with(|remainder| remainder.set(0));
