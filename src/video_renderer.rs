@@ -60,6 +60,16 @@ static DEVICE_RECOVERY_FAILURES: AtomicU64 = AtomicU64::new(0);
 static RENDER_ERRORS: AtomicU64 = AtomicU64::new(0);
 
 /// Return whether a device recreation deadline is still in the future.
+/// Convert a signed Windows wheel delta into HID wheel steps while retaining
+/// sub-detent motion between messages. Windows uses +120 for up; HID here uses
+/// positive values for down.
+fn accumulate_wheel_delta(remainder: &mut i32, delta: i32) -> i16 {
+    let total = remainder.saturating_add(delta);
+    let steps = total / 120;
+    *remainder = total % 120;
+    (-steps).clamp(i16::MIN as i32, i16::MAX as i32) as i16
+}
+
 fn recovery_cooldown_active(now: Instant, retry_after: Option<Instant>) -> bool {
     retry_after.is_some_and(|deadline| now < deadline)
 }
@@ -175,14 +185,13 @@ unsafe extern "system" fn native_preview_subclass_proc(
             // Windows reports wheel movement in 120-unit detents; preserve
             // smaller high-resolution deltas until a full HID wheel step exists.
             let delta = ((wparam.0 >> 16) as u16 as i16) as i32;
-            let total = NATIVE_PREVIEW_WHEEL_REMAINDER
-                .with(|remainder| remainder.replace(remainder.get().saturating_add(delta)));
-            let steps = total / 120;
-            NATIVE_PREVIEW_WHEEL_REMAINDER.with(|remainder| remainder.set(total % 120));
-            if steps != 0 {
-                // Windows positive means up; the app's HID convention uses
-                // positive for down, so invert the direction.
-                let vertical = (-steps).clamp(i16::MIN as i32, i16::MAX as i32) as i16;
+            let vertical = NATIVE_PREVIEW_WHEEL_REMAINDER.with(|remainder| {
+                let mut accumulated = remainder.get();
+                let steps = accumulate_wheel_delta(&mut accumulated, delta);
+                remainder.set(accumulated);
+                steps
+            });
+            if vertical != 0 {
                 if let Err(error) =
                     crate::input::ble::desktop::dispatch_event(InputEvent::Scroll { vertical })
                 {
@@ -1834,6 +1843,34 @@ mod viewport_tests {
 
     fn assert_close(actual: f32, expected: f32) {
         assert!((actual - expected).abs() < 0.01, "{actual} != {expected}");
+    }
+
+    #[test]
+    fn high_resolution_wheel_deltas_accumulate_until_one_detent() {
+        let mut remainder = 0;
+        assert_eq!(super::accumulate_wheel_delta(&mut remainder, 30), 0);
+        assert_eq!(remainder, 30);
+        assert_eq!(super::accumulate_wheel_delta(&mut remainder, 45), 0);
+        assert_eq!(remainder, 75);
+        assert_eq!(super::accumulate_wheel_delta(&mut remainder, 45), -1);
+        assert_eq!(remainder, 0);
+    }
+
+    #[test]
+    fn wheel_direction_and_partial_reverse_motion_are_preserved() {
+        let mut remainder = 0;
+        assert_eq!(super::accumulate_wheel_delta(&mut remainder, -60), 0);
+        assert_eq!(super::accumulate_wheel_delta(&mut remainder, 30), 0);
+        assert_eq!(remainder, -30);
+        assert_eq!(super::accumulate_wheel_delta(&mut remainder, -90), 1);
+        assert_eq!(remainder, 0);
+    }
+
+    #[test]
+    fn wheel_delta_can_emit_multiple_steps_without_overflow() {
+        let mut remainder = 0;
+        assert_eq!(super::accumulate_wheel_delta(&mut remainder, 360), -3);
+        assert_eq!(remainder, 0);
     }
 
     #[test]
