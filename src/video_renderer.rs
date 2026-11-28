@@ -44,11 +44,11 @@ use windows_062::Win32::{
     UI::{
         Input::KeyboardAndMouse::{ReleaseCapture, SetCapture},
         WindowsAndMessaging::{
-            CallWindowProcW, CreateWindowExW, DefWindowProcW, DestroyWindow, GWLP_WNDPROC,
+            CallWindowProcW, CreateWindowExW, DefWindowProcW, DestroyWindow, GWLP_WNDPROC, SW_HIDE,
+            SW_SHOW, SWP_NOACTIVATE, SWP_NOOWNERZORDER, SWP_NOREDRAW, SWP_NOZORDER,
             SetWindowLongPtrW, SetWindowPos, ShowWindow, WINDOW_EX_STYLE, WM_CAPTURECHANGED,
             WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCDESTROY, WNDPROC,
-            WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS, SW_HIDE, SW_SHOW, SWP_NOACTIVATE,
-            SWP_NOOWNERZORDER, SWP_NOREDRAW, SWP_NOZORDER,
+            WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS,
         },
     },
 };
