@@ -161,11 +161,13 @@ impl BleInputController {
                         .await?;
                     remaining_x -= step_x as i32;
                     remaining_y -= step_y as i32;
-                    if remaining_x != 0 || remaining_y != 0 {
-                        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-                        if !self.subscription_generation_matches(operation_generation) {
-                            return Ok(());
-                        }
+
+                    // Cap pointer report throughput at 125 Hz. This also gives queued
+                    // clicks and keyboard actions a predictable opportunity to run
+                    // between high-frequency movement updates.
+                    tokio::time::sleep(std::time::Duration::from_millis(8)).await;
+                    if !self.subscription_generation_matches(operation_generation) {
+                        return Ok(());
                     }
                 }
                 Ok(())
