@@ -152,9 +152,7 @@ unsafe extern "system" fn native_preview_subclass_proc(
                 tracing::warn!(error = %error, "Could not dispatch native preview mouse-down");
             }
         }
-        WM_MOUSEMOVE
-            if NATIVE_PREVIEW_DRAGGING.with(Cell::get) && wparam.0 & 0x0001 != 0 =>
-        {
+        WM_MOUSEMOVE if NATIVE_PREVIEW_DRAGGING.with(Cell::get) && wparam.0 & 0x0001 != 0 => {
             let previous = NATIVE_PREVIEW_LAST_POINTER.with(|last| last.replace(Some((x, y))));
             if let Some((previous_x, previous_y)) = previous {
                 let dx = x.saturating_sub(previous_x);
