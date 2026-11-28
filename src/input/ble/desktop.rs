@@ -21,13 +21,20 @@ use anyhow::{Context, Result};
 enum Command {
     Start,
     Stop,
+    ReleaseAll(u64),
     Dispatch(InputEvent, u64),
     LeftClick(u64),
     TypeText(String, u64),
 }
 
-static COMMANDS: OnceLock<std::sync::Mutex<Option<SyncSender<Command>>>> = OnceLock::new();
+struct WorkerSenders {
+    normal: SyncSender<Command>,
+    control: SyncSender<Command>,
+}
+
+static COMMANDS: OnceLock<std::sync::Mutex<Option<WorkerSenders>>> = OnceLock::new();
 const COMMAND_QUEUE_CAPACITY: usize = 256;
+const CONTROL_QUEUE_CAPACITY: usize = 8;
 static CONNECTION_STATE: AtomicU8 = AtomicU8::new(0);
 static SUBSCRIPTION_GENERATION: AtomicU64 = AtomicU64::new(0);
 static WORKER_STATE: AtomicU8 = AtomicU8::new(0);
@@ -78,12 +85,13 @@ pub fn connection_state() -> super::BleConnectionState {
     }
 }
 
-fn command_sender() -> &'static std::sync::Mutex<Option<SyncSender<Command>>> {
+fn command_sender() -> &'static std::sync::Mutex<Option<WorkerSenders>> {
     COMMANDS.get_or_init(|| std::sync::Mutex::new(None))
 }
 
-fn spawn_worker() -> Result<SyncSender<Command>> {
+fn spawn_worker() -> Result<WorkerSenders> {
     let (tx, rx) = mpsc::sync_channel(COMMAND_QUEUE_CAPACITY);
+    let (control_tx, control_rx) = mpsc::sync_channel(CONTROL_QUEUE_CAPACITY);
     let (ready_tx, ready_rx) = mpsc::sync_channel::<std::result::Result<(), String>>(1);
     let worker = thread::Builder::new()
         .name("ble-hid-controller".into())
@@ -109,13 +117,20 @@ fn spawn_worker() -> Result<SyncSender<Command>> {
             let mut controller: Option<BleInputController> = None;
             publish_connection_state(&controller);
             loop {
-                let command = match rx.recv_timeout(Duration::from_millis(250)) {
+                // Control commands use a separate reserved channel and are checked first,
+                // so Stop and ReleaseAll are not trapped behind pointer-motion traffic.
+                let command = match control_rx.try_recv() {
                     Ok(command) => command,
-                    Err(RecvTimeoutError::Timeout) => {
-                        publish_connection_state(&controller);
-                        continue;
+                    Err(mpsc::TryRecvError::Disconnected | mpsc::TryRecvError::Empty) => {
+                        match rx.recv_timeout(Duration::from_millis(20)) {
+                            Ok(command) => command,
+                            Err(RecvTimeoutError::Timeout) => {
+                                publish_connection_state(&controller);
+                                continue;
+                            }
+                            Err(RecvTimeoutError::Disconnected) => break,
+                        }
                     }
-                    Err(RecvTimeoutError::Disconnected) => break,
                 };
                 // Refresh the generation immediately before consuming a queued command.
                 // Commands tagged by an earlier HID subscription must never leak into a
@@ -150,6 +165,15 @@ fn spawn_worker() -> Result<SyncSender<Command>> {
                                 status = %status,
                                 "BLE HID controller started; connect from iPhone AssistiveTouch"
                             );
+                        }
+                        Command::ReleaseAll(expected_generation) => {
+                            if let Some(running) = controller.as_ref() {
+                                if running.subscription_generation() == expected_generation {
+                                    running.release_all().await?;
+                                } else {
+                                    tracing::debug!(expected_generation, actual_generation = running.subscription_generation(), "Discarded stale BLE release command");
+                                }
+                            }
                         }
                         Command::Stop => {
                             WORKER_STATE.store(WORKER_STOPPING, Ordering::Release);
@@ -269,6 +293,18 @@ fn active(controller: &Option<BleInputController>) -> Result<&BleInputController
         .context("BLE is not started; click Connect first")
 }
 
+fn send_to_worker(sender: &WorkerSenders, command: Command) -> std::result::Result<(), TrySendError<Command>> {
+    if is_control_command(&command) {
+        sender.control.try_send(command)
+    } else {
+        sender.normal.try_send(command)
+    }
+}
+
+fn is_control_command(command: &Command) -> bool {
+    matches!(command, Command::Start | Command::Stop | Command::ReleaseAll(_))
+}
+
 fn send(command: Command) -> Result<()> {
     let mut slot = command_sender()
         .lock()
@@ -285,7 +321,7 @@ fn send(command: Command) -> Result<()> {
     }
 
     let sender = slot.as_ref().expect("worker sender initialized");
-    match sender.try_send(command) {
+    match send_to_worker(sender, command) {
         Ok(()) => Ok(()),
         Err(TrySendError::Full(_command)) => Err(anyhow::anyhow!(
             "BLE command queue is full ({COMMAND_QUEUE_CAPACITY}); retry after pending input is processed"
@@ -301,7 +337,7 @@ fn send(command: Command) -> Result<()> {
                     return Err(spawn_error).context("restarting failed BLE controller worker");
                 }
             };
-            if let Err(send_error) = replacement.try_send(command) {
+            if let Err(send_error) = send_to_worker(&replacement, command) {
                 WORKER_STATE.store(WORKER_ERROR, Ordering::Release);
                 return Err(anyhow::anyhow!(
                     "replacement BLE controller worker could not accept the command: {send_error}"
@@ -343,7 +379,11 @@ pub fn move_mouse(dx: i32, dy: i32) -> Result<()> {
 /// Queue one platform-independent HID input event for the active BLE controller.
 pub fn dispatch_event(event: InputEvent) -> Result<()> {
     let generation = SUBSCRIPTION_GENERATION.load(Ordering::Acquire);
-    send(Command::Dispatch(event, generation))
+    if matches!(event, InputEvent::ReleaseAll) {
+        send(Command::ReleaseAll(generation))
+    } else {
+        send(Command::Dispatch(event, generation))
+    }
 }
 
 /// Press or release the requested keyboard modifier keys.
@@ -358,7 +398,8 @@ pub fn tap_key_usage(usage: u8) -> Result<()> {
 
 /// Release every held mouse button and keyboard key.
 pub fn release_all_inputs() -> Result<()> {
-    dispatch_event(InputEvent::ReleaseAll)
+    let generation = SUBSCRIPTION_GENERATION.load(Ordering::Acquire);
+    send(Command::ReleaseAll(generation))
 }
 
 /// Send a left mouse click.
