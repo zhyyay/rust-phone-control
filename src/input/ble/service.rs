@@ -201,7 +201,10 @@ impl BleHidService {
             match sender.SubscribedClients() {
                 Ok(clients) => {
                     let count = clients.Size().unwrap_or(0);
-                    tracing::info!(count, "iPhone keyboard HID report subscription count changed");
+                    tracing::info!(
+                        count,
+                        "iPhone keyboard HID report subscription count changed"
+                    );
                     if count == 0 {
                         *keyboard_subscription_state
                             .lock()
@@ -334,7 +337,10 @@ impl BleHidService {
     pub fn stop(&self) -> Result<()> {
         self.suspended.store(true, Ordering::Release);
         *self.mouse_state.lock().unwrap_or_else(|p| p.into_inner()) = vec![0; 4];
-        *self.keyboard_state.lock().unwrap_or_else(|p| p.into_inner()) = vec![0; 8];
+        *self
+            .keyboard_state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner()) = vec![0; 8];
         self.subscription_generation.fetch_add(1, Ordering::AcqRel);
 
         let mut first_error = None;
