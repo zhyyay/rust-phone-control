@@ -1133,13 +1133,13 @@ fn render_preview_column(app: &PhoneControlApp, cx: &Context<PhoneControlApp>) -
                 .on_mouse_up_out(MouseButton::Left, cx.listener(|this, _: &gpui::MouseUpEvent, _, _| {
                     this.preview_pointer_position = None;
                     queue_ble(rust_phone_control::input::ble::desktop::dispatch_event(
-                        crate::input::InputEvent::PointerButtons(crate::input::MouseButtons::NONE),
+                        InputEvent::PointerButtons(MouseButtons::NONE),
                     ));
                 }))
                 .on_mouse_exit(cx.listener(|this, _: &MouseExitEvent, _, _| {
                     if this.preview_pointer_position.take().is_some() {
                         queue_ble(rust_phone_control::input::ble::desktop::dispatch_event(
-                            crate::input::InputEvent::PointerButtons(crate::input::MouseButtons::NONE),
+                            InputEvent::PointerButtons(MouseButtons::NONE),
                         ));
                     }
                 })),
