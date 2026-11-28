@@ -597,7 +597,7 @@ mod tests {
             .iter_mut()
             .find(|batch| batch.id == 1)
             .unwrap();
-        super::desktop::accumulate_pointer_move(batch, 12, 9);
+        super::accumulate_pointer_move(batch, 12, 9);
         assert_eq!(queue.batches[0].dx, i16::MAX as i64 + 12);
         assert_eq!(queue.batches[0].dy, 5);
     }
