@@ -123,7 +123,10 @@ impl BleHidService {
                                     vec![0; 8];
                                 subscription_generation.fetch_add(1, Ordering::AcqRel);
                             }
-                            0x01 => suspended.store(false, Ordering::Release),
+                            0x01 => {
+                                suspended.store(false, Ordering::Release);
+                                subscription_generation.fetch_add(1, Ordering::AcqRel);
+                            }
                             _ => {
                                 if request.Option()? == GattWriteOption::WriteWithResponse {
                                     request.RespondWithProtocolError(0x80)?;
@@ -317,7 +320,12 @@ impl BleHidService {
         Ok(())
     }
 
-    /// Returns a generation that changes whenever an input report loses all subscribers.
+    /// Returns whether the HID host has suspended input reports.
+    pub fn is_suspended(&self) -> bool {
+        self.suspended.load(Ordering::Acquire)
+    }
+
+    /// Returns a generation that changes whenever input delivery is interrupted.
     pub fn subscription_generation(&self) -> u64 {
         self.subscription_generation.load(Ordering::Acquire)
     }
