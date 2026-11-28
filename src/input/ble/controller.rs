@@ -577,6 +577,7 @@ mod tests {
         let mut state = ControllerInputState {
             buttons: MouseButtons::LEFT | MouseButtons::MIDDLE,
             modifiers: KeyModifiers::LEFT_ALT | KeyModifiers::LEFT_SHIFT,
+            keys: [0x04, 0; 6],
         };
         state.reset();
         assert_eq!(state, ControllerInputState::default());
@@ -587,6 +588,7 @@ mod tests {
         let mut state = ControllerInputState {
             buttons: MouseButtons::MIDDLE,
             modifiers: KeyModifiers::LEFT_CTRL,
+            keys: [0x04, 0, 0, 0, 0, 0],
         };
         state.apply(InputEvent::Scroll {
             horizontal: 0,
@@ -628,6 +630,7 @@ mod tests {
         let mut state = ControllerInputState {
             buttons: MouseButtons::LEFT | MouseButtons::RIGHT,
             modifiers: KeyModifiers::LEFT_SHIFT | KeyModifiers::LEFT_CTRL,
+            keys: [0x04, 0, 0, 0, 0, 0],
         };
         let mut observed_generation = 4;
 
