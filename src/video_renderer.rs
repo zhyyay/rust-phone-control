@@ -281,7 +281,8 @@ unsafe extern "system" fn native_preview_wndproc(
                 let _ = unsafe { ReleaseCapture() };
             }
             if let Err(error) =
-                crate::input::ble::desktop::dispatch_event(InputEvent::PointerButtons(next_buttons)) {
+                crate::input::ble::desktop::dispatch_event(InputEvent::PointerButtons(next_buttons))
+            {
                 tracing::warn!(error = %error, "Could not dispatch native preview mouse-up");
             }
         }
