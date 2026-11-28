@@ -153,10 +153,10 @@ impl BleInputController {
 
     async fn dispatch_reports_locked(&self, event: InputEvent) -> Result<()> {
         let operation_generation = self.service.subscription_generation();
-        let (buttons, modifiers) = {
+        let (buttons, modifiers, keys) = {
             let mut state = self.input_state.lock().unwrap_or_else(|p| p.into_inner());
             state.apply(event);
-            (state.buttons, state.modifiers)
+            (state.buttons, state.modifiers, state.keys)
         };
 
         match event {
@@ -225,15 +225,22 @@ impl BleInputController {
                 if !self.subscription_generation_matches(operation_generation) {
                     return Ok(());
                 }
+                let mut pressed_keys = keys;
+                if !pressed_keys.contains(&usage) {
+                    let Some(slot) = pressed_keys.iter_mut().find(|key| **key == 0) else {
+                        bail!("USB HID keyboard supports at most six simultaneous non-modifier keys");
+                    };
+                    *slot = usage;
+                }
                 self.service
-                    .send_keyboard_report(KeyboardReport::new(modifiers, [usage, 0, 0, 0, 0, 0]))
+                    .send_keyboard_report(KeyboardReport::new(modifiers, pressed_keys))
                     .await?;
                 tokio::time::sleep(std::time::Duration::from_millis(20)).await;
                 if !self.subscription_generation_matches(operation_generation) {
                     return Ok(());
                 }
                 self.service
-                    .send_keyboard_report(KeyboardReport::new(modifiers, [0; 6]))
+                    .send_keyboard_report(KeyboardReport::new(modifiers, keys))
                     .await
             }
             InputEvent::ReleaseAll => combine_release_results(
