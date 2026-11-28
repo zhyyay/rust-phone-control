@@ -47,7 +47,8 @@ use windows_062::Win32::{
             CallWindowProcW, CreateWindowExW, DefWindowProcW, DestroyWindow, GWLP_WNDPROC, SW_HIDE,
             SW_SHOW, SWP_NOACTIVATE, SWP_NOOWNERZORDER, SWP_NOREDRAW, SWP_NOZORDER,
             SetWindowLongPtrW, SetWindowPos, ShowWindow, WINDOW_EX_STYLE, WM_CAPTURECHANGED,
-            WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL,
+            WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEMOVE,
+            WM_MOUSEWHEEL,
             WM_NCDESTROY, WM_RBUTTONDBLCLK, WM_RBUTTONDOWN, WM_RBUTTONUP, WNDPROC, WS_CHILD,
             WS_CLIPCHILDREN, WS_CLIPSIBLINGS,
         },
@@ -126,6 +127,8 @@ thread_local! {
         const { Cell::new(None) };
     /// Accumulated high-resolution wheel delta until a complete HID wheel step is available.
     static NATIVE_PREVIEW_WHEEL_REMAINDER: Cell<i32> = const { Cell::new(0) };
+    /// Accumulated high-resolution horizontal wheel delta.
+    static NATIVE_PREVIEW_PAN_REMAINDER: Cell<i32> = const { Cell::new(0) };
     /// Last BLE subscription generation observed by this native preview window.
     static NATIVE_PREVIEW_INPUT_GENERATION: Cell<u64> = const { Cell::new(0) };
     /// Original STATIC window procedure, restored before the child HWND is destroyed.
@@ -166,6 +169,7 @@ unsafe extern "system" fn native_preview_wndproc(
         NATIVE_PREVIEW_ACTIVE_BUTTON.with(|active| active.set(None));
         NATIVE_PREVIEW_LAST_POINTER.with(|last| last.set(None));
         NATIVE_PREVIEW_WHEEL_REMAINDER.with(|remainder| remainder.set(0));
+        NATIVE_PREVIEW_PAN_REMAINDER.with(|remainder| remainder.set(0));
     }
     let x = (lparam.0 as u32 as u16) as i16;
     let y = ((lparam.0 as u32 >> 16) as u16) as i16;
@@ -227,6 +231,23 @@ unsafe extern "system" fn native_preview_wndproc(
                 }
             }
         }
+        WM_MOUSEHWHEEL => {
+            let delta = ((wparam.0 >> 16) as u16 as i16) as i32;
+            let horizontal = NATIVE_PREVIEW_PAN_REMAINDER.with(|remainder| {
+                let mut accumulated = remainder.get();
+                let steps = accumulate_wheel_delta(&mut accumulated, delta);
+                remainder.set(accumulated);
+                -steps
+            });
+            if horizontal != 0 {
+                if let Err(error) = crate::input::ble::desktop::dispatch_event(InputEvent::Scroll {
+                    horizontal,
+                    vertical: 0,
+                }) {
+                    tracing::warn!(error = %error, "Could not dispatch native preview horizontal wheel");
+                }
+            }
+        }
         WM_LBUTTONUP | WM_RBUTTONUP => {
             NATIVE_PREVIEW_DRAGGING.with(|dragging| dragging.set(false));
             NATIVE_PREVIEW_ACTIVE_BUTTON.with(|active| active.set(None));
@@ -244,6 +265,7 @@ unsafe extern "system" fn native_preview_wndproc(
             NATIVE_PREVIEW_LAST_POINTER.with(|last| last.set(None));
             if message == WM_NCDESTROY {
                 NATIVE_PREVIEW_WHEEL_REMAINDER.with(|remainder| remainder.set(0));
+                NATIVE_PREVIEW_PAN_REMAINDER.with(|remainder| remainder.set(0));
                 NATIVE_PREVIEW_ORIGINAL_WNDPROC.with(|original| original.set(0));
                 if previous_proc != 0 {
                     unsafe { SetWindowLongPtrW(hwnd, GWLP_WNDPROC, previous_proc) };
