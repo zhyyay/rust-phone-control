@@ -359,19 +359,12 @@ impl BleHidService {
 
     /// Reports whether the iPhone subscribed to the mouse and keyboard input reports.
     pub fn connection_state(&self) -> BleConnectionState {
-        if self.stopped.load(Ordering::Acquire) {
-            return BleConnectionState::Disconnected;
-        }
-        if self.suspended.load(Ordering::Acquire) {
-            return BleConnectionState::Suspended;
-        }
-        let mouse = self.mouse_subscribers.load(Ordering::Acquire) > 0;
-        let keyboard = self.keyboard_subscribers.load(Ordering::Acquire) > 0;
-        match (mouse, keyboard) {
-            (false, false) => BleConnectionState::Disconnected,
-            (true, true) => BleConnectionState::Ready,
-            _ => BleConnectionState::PartiallySubscribed,
-        }
+        connection_state_from_flags(
+            self.mouse_subscribers.load(Ordering::Acquire) > 0,
+            self.keyboard_subscribers.load(Ordering::Acquire) > 0,
+            self.suspended.load(Ordering::Acquire),
+            self.stopped.load(Ordering::Acquire),
+        )
     }
 
     /// Returns a generation that changes whenever input delivery is interrupted.
@@ -413,6 +406,77 @@ impl BleHidService {
             .map(|provider| Ok(format!("{:?}", provider.AdvertisementStatus()?)))
             .collect::<Result<Vec<_>>>()
             .map(|statuses| statuses.join(", "))
+    }
+}
+
+fn connection_state_from_flags(
+    mouse_subscribed: bool,
+    keyboard_subscribed: bool,
+    suspended: bool,
+    stopped: bool,
+) -> BleConnectionState {
+    if stopped || (!mouse_subscribed && !keyboard_subscribed) {
+        return BleConnectionState::Disconnected;
+    }
+    if suspended {
+        return BleConnectionState::Suspended;
+    }
+    match (mouse_subscribed, keyboard_subscribed) {
+        (true, true) => BleConnectionState::Ready,
+        _ => BleConnectionState::PartiallySubscribed,
+    }
+}
+
+#[cfg(test)]
+mod connection_state_tests {
+    use super::{BleConnectionState, connection_state_from_flags};
+
+    #[test]
+    fn both_reports_subscribed_means_ready() {
+        assert_eq!(
+            connection_state_from_flags(true, true, false, false),
+            BleConnectionState::Ready
+        );
+    }
+
+    #[test]
+    fn one_report_missing_is_partial() {
+        assert_eq!(
+            connection_state_from_flags(true, false, false, false),
+            BleConnectionState::PartiallySubscribed
+        );
+        assert_eq!(
+            connection_state_from_flags(false, true, false, false),
+            BleConnectionState::PartiallySubscribed
+        );
+    }
+
+    #[test]
+    fn no_subscribers_is_disconnected_even_if_suspended() {
+        assert_eq!(
+            connection_state_from_flags(false, false, true, false),
+            BleConnectionState::Disconnected
+        );
+    }
+
+    #[test]
+    fn suspended_subscribed_peer_is_not_reported_ready() {
+        assert_eq!(
+            connection_state_from_flags(true, true, true, false),
+            BleConnectionState::Suspended
+        );
+    }
+
+    #[test]
+    fn stopped_service_is_always_disconnected() {
+        assert_eq!(
+            connection_state_from_flags(true, true, false, true),
+            BleConnectionState::Disconnected
+        );
+        assert_eq!(
+            connection_state_from_flags(true, true, true, true),
+            BleConnectionState::Disconnected
+        );
     }
 }
 
