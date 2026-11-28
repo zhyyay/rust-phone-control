@@ -38,6 +38,7 @@ pub struct BleHidService {
     mouse_report: GattLocalCharacteristic,
     keyboard_report: GattLocalCharacteristic,
     suspended: Arc<AtomicBool>,
+    stopped: AtomicBool,
     mouse_state: Arc<Mutex<Vec<u8>>>,
     keyboard_state: Arc<Mutex<Vec<u8>>>,
     subscription_generation: Arc<AtomicU64>,
@@ -257,6 +258,7 @@ impl BleHidService {
             mouse_report,
             keyboard_report,
             suspended,
+            stopped: AtomicBool::new(false),
             mouse_state,
             keyboard_state,
             subscription_generation,
@@ -265,6 +267,9 @@ impl BleHidService {
 
     /// Sends a four-byte mouse input report to subscribed GATT clients.
     pub async fn send_mouse_report(&self, report: MouseReport) -> Result<()> {
+        if self.stopped.load(Ordering::Acquire) {
+            bail!("BLE HID service has stopped");
+        }
         if self.suspended.load(Ordering::Acquire) {
             return Ok(());
         }
@@ -292,6 +297,9 @@ impl BleHidService {
 
     /// Sends an eight-byte keyboard input report to subscribed GATT clients.
     pub async fn send_keyboard_report(&self, report: KeyboardReport) -> Result<()> {
+        if self.stopped.load(Ordering::Acquire) {
+            bail!("BLE HID service has stopped");
+        }
         if self.suspended.load(Ordering::Acquire) {
             return Ok(());
         }
@@ -325,6 +333,11 @@ impl BleHidService {
         self.suspended.load(Ordering::Acquire)
     }
 
+    /// Returns whether advertising has been stopped for this service instance.
+    pub fn is_stopped(&self) -> bool {
+        self.stopped.load(Ordering::Acquire)
+    }
+
     /// Returns a generation that changes whenever input delivery is interrupted.
     pub fn subscription_generation(&self) -> u64 {
         self.subscription_generation.load(Ordering::Acquire)
@@ -332,6 +345,7 @@ impl BleHidService {
 
     /// Stops advertising all published GATT services.
     pub fn stop(&self) -> Result<()> {
+        self.stopped.store(true, Ordering::Release);
         self.suspended.store(true, Ordering::Release);
         *self.mouse_state.lock().unwrap_or_else(|p| p.into_inner()) = vec![0; 4];
         *self
