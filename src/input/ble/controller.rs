@@ -72,11 +72,14 @@ impl BleInputController {
                     .unwrap_or_else(|p| p.into_inner())
                     .reset();
                 let mouse_release = self.service.send_mouse_report(MouseReport::release()).await;
-                let keyboard_release = self.service
+                let keyboard_release = self
+                    .service
                     .send_keyboard_report(KeyboardReport::release())
                     .await;
                 match (mouse_release, keyboard_release) {
-                    (Ok(()), Ok(())) => Err(error.context("BLE input notification failed; neutral reports sent")),
+                    (Ok(()), Ok(())) => {
+                        Err(error.context("BLE input notification failed; neutral reports sent"))
+                    },
                     (Err(mouse), Ok(())) => Err(anyhow::anyhow!(
                         "{error:#}; mouse neutral report also failed: {mouse:#}"
                     )),
