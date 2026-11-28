@@ -112,24 +112,7 @@ impl BleInputController {
 
     /// Sends relative pointer movement. Large movements are split into signed 8-bit reports.
     pub async fn move_mouse(&self, dx: i32, dy: i32) -> Result<()> {
-        let (mut remaining_x, mut remaining_y) = (dx, dy);
-        while remaining_x != 0 || remaining_y != 0 {
-            let step_x = remaining_x.clamp(-127, 127) as i16;
-            let step_y = remaining_y.clamp(-127, 127) as i16;
-            self.service
-                .send_mouse_report(MouseReport::new(MouseButtons::NONE, step_x, step_y, 0))
-                .await?;
-            remaining_x -= step_x as i32;
-            remaining_y -= step_y as i32;
-
-            // Keep consecutive relative reports distinct on slower BLE hosts. Without a
-            // short pacing interval, back-to-back notifications can be coalesced or dropped
-            // by some host stacks even though the GATT notification call itself succeeds.
-            if remaining_x != 0 || remaining_y != 0 {
-                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-            }
-        }
-        Ok(())
+        self.dispatch(InputEvent::PointerMove { dx, dy }).await
     }
 
     /// Clicks one mouse button and then sends a release report.
@@ -146,15 +129,7 @@ impl BleInputController {
 
     /// Sends vertical wheel movement, splitting values larger than one HID report.
     pub async fn scroll(&self, amount: i32) -> Result<()> {
-        let mut remaining = amount;
-        while remaining != 0 {
-            let step = remaining.clamp(-127, 127) as i16;
-            self.service
-                .send_mouse_report(MouseReport::new(MouseButtons::NONE, 0, 0, step))
-                .await?;
-            remaining -= step as i32;
-        }
-        Ok(())
+        self.dispatch(InputEvent::Scroll { vertical: amount }).await
     }
 
     /// Presses a USB HID keyboard usage with optional modifier bits, then releases it.
