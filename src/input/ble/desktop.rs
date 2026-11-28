@@ -67,9 +67,27 @@ fn sender() -> Result<&'static Sender<Command>> {
                         }
                         Command::Stop => {
                             if let Some(running) = controller.take() {
-                                running.release_all().await?;
-                                running.stop()?;
-                                tracing::info!("BLE HID advertising stopped");
+                                // Always attempt to stop advertising, even if a final HID
+                                // release notification fails.
+                                let release_result = running
+                                    .release_all()
+                                    .await
+                                    .context("releasing BLE inputs before stop");
+                                let stop_result =
+                                    running.stop().context("stopping BLE HID advertising");
+
+                                match (release_result, stop_result) {
+                                    (Ok(()), Ok(())) => {
+                                        tracing::info!("BLE HID advertising stopped");
+                                    }
+                                    (Err(release_error), Ok(())) => return Err(release_error),
+                                    (Ok(()), Err(stop_error)) => return Err(stop_error),
+                                    (Err(release_error), Err(stop_error)) => {
+                                        return Err(anyhow::anyhow!(
+                                            "{release_error:#}; BLE stop also failed: {stop_error:#}"
+                                        ));
+                                    }
+                                }
                             }
                         }
                         Command::Dispatch(event) => {
