@@ -211,7 +211,11 @@ impl BleInputController {
                 if usage == 0 {
                     bail!("keyboard usage 0 is reserved for no key");
                 }
-                let keys = self.input_state.lock().unwrap_or_else(|p| p.into_inner()).keys;
+                let keys = self
+                    .input_state
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .keys;
                 if pressed && !keys.contains(&usage) && !keys.contains(&0) {
                     bail!("USB HID keyboard supports at most six simultaneous non-modifier keys");
                 }
@@ -232,7 +236,9 @@ impl BleInputController {
                 let mut pressed_keys = keys;
                 if !pressed_keys.contains(&usage) {
                     let Some(slot) = pressed_keys.iter_mut().find(|key| **key == 0) else {
-                        bail!("USB HID keyboard supports at most six simultaneous non-modifier keys");
+                        bail!(
+                            "USB HID keyboard supports at most six simultaneous non-modifier keys"
+                        );
                     };
                     *slot = usage;
                 }
