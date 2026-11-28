@@ -409,6 +409,23 @@ impl BleHidService {
     }
 }
 
+impl Drop for BleHidService {
+    fn drop(&mut self) {
+        if self.stopped.swap(true, Ordering::AcqRel) {
+            return;
+        }
+
+        for provider in &self.providers {
+            if let Err(error) = provider.StopAdvertising() {
+                tracing::warn!(
+                    error = %error,
+                    "BLE HID advertising cleanup failed while dropping service"
+                );
+            }
+        }
+    }
+}
+
 fn connection_state_from_flags(
     mouse_subscribed: bool,
     keyboard_subscribed: bool,
