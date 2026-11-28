@@ -1,8 +1,8 @@
 #[cfg(windows)]
 mod airplay;
 mod app;
-mod logging;
 mod input;
+mod logging;
 
 #[cfg(windows)]
 mod platform;
